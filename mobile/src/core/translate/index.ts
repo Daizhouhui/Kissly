@@ -5,6 +5,7 @@ import { Cue, ProviderId } from '../types';
 import { hashString } from '../utils';
 import { aiTranslate, deepseekConfig, openaiConfig, siliconflowConfig } from './ai';
 import { googleTranslate } from './google';
+import { google2Translate } from './google2';
 import { microsoftTranslate } from './microsoft';
 
 export type TranslateOptions = {
@@ -40,6 +41,9 @@ async function translateWithProvider(
   }
   if (provider === 'google') {
     return googleTranslate(texts, from, to, timeoutMs);
+  }
+  if (provider === 'google2') {
+    return google2Translate(texts, from, to, timeoutMs);
   }
   if (provider === 'deepseek') {
     const key = await getSecret('deepseek');
@@ -94,8 +98,8 @@ export async function translateTexts(
 
   const chain: ProviderId[] =
     requested === 'auto'
-      ? ['microsoft', 'google']
-      : [requested, 'microsoft', 'google'];
+      ? ['microsoft', 'google', 'google2']
+      : [requested, 'microsoft', 'google', 'google2'];
 
   if (
     requested !== 'auto' &&
@@ -231,6 +235,8 @@ export function providerDisplayName(provider: ProviderId): string {
       return '微软翻译';
     case 'google':
       return '谷歌翻译';
+    case 'google2':
+      return 'Google2 备用';
     case 'deepseek':
       return 'DeepSeek';
     case 'siliconflow':
