@@ -143,8 +143,7 @@ export async function fetchSubscriptionFeed(
       seen.add(item.videoId);
       return true;
     })
-    .sort((a, b) => b.published - a.published)
-    .slice(0, 200);
+    .sort((a, b) => b.published - a.published);
 }
 
 export async function fetchChannelVideos(

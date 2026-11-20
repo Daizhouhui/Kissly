@@ -44,53 +44,54 @@ export type Theme = {
 };
 
 const lightBase: Theme['colors'] = {
-  bg: '#F6F7F9',
+  bg: '#F7F5FA',
   bgElevated: '#FFFFFF',
   surface: '#FFFFFF',
-  surfaceAlt: '#EEF1F5',
+  surfaceAlt: '#F0EDF6',
   card: '#FFFFFF',
-  text: '#151820',
-  textSecondary: '#667085',
-  textTertiary: '#98A2B3',
-  primary: '#2F6FED',
-  primarySoft: '#E8F0FE',
-  primaryDeep: '#1D4ED8',
-  border: '#E3E7ED',
-  borderStrong: '#CDD3DC',
+  text: '#17141F',
+  textSecondary: '#6E687B',
+  textTertiary: '#A19AAD',
+  primary: '#7C5CFF',
+  primarySoft: '#F0ECFF',
+  primaryDeep: '#5B3FE0',
+  border: '#E9E5F0',
+  borderStrong: '#D7D0E4',
   danger: '#E5484D',
   success: '#2F9E68',
   warning: '#D9822B',
   overlay: 'rgba(15, 18, 25, 0.55)',
-  playerBg: '#000000',
-  playerSurface: '#11141A',
+  playerBg: '#F3F0EC',
+  playerSurface: '#FBF9F6',
 };
 
 const darkBase: Theme['colors'] = {
-  bg: '#0D1017',
-  bgElevated: '#11151D',
-  surface: '#161B24',
-  surfaceAlt: '#1D242F',
-  card: '#141922',
-  text: '#F2F5FA',
-  textSecondary: '#9AA4B2',
-  textTertiary: '#667085',
-  primary: '#6E9BFF',
-  primarySoft: '#16233D',
-  primaryDeep: '#3B82F6',
-  border: '#242B36',
-  borderStrong: '#333D4B',
+  bg: '#0E0B14',
+  bgElevated: '#15111D',
+  surface: '#191420',
+  surfaceAlt: '#211A2B',
+  card: '#17121F',
+  text: '#F5F2FA',
+  textSecondary: '#A79FB5',
+  textTertiary: '#746C82',
+  primary: '#A78BFA',
+  primarySoft: '#241B3D',
+  primaryDeep: '#8B5CF6',
+  border: '#2A2236',
+  borderStrong: '#3A3048',
   danger: '#FF6B6E',
   success: '#4ED18C',
   warning: '#F0A45B',
   overlay: 'rgba(0, 0, 0, 0.62)',
-  playerBg: '#000000',
-  playerSurface: '#11141A',
+  playerBg: '#070509',
+  playerSurface: '#110D18',
 };
 
 type AccentColors = Pick<Theme['colors'], 'primary' | 'primarySoft' | 'primaryDeep'>;
 
 const accents: Record<ThemeMode, Record<ThemeAccent, AccentColors>> = {
   light: {
+    violet: { primary: '#7C5CFF', primarySoft: '#F0ECFF', primaryDeep: '#5B3FE0' },
     blue: { primary: '#2F6FED', primarySoft: '#E8F0FE', primaryDeep: '#1D4ED8' },
     teal: { primary: '#0F9D8A', primarySoft: '#E3F7F4', primaryDeep: '#0B7C6D' },
     orange: { primary: '#E87817', primarySoft: '#FFF0E2', primaryDeep: '#C25A0C' },
@@ -98,6 +99,7 @@ const accents: Record<ThemeMode, Record<ThemeAccent, AccentColors>> = {
     green: { primary: '#2E9B63', primarySoft: '#E7F7EE', primaryDeep: '#237A4E' },
   },
   dark: {
+    violet: { primary: '#A78BFA', primarySoft: '#241B3D', primaryDeep: '#8B5CF6' },
     blue: { primary: '#6E9BFF', primarySoft: '#16233D', primaryDeep: '#3B82F6' },
     teal: { primary: '#2DD4BF', primarySoft: '#12302C', primaryDeep: '#14B8A6' },
     orange: { primary: '#FFA94D', primarySoft: '#3A2411', primaryDeep: '#F59E0B' },
@@ -112,6 +114,7 @@ export const THEME_ACCENTS: Array<{
   light: string;
   dark: string;
 }> = [
+  { id: 'violet', label: '紫罗兰', light: '#7C5CFF', dark: '#A78BFA' },
   { id: 'blue', label: '青蓝', light: '#2F6FED', dark: '#6E9BFF' },
   { id: 'teal', label: '青绿', light: '#0F9D8A', dark: '#2DD4BF' },
   { id: 'orange', label: '琥珀', light: '#E87817', dark: '#FFA94D' },
@@ -121,17 +124,17 @@ export const THEME_ACCENTS: Array<{
 
 export function getTheme(
   mode: ThemeMode,
-  accent: ThemeAccent = 'blue'
+  accent: ThemeAccent = 'violet'
 ): Theme {
   const dark = mode === 'dark';
   const base = dark ? darkBase : lightBase;
-  const accentColors = accents[mode][accent] ?? accents[mode].blue;
+  const accentColors = accents[mode][accent] ?? accents[mode].violet;
   return {
     mode,
     dark,
     accent,
     colors: { ...base, ...accentColors },
-    radius: { sm: 10, md: 14, lg: 20, xl: 26, pill: 999 },
+    radius: { sm: 8, md: 12, lg: 16, xl: 22, pill: 999 },
     space: (n: number) => n * 4,
     shadow: {
       card: Platform.select({
@@ -162,4 +165,4 @@ export function getBrandGradient(theme: Theme): [string, string, string] {
   return [theme.colors.primary, theme.colors.primaryDeep, theme.colors.primary];
 }
 
-export const brandGradient = ['#2F6FED', '#1D4ED8', '#2F6FED'] as const;
+export const brandGradient = ['#7C5CFF', '#5B3FE0', '#7C5CFF'] as const;

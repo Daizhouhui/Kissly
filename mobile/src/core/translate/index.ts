@@ -7,6 +7,7 @@ import { aiTranslate, deepseekConfig, openaiConfig, siliconflowConfig } from './
 import { googleTranslate } from './google';
 import { google2Translate } from './google2';
 import { microsoftTranslate } from './microsoft';
+import { systemTranslateTexts } from './system';
 
 export type TranslateOptions = {
   from?: string;
@@ -36,6 +37,9 @@ async function translateWithProvider(
   contextTitle: string | undefined,
   timeoutMs: number
 ): Promise<string[]> {
+  if (provider === 'system') {
+    return systemTranslateTexts(texts, from, to, timeoutMs);
+  }
   if (provider === 'microsoft') {
     return microsoftTranslate(texts, from, to, timeoutMs);
   }
@@ -98,8 +102,11 @@ export async function translateTexts(
 
   const chain: ProviderId[] =
     requested === 'auto'
-      ? ['microsoft', 'google', 'google2']
-      : [requested, 'microsoft', 'google', 'google2'];
+      ? // Auto deliberately stays on the three free, predictable providers.
+        // Google2 is a shared public preset and must only run when the user
+        // explicitly selects it; otherwise it kept "winning" the fallback chain.
+        ['microsoft', 'google', 'system']
+      : [requested];
 
   if (
     requested !== 'auto' &&
@@ -233,6 +240,8 @@ export function providerDisplayName(provider: ProviderId): string {
   switch (provider) {
     case 'microsoft':
       return '微软翻译';
+    case 'system':
+      return '系统内置';
     case 'google':
       return '谷歌翻译';
     case 'google2':

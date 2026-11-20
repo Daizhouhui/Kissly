@@ -164,6 +164,7 @@ export default function YoutubeAccountScreen() {
   const subscriptions = useAppStore((state) => state.subscriptions);
   const webRef = useRef<any>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const firstLoadRef = useRef(true);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('请在下方网页中登录 YouTube 账号');
   const [extracting, setExtracting] = useState(false);
@@ -182,9 +183,12 @@ export default function YoutubeAccountScreen() {
     setLoading(true);
     setFailed(false);
     timeoutRef.current = setTimeout(() => {
+      // Never cover the WebView. Google's consent/login redirect chain can
+      // legitimately take longer than 20 s on slow networks; hiding the page
+      // behind an overlay made the previous build look "stuck forever".
       setLoading(false);
       setFailed(true);
-      setStatus('页面加载超过 20 秒。可能是网络无法访问 Google，请重试或改用 CSV 导入。');
+      setStatus('页面仍在加载。可以继续等待，或点下方按钮重试/改用浏览器。');
     }, 20000);
   };
 
@@ -196,6 +200,7 @@ export default function YoutubeAccountScreen() {
   const reload = () => {
     setBlockedByGoogle(false);
     setStatus('正在重新打开 YouTube…');
+    firstLoadRef.current = true;
     beginLoad();
     webRef.current?.reload();
   };
@@ -328,10 +333,24 @@ export default function YoutubeAccountScreen() {
           injectedJavaScript={LOGIN_EARLY + CHANNEL_BRIDGE}
           cacheEnabled
           javaScriptCanOpenWindowsAutomatically
-          onLoadStart={beginLoad}
+          onLoadStart={() => {
+            if (firstLoadRef.current) {
+              firstLoadRef.current = false;
+              beginLoad();
+            } else {
+              setLoading(true);
+            }
+          }}
           onLoadEnd={() => {
             clearTimer();
             setLoading(false);
+            setFailed(false);
+            firstLoadRef.current = false;
+            setStatus((current) =>
+              current.startsWith('页面仍在加载') || current.startsWith('正在打开')
+                ? '登录页已加载，请在网页中完成 Google 登录。'
+                : current
+            );
             webRef.current?.injectJavaScript(CHANNEL_BRIDGE);
           }}
           onError={() => {
@@ -356,69 +375,44 @@ export default function YoutubeAccountScreen() {
             return false;
           }}
         />
-        {loading || failed ? (
-          <View style={[styles.webLoading, { backgroundColor: theme.colors.bg }]}>
-            {loading ? (
-              <>
-                <ActivityIndicator color={theme.colors.primary} />
-                <Text style={[styles.webLoadingText, { color: theme.colors.textSecondary }]}>
-                  正在打开 YouTube…
-                </Text>
-                <Text style={{ color: theme.colors.textTertiary, fontSize: 10 }}>
-                  首次加载可能需要 5–15 秒
-                </Text>
-              </>
-            ) : (
-              <>
-                <Ionicons name="cloud-offline-outline" size={30} color={theme.colors.textTertiary} />
-                <Text style={[styles.webLoadingText, { color: theme.colors.textSecondary }]}>
-                  页面没有加载出来
-                </Text>
-                <Text
-                  style={{
-                    color: theme.colors.textTertiary,
-                    fontSize: 11,
-                    textAlign: 'center',
-                    paddingHorizontal: 34,
-                    lineHeight: 17,
-                  }}
-                >
-                  应用内登录由 Google 控制。如果一直失败，可以先用浏览器登录导出 CSV。
-                </Text>
-                <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
-                  <Pressable
-                    onPress={reload}
-                    style={{
-                      backgroundColor: theme.colors.primary,
-                      borderRadius: 12,
-                      paddingHorizontal: 18,
-                      height: 38,
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <Text style={{ color: '#FFFFFF', fontSize: 12.5, fontWeight: '800' }}>重新加载</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => Linking.openURL(LOGIN_URL).catch(() => {})}
-                    style={{
-                      borderWidth: 1,
-                      borderColor: theme.colors.border,
-                      borderRadius: 12,
-                      paddingHorizontal: 18,
-                      height: 38,
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <Text style={{ color: theme.colors.textSecondary, fontSize: 12.5, fontWeight: '700' }}>
-                      用浏览器打开
-                    </Text>
-                  </Pressable>
-                </View>
-              </>
-            )}
+        {loading ? (
+          <View
+            pointerEvents="none"
+            style={[
+              styles.loadBar,
+              { backgroundColor: theme.dark ? 'rgba(20,16,28,.92)' : 'rgba(255,255,255,.94)' },
+            ]}
+          >
+            <ActivityIndicator size="small" color={theme.colors.primary} />
+            <Text style={{ color: theme.colors.textSecondary, fontSize: 11.5 }}>
+              正在打开 YouTube… 首次可能需要 10–20 秒
+            </Text>
           </View>
         ) : null}
       </View>
+
+      {failed ? (
+        <View
+          style={[
+            styles.failBanner,
+            { backgroundColor: theme.colors.primarySoft, borderColor: theme.colors.border },
+          ]}
+        >
+          <Ionicons name="cloud-offline-outline" size={18} color={theme.colors.primary} />
+          <Text style={{ flex: 1, color: theme.colors.textSecondary, fontSize: 11.5, lineHeight: 17 }}>
+            页面加载较慢或没有出来。网页仍在下方继续加载，不会挡住登录界面。
+          </Text>
+          <Pressable onPress={reload} style={[styles.bannerButton, { backgroundColor: theme.colors.primary }]}>
+            <Text style={{ color: '#FFFFFF', fontSize: 11.5, fontWeight: '800' }}>重试</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => Linking.openURL(LOGIN_URL).catch(() => {})}
+            style={[styles.bannerButton, { backgroundColor: theme.colors.surface }]}
+          >
+            <Text style={{ color: theme.colors.textSecondary, fontSize: 11.5, fontWeight: '700' }}>浏览器</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       <View style={[styles.footer, { paddingBottom: Math.max(14, insets.bottom) }]}>
         <View style={{ flex: 1 }}>
@@ -461,6 +455,37 @@ const styles = StyleSheet.create({
   noticeText: { flex: 1, color: '#A99FBA', fontSize: 11.5, lineHeight: 17 },
   webCard: { flex: 1, backgroundColor: '#FFFFFF', marginHorizontal: 14, marginTop: 10, borderRadius: 18, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth },
   webview: { flex: 1, backgroundColor: '#FFFFFF' },
+  loadBar: {
+    position: 'absolute',
+    left: 10,
+    right: 10,
+    top: 10,
+    height: 34,
+    borderRadius: 17,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    zIndex: 5,
+  },
+  failBanner: {
+    marginHorizontal: 14,
+    marginTop: 10,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  bannerButton: {
+    minWidth: 50,
+    height: 32,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
   webLoading: {
     position: 'absolute',
     top: 0,

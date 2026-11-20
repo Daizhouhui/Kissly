@@ -19,8 +19,8 @@ export function VideoCard({
 }) {
   const theme = useAppTheme();
   const { width } = useWindowDimensions();
-  const thumbWidth = Math.min(164, Math.max(128, width * 0.4));
-  const translatedColor = theme.colors.text;
+  const thumbWidth = Math.min(152, Math.max(124, width * 0.37));
+  const translatedColor = theme.colors.textSecondary;
 
   const meta = (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 7 }}>
@@ -79,9 +79,6 @@ export function VideoCard({
               <Ionicons name="play-circle-outline" size={34} color={theme.colors.textTertiary} />
             </View>
           )}
-          <View style={styles.playDot}>
-            <Ionicons name="play" size={11} color="#FFFFFF" />
-          </View>
           {item.duration ? (
             <View style={styles.duration}>
               <Text style={styles.durationText}>{formatTime(item.duration)}</Text>
@@ -154,9 +151,6 @@ export function VideoCard({
             <Ionicons name="play-circle-outline" size={30} color={theme.colors.textTertiary} />
           </View>
         )}
-        <View style={styles.playDot}>
-          <Ionicons name="play" size={11} color="#FFFFFF" />
-        </View>
         {item.duration ? (
           <View style={styles.duration}>
             <Text style={styles.durationText}>{formatTime(item.duration)}</Text>
@@ -168,9 +162,9 @@ export function VideoCard({
         <Text
           style={{
             color: theme.colors.text,
-            fontSize: 14.5,
+            fontSize: 15.5,
             fontWeight: '700',
-            lineHeight: 19.5,
+            lineHeight: 21,
             letterSpacing: -0.1,
           }}
           numberOfLines={2}
@@ -199,17 +193,6 @@ export function VideoCard({
 }
 
 const styles = StyleSheet.create({
-  playDot: {
-    position: 'absolute',
-    left: 6,
-    bottom: 6,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: 'rgba(0,0,0,0.62)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   duration: {
     position: 'absolute',
     right: 5,

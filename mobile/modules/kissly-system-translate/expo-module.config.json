@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["SystemTranslateModule"]
+  },
+  "android": {
+    "modules": ["com.knny.systemtranslate.SystemTranslateModule"]
+  }
+}

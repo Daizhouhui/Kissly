@@ -207,15 +207,27 @@ export function pickCaptionTrack(
 }
 
 function withFormat(baseUrl: string, format: string): string {
-  const joiner = baseUrl.includes('?') ? '&' : '?';
-  return `${baseUrl}${joiner}fmt=${format}`;
+  const clean = baseUrl.replace(/&amp;/g, '&');
+  if (/[?&]fmt=/.test(clean)) {
+    return clean.replace(/([?&])fmt=[^&]*/, `$1fmt=${format}`);
+  }
+  const joiner = clean.includes('?') ? '&' : '?';
+  return `${clean}${joiner}fmt=${format}`;
 }
 
 export async function fetchCaptionCues(track: CaptionTrack): Promise<Cue[]> {
-  const formats = ['json3', 'srv3', 'vtt'];
-  for (const format of formats) {
+  // Keep a couple of client hints in the retry set. Some Android caption
+  // URLs only expose the complete word-level json3 payload with `c=ANDROID`.
+  const variants = [
+    withFormat(track.baseUrl, 'json3'),
+    `${withFormat(track.baseUrl, 'json3')}&c=ANDROID`,
+    withFormat(track.baseUrl, 'srv3'),
+    withFormat(track.baseUrl, 'vtt'),
+  ];
+  let best: Cue[] = [];
+  for (const url of variants) {
     try {
-      const response = await httpText(withFormat(track.baseUrl, format), {
+      const response = await httpText(url, {
         timeoutMs: 20000,
         headers: {
           ...BROWSER_HEADERS,
@@ -224,12 +236,15 @@ export async function fetchCaptionCues(track: CaptionTrack): Promise<Cue[]> {
         },
       });
       if (response.status !== 200 || !response.text.trim()) continue;
-      const cues = parseCaptionText(response.text);
-      if (cues.length) return cues;
+      const cues = parseCaptionText(response.text, track.languageCode);
+      if (cues.length > best.length) best = cues;
+      // json3 with meaningful word-level data is the desired result.
+      if (cues.length >= 3 && url.includes('fmt=json3')) return cues;
     } catch {
-      // Try the next caption format.
+      // Try the next caption format/client hint.
     }
   }
+  if (best.length) return best;
   throw new Error('该视频没有可用的字幕数据');
 }
 
@@ -237,8 +252,9 @@ export async function fetchTranslatedCaptionCues(
   track: CaptionTrack,
   targetLang: string
 ): Promise<Cue[]> {
-  const joiner = track.baseUrl.includes('?') ? '&' : '?';
-  const url = `${track.baseUrl}${joiner}tlang=${encodeURIComponent(
+  const clean = track.baseUrl.replace(/&amp;/g, '&');
+  const joiner = clean.includes('?') ? '&' : '?';
+  const url = `${clean}${joiner}tlang=${encodeURIComponent(
     targetLang
   )}&fmt=json3`;
   const response = await httpText(url, {
@@ -252,5 +268,5 @@ export async function fetchTranslatedCaptionCues(
   if (response.status !== 200 || !response.text.trim()) {
     throw new Error('YouTube 自动翻译字幕不可用');
   }
-  return parseCaptionText(response.text);
+  return parseCaptionText(response.text, targetLang);
 }

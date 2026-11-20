@@ -21,8 +21,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 
 import { getSettings, useAppStore } from '@/src/core/store';
-import { translateCueList } from '@/src/core/translate';
-import { Cue } from '@/src/core/types';
+import { providerDisplayName, translateCueList } from '@/src/core/translate';
+import { Cue, SubtitleMode } from '@/src/core/types';
 import {
   fetchCaptionCues,
   getVideoMeta,
@@ -142,6 +142,7 @@ function playerBridgeScript() {
       pause: function(){ var v=getVideo(); try{ v&&v.pause(); }catch(e){}; return true; },
       seek: function(seconds){ var v=getVideo(); try{ if(v){ v.currentTime=Math.max(0, Number(seconds)||0); } }catch(e){}; return true; },
       rate: function(rate){ var v=getVideo(); try{ if(v)v.playbackRate=Number(rate)||1; }catch(e){}; return true; },
+      mute: function(muted){ var v=getVideo(); try{ if(v)v.muted=!!muted; }catch(e){}; return true; },
       quality: function(){ setQuality(); return true; }
     };
     bind();
@@ -178,7 +179,8 @@ function formatTime(value: number) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-const FONT_STEPS = [15, 17, 19, 22, 26];
+const FONT_STEPS = [14, 16, 18, 20, 22, 24, 26, 30, 34];
+const SPEEDS = [0.75, 1, 1.25, 1.5, 2];
 
 export default function PlayerScreen() {
   useKeepAwake();
@@ -205,6 +207,8 @@ export default function PlayerScreen() {
   // embed URL directly has no HTTP Referer and YouTube rejects it with Error
   // 153, which was the root cause of the old "video unavailable" screen.
   const [ready, setReady] = useState(false);
+  const [videoLoading, setVideoLoading] = useState(true);
+  const videoLoadingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [playing, setPlaying] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [current, setCurrent] = useState(0);
@@ -222,11 +226,22 @@ export default function PlayerScreen() {
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
   const [trackKey, setTrackKey] = useState('');
   const [toast, setToast] = useState('');
+  const [rate, setRate] = useState(1);
+  const [loopSentence, setLoopSentence] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const [blindMode, setBlindMode] = useState(false);
+  const [blindReveal, setBlindReveal] = useState(false);
+  const [modeMenu, setModeMenu] = useState(false);
+  const [providerLabel, setProviderLabel] = useState('');
+  const loopGuardRef = useRef(0);
+  const blindGuardRef = useRef('');
 
   const isFavorite = favorites.some((item) => item.videoId === videoId);
   const subtitleMode = settings.subtitle.mode;
   const showTranslation = subtitleMode !== 'original';
-  const fontSize = settings.subtitle.fontSize ?? 17;
+  const showOriginal = subtitleMode !== 'translation';
+  const fontSize = settings.subtitle.fontSize ?? 20;
+  const landscapeFontSize = settings.subtitle.landscapeFontSize ?? 24;
   const cues = translatedCues ?? sourceCues;
 
   const activeIndex = useMemo(() => {
@@ -275,10 +290,11 @@ export default function PlayerScreen() {
             videoId,
             fetched,
             `${track.languageCode}:${track.kind ?? 'manual'}`,
-            { contextTitle: meta.title }
+            { contextTitle: meta.title, from: track.languageCode }
           );
           if (!cancelled) {
             setTranslatedCues(translated.cues);
+            setProviderLabel(providerDisplayName(translated.provider));
             setStatus('');
           }
         } catch (error) {
@@ -371,8 +387,16 @@ export default function PlayerScreen() {
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (modeMenu) {
+        setModeMenu(false);
+        return true;
+      }
       if (sheet) {
         setSheet(false);
+        return true;
+      }
+      if (blindMode) {
+        setBlindMode(false);
         return true;
       }
       if (fullscreen || landscape) {
@@ -382,7 +406,26 @@ export default function PlayerScreen() {
       return false;
     });
     return () => sub.remove();
-  }, [fullscreen, landscape, sheet]);
+  }, [blindMode, fullscreen, landscape, modeMenu, sheet]);
+
+  const clearVideoLoadingTimer = () => {
+    if (videoLoadingTimer.current) clearTimeout(videoLoadingTimer.current);
+    videoLoadingTimer.current = null;
+  };
+
+  const armVideoLoadingFallback = () => {
+    clearVideoLoadingTimer();
+    videoLoadingTimer.current = setTimeout(() => {
+      // Never leave a permanent black overlay on top of YouTube. If the page
+      // loaded but the player did not report ready (consent, login, error page),
+      // reveal the actual web page so the user can see and act on it.
+      setVideoLoading(false);
+    }, 9000);
+  };
+
+  useEffect(() => {
+    return () => clearVideoLoadingTimer();
+  }, []);
 
   const send = (script: string) => {
     webRef.current?.injectJavaScript(script);
@@ -406,7 +449,58 @@ export default function PlayerScreen() {
     seekTo((locationX / progressWidth) * duration);
   };
 
-  const seekBy = (delta: number) => seekTo(current + delta);
+  const jumpCue = (direction: -1 | 1) => {
+    if (!cues.length) return;
+    let index = activeIndex;
+    if (index < 0) {
+      const next = cues.findIndex((cue) => cue.start > current + 0.05);
+      index = next < 0 ? cues.length - 1 : next;
+    }
+    index = Math.max(0, Math.min(cues.length - 1, index + direction));
+    const target = cues[index];
+    seekTo(target.start + 0.02);
+    loopGuardRef.current = 0;
+  };
+
+  const cycleRate = () => {
+    const index = SPEEDS.findIndex((speed) => Math.abs(speed - rate) < 0.01);
+    const next = SPEEDS[(index + 1) % SPEEDS.length] ?? 1;
+    setRate(next);
+    send(`window.__kiss && window.__kiss.rate(${next}); true;`);
+    setToast(`播放速度 ${next}x`);
+  };
+
+  const toggleMute = () => {
+    const next = !muted;
+    setMuted(next);
+    send(`window.__kiss && window.__kiss.mute(${next}); true;`);
+  };
+
+  const setSubtitleMode = (mode: SubtitleMode) => {
+    patchSettings({ subtitle: { ...settings.subtitle, mode } });
+    setModeMenu(false);
+  };
+
+  useEffect(() => {
+    setBlindReveal(false);
+    blindGuardRef.current = '';
+  }, [activeIndex]);
+
+  useEffect(() => {
+    if (!loopSentence || !activeCue || !playing || blindMode) return;
+    if (current <= activeCue.end + 0.08) return;
+    if (Date.now() - loopGuardRef.current < 1600) return;
+    loopGuardRef.current = Date.now();
+    seekTo(activeCue.start + 0.01);
+  }, [activeCue, blindMode, current, loopSentence, playing]);
+
+  useEffect(() => {
+    if (!blindMode || blindReveal || !activeCue || !playing) return;
+    if (current <= activeCue.end + 0.12) return;
+    if (blindGuardRef.current === activeCue.text) return;
+    blindGuardRef.current = activeCue.text;
+    jumpCue(1);
+  }, [activeCue, blindMode, blindReveal, current, playing]);
 
   const handleMessage = (event: WebViewMessageEvent) => {
     let message: any = null;
@@ -417,7 +511,9 @@ export default function PlayerScreen() {
     }
     if (!message || typeof message.type !== 'string') return;
     if (message.type === 'ready') {
+      clearVideoLoadingTimer();
       setReady(true);
+      setVideoLoading(false);
       setVideoProblem('');
       return;
     }
@@ -450,6 +546,9 @@ export default function PlayerScreen() {
     setReady(false);
     setPlaying(false);
     setCurrent(0);
+    setVideoLoading(true);
+    armVideoLoadingFallback();
+    webRef.current?.reload();
   };
 
   const shareVideo = async () => {
@@ -473,11 +572,17 @@ export default function PlayerScreen() {
     setToast(added ? '已收藏' : '已取消收藏');
   };
 
-  const changeFontSize = (direction: 1 | -1) => {
-    const index = FONT_STEPS.findIndex((size) => size >= fontSize);
+  const changeFontSize = (direction: 1 | -1, target: 'portrait' | 'landscape') => {
+    const value = target === 'portrait' ? fontSize : landscapeFontSize;
+    const index = FONT_STEPS.findIndex((size) => size >= value);
     const currentIndex = index < 0 ? FONT_STEPS.length - 1 : index;
     const next = FONT_STEPS[Math.max(0, Math.min(FONT_STEPS.length - 1, currentIndex + direction))];
-    patchSettings({ subtitle: { ...settings.subtitle, fontSize: next } });
+    patchSettings({
+      subtitle: {
+        ...settings.subtitle,
+        ...(target === 'portrait' ? { fontSize: next } : { landscapeFontSize: next }),
+      },
+    });
   };
 
   const toggleTranslation = () => {
@@ -529,13 +634,20 @@ export default function PlayerScreen() {
         userAgent={WATCH_UA}
         injectedJavaScript={playerBridgeScript()}
         onMessage={handleMessage}
-        onLoadStart={() => setReady(false)}
+        onLoadStart={() => {
+          setReady(false);
+          setVideoLoading(true);
+          armVideoLoadingFallback();
+        }}
         onLoadEnd={() => {
           send(playerBridgeScript());
           setTimeout(() => send('window.__kiss && window.__kiss.play(); true;'), 1200);
+          armVideoLoadingFallback();
         }}
         onError={() => {
+          clearVideoLoadingTimer();
           setReady(false);
+          setVideoLoading(false);
           setVideoProblem('播放器加载失败，请检查网络后重试，或在浏览器中打开该视频。');
         }}
         onShouldStartLoadWithRequest={(request: any) => {
@@ -555,7 +667,7 @@ export default function PlayerScreen() {
           return false;
         }}
       />
-      {!ready ? (
+      {videoLoading ? (
         <View style={styles.videoLoading} pointerEvents="none">
           <ActivityIndicator color="#A78BFA" />
           <Text style={styles.videoLoadingText}>
@@ -563,7 +675,7 @@ export default function PlayerScreen() {
           </Text>
         </View>
       ) : null}
-      {!playing ? (
+      {!playing && !landscape ? (
         <Pressable style={styles.centerPlay} onPress={togglePlay}>
           <Ionicons name="play" size={34} color="#FFFFFF" />
         </Pressable>
@@ -573,6 +685,20 @@ export default function PlayerScreen() {
           {quality ? quality.toUpperCase() : 'HD1080'} · 优先
         </Text>
       </View>
+      <Pressable
+        onPress={handleFullscreen}
+        hitSlop={10}
+        style={[
+          styles.videoFullscreen,
+          { top: landscape ? Math.max(58, insets.top + 48) : 10 },
+        ]}
+      >
+        <Ionicons
+          name={landscape || fullscreen ? 'contract-outline' : 'expand-outline'}
+          size={18}
+          color="#FFFFFF"
+        />
+      </Pressable>
       {videoProblem ? (
         <View style={styles.problemOverlay}>
           <Ionicons name="alert-circle-outline" size={30} color="#FCA5A5" />
@@ -594,79 +720,29 @@ export default function PlayerScreen() {
     </View>
   );
 
-  const controls = (
+  const progress = (
     <View
-      style={[
-        styles.controls,
-        landscape
-          ? {
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              bottom: 0,
-              paddingHorizontal: 20,
-              backgroundColor: 'transparent',
-              borderTopWidth: 0,
-            }
-          : {
-              backgroundColor: theme.colors.card,
-              borderTopColor: theme.colors.border,
-            },
-        { paddingBottom: landscape ? 18 : Math.max(14, insets.bottom) },
-      ]}
+      style={styles.progressTouch}
+      onLayout={(event) => setProgressWidth(event.nativeEvent.layout.width)}
+      onStartShouldSetResponder={() => true}
+      onMoveShouldSetResponder={() => true}
+      onResponderGrant={(event) => seekFromEvent(event.nativeEvent.locationX)}
+      onResponderMove={(event) => {
+        if (!duration || !progressWidth) return;
+        setSeekPreview((event.nativeEvent.locationX / progressWidth) * duration);
+      }}
+      onResponderRelease={(event) => {
+        seekFromEvent(event.nativeEvent.locationX);
+        setSeekPreview(null);
+      }}
     >
-      {landscape && activeCue ? (
-        <View style={{ paddingBottom: 8 }}>
-          <Text style={styles.landscapeSubOriginal} numberOfLines={2}>
-            {activeCue.text}
-          </Text>
-          {showTranslation && activeCue.translation ? (
-            <Text style={styles.landscapeSubTranslation} numberOfLines={2}>
-              {activeCue.translation}
-            </Text>
-          ) : null}
-        </View>
-      ) : null}
-      <View
-        style={styles.progressTouch}
-        onLayout={(event) => setProgressWidth(event.nativeEvent.layout.width)}
-        onStartShouldSetResponder={() => true}
-        onMoveShouldSetResponder={() => true}
-        onResponderGrant={(event) => seekFromEvent(event.nativeEvent.locationX)}
-        onResponderMove={(event) => {
-          if (!duration || !progressWidth) return;
-          setSeekPreview((event.nativeEvent.locationX / progressWidth) * duration);
-        }}
-        onResponderRelease={(event) => {
-          seekFromEvent(event.nativeEvent.locationX);
-          setSeekPreview(null);
-        }}
-      >
-        <View style={[styles.progressRail, { backgroundColor: landscape ? '#2B2340' : theme.colors.surfaceAlt }]}>
-          <View
-            style={[
-              styles.progressFill,
-              {
-                backgroundColor: landscape ? '#A78BFA' : theme.colors.primary,
-                width: duration
-                  ? Math.max(
-                      0,
-                      Math.min(
-                        progressWidth,
-                        ((seekPreview ?? current) / duration) * progressWidth
-                      )
-                    )
-                  : 0,
-              },
-            ]}
-          />
-        </View>
+      <View style={[styles.progressRail, { backgroundColor: theme.colors.surfaceAlt }]}>
         <View
           style={[
-            styles.progressThumb,
+            styles.progressFill,
             {
-              backgroundColor: landscape ? '#C4B5FD' : theme.colors.primary,
-              left: duration
+              backgroundColor: theme.colors.primary,
+              width: duration
                 ? Math.max(
                     0,
                     Math.min(
@@ -679,64 +755,254 @@ export default function PlayerScreen() {
           ]}
         />
       </View>
-      <View style={styles.timeRow}>
-        <Text style={[styles.timeText, { color: landscape ? '#8A8099' : theme.colors.textTertiary }]}>
-          {formatTime(seekPreview ?? current)}
+      <View
+        style={[
+          styles.progressThumb,
+          {
+            backgroundColor: theme.colors.primary,
+            left: duration
+              ? Math.max(
+                  0,
+                  Math.min(
+                    progressWidth,
+                    ((seekPreview ?? current) / duration) * progressWidth
+                  )
+                )
+              : 0,
+          },
+        ]}
+      />
+    </View>
+  );
+
+  const timeRow = (
+    <View style={styles.timeRow}>
+      <Text style={[styles.timeText, { color: theme.colors.textTertiary }]}>
+        {formatTime(seekPreview ?? current)}
+      </Text>
+      <Text style={[styles.timeText, { color: theme.colors.textTertiary }]}>
+        {formatTime(duration)}
+      </Text>
+    </View>
+  );
+
+  const transport = (
+    <View style={styles.transport}>
+      <Pressable onPress={cycleRate} hitSlop={8} style={styles.ratePill}>
+        <Ionicons name="play" size={11} color={theme.colors.primary} />
+        <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '800' }}>
+          {rate}x
         </Text>
-        <Text style={[styles.timeText, { color: landscape ? '#8A8099' : theme.colors.textTertiary }]}>
-          {formatTime(duration)}
-        </Text>
+      </Pressable>
+      <Pressable onPress={() => jumpCue(-1)} hitSlop={10} style={styles.transportSmall}>
+        <Ionicons name="play-back" size={22} color={theme.colors.textSecondary} />
+      </Pressable>
+      <Pressable
+        onPress={togglePlay}
+        style={[styles.playButton, { backgroundColor: theme.colors.primary }]}
+      >
+        <Ionicons name={playing ? 'pause' : 'play'} size={24} color="#FFFFFF" />
+      </Pressable>
+      <Pressable onPress={() => jumpCue(1)} hitSlop={10} style={styles.transportSmall}>
+        <Ionicons name="play-forward" size={22} color={theme.colors.textSecondary} />
+      </Pressable>
+      <Pressable
+        onPress={() => setLoopSentence((value) => !value)}
+        hitSlop={8}
+        style={[
+          styles.loopButton,
+          loopSentence && { backgroundColor: theme.colors.primarySoft },
+        ]}
+      >
+        <Ionicons
+          name="repeat"
+          size={20}
+          color={loopSentence ? theme.colors.primary : theme.colors.textTertiary}
+        />
+      </Pressable>
+    </View>
+  );
+
+  const controls = !landscape ? (
+    <View
+      style={[
+        styles.controls,
+        {
+          backgroundColor: theme.colors.playerSurface,
+          borderTopColor: theme.colors.border,
+          paddingBottom: Math.max(12, insets.bottom),
+        },
+      ]}
+    >
+      {progress}
+      {timeRow}
+      {transport}
+      <View style={styles.bottomActions}>
+        <Pressable style={styles.action} onPress={() => setModeMenu(true)}>
+          <Ionicons
+            name={subtitleMode === 'bilingual' ? 'language' : 'text-outline'}
+            size={22}
+            color={theme.colors.textSecondary}
+          />
+          <Text style={[styles.actionLabel, { color: theme.colors.textSecondary }]}>字幕</Text>
+        </Pressable>
+        <Pressable style={styles.action} onPress={saveFavorite}>
+          <Ionicons
+            name={isFavorite ? 'heart' : 'heart-outline'}
+            size={22}
+            color={isFavorite ? theme.colors.primary : theme.colors.textSecondary}
+          />
+          <Text
+            style={[
+              styles.actionLabel,
+              { color: isFavorite ? theme.colors.primary : theme.colors.textSecondary },
+            ]}
+          >
+            收藏
+          </Text>
+        </Pressable>
+        <Pressable style={styles.action} onPress={() => setBlindMode((value) => !value)}>
+          <Ionicons
+            name="headset-outline"
+            size={23}
+            color={blindMode ? theme.colors.primary : theme.colors.textSecondary}
+          />
+          <Text
+            style={[
+              styles.actionLabel,
+              { color: blindMode ? theme.colors.primary : theme.colors.textSecondary },
+            ]}
+          >
+            耳机
+          </Text>
+        </Pressable>
+        <Pressable style={styles.action} onPress={handleFullscreen}>
+          <Ionicons name="expand-outline" size={23} color={theme.colors.textSecondary} />
+          <Text style={[styles.actionLabel, { color: theme.colors.textSecondary }]}>全屏</Text>
+        </Pressable>
       </View>
-      <View style={styles.transport}>
-        <Pressable onPress={() => seekBy(-10)} hitSlop={10} style={styles.transportSmall}>
-          <Ionicons name="play-back" size={22} color={landscape ? '#F5F2FF' : theme.colors.textSecondary} />
+    </View>
+  ) : null;
+
+  const landscapeOverlay = landscape ? (
+    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      <View style={[styles.landTop, { paddingTop: Math.max(8, insets.top) }]}>
+        <Text style={styles.landTime}>{formatTime(current)}</Text>
+        <View
+          style={styles.landProgressTouch}
+          onLayout={(event) => setProgressWidth(event.nativeEvent.layout.width)}
+          onStartShouldSetResponder={() => true}
+          onMoveShouldSetResponder={() => true}
+          onResponderGrant={(event) => seekFromEvent(event.nativeEvent.locationX)}
+          onResponderMove={(event) => {
+            if (!duration || !progressWidth) return;
+            setSeekPreview(
+              (event.nativeEvent.locationX / progressWidth) * duration
+            );
+          }}
+          onResponderRelease={(event) => {
+            seekFromEvent(event.nativeEvent.locationX);
+            setSeekPreview(null);
+          }}
+        >
+          <View style={styles.landProgressRail}>
+            <View
+              style={[
+                styles.landProgressFill,
+                {
+                  width: duration
+                    ? Math.max(
+                        0,
+                        Math.min(
+                          progressWidth,
+                          ((seekPreview ?? current) / duration) * progressWidth
+                        )
+                      )
+                    : 0,
+                },
+              ]}
+            />
+          </View>
+        </View>
+        <Text style={styles.landTime}>{formatTime(duration)}</Text>
+        <Pressable
+          onPress={() => setModeMenu(true)}
+          style={[styles.landIconButton, subtitleMode !== 'original' && styles.landIconActive]}
+        >
+          <Text style={styles.landCc}>CC</Text>
         </Pressable>
         <Pressable
-          onPress={togglePlay}
-          style={[
-            styles.playButton,
-            { backgroundColor: landscape ? '#7C5CFF' : theme.colors.primary },
-          ]}
+          onPress={() =>
+            setSubtitleMode(subtitleMode === 'original' ? 'bilingual' : 'original')
+          }
+          style={[styles.landIconButton, subtitleMode !== 'original' && styles.landIconActive]}
         >
-          <Ionicons name={playing ? 'pause' : 'play'} size={24} color="#FFFFFF" />
+          <Ionicons name="language" size={20} color="#FFFFFF" />
         </Pressable>
-        <Pressable onPress={() => seekBy(10)} hitSlop={10} style={styles.transportSmall}>
-          <Ionicons name="play-forward" size={22} color={landscape ? '#F5F2FF' : theme.colors.textSecondary} />
+        <Pressable onPress={toggleMute} style={styles.landIconButton}>
+          <Ionicons
+            name={muted ? 'volume-mute' : 'volume-high'}
+            size={20}
+            color="#FFFFFF"
+          />
+        </Pressable>
+        <Pressable onPress={() => setSheet(true)} style={styles.landIconButton}>
+          <Ionicons name="ellipsis-horizontal" size={21} color="#FFFFFF" />
+        </Pressable>
+        <Pressable onPress={exitFullscreen} style={styles.landIconButton}>
+          <Ionicons name="contract-outline" size={20} color="#FFFFFF" />
         </Pressable>
       </View>
-      {!landscape ? (
-        <View style={styles.bottomActions}>
-          <Pressable style={styles.action} onPress={() => setSheet(true)}>
-            <Ionicons name="options-outline" size={22} color={theme.colors.textSecondary} />
-            <Text style={[styles.actionLabel, { color: theme.colors.textSecondary }]}>设置</Text>
-          </Pressable>
-          <Pressable style={styles.action} onPress={saveFavorite}>
-            <Ionicons
-              name={isFavorite ? 'heart' : 'heart-outline'}
-              size={22}
-              color={isFavorite ? theme.colors.primary : theme.colors.textSecondary}
-            />
+
+      <View style={styles.landCenter}>
+        <Pressable onPress={cycleRate} style={styles.landRatePill}>
+          <Text style={styles.landRateText}>{rate}x</Text>
+        </Pressable>
+        <Pressable onPress={() => jumpCue(-1)} style={styles.landTransportButton}>
+          <Ionicons name="play-back" size={28} color="#FFFFFF" />
+        </Pressable>
+        <Pressable onPress={togglePlay} style={styles.landPlay}>
+          <Ionicons name={playing ? 'pause' : 'play'} size={30} color="#FFFFFF" />
+        </Pressable>
+        <Pressable onPress={() => jumpCue(1)} style={styles.landTransportButton}>
+          <Ionicons name="play-forward" size={28} color="#FFFFFF" />
+        </Pressable>
+        <Pressable
+          onPress={() => setLoopSentence((value) => !value)}
+          style={[styles.landRatePill, loopSentence && styles.landLoopActive]}
+        >
+          <Ionicons name="repeat" size={20} color="#FFFFFF" />
+        </Pressable>
+      </View>
+
+      {activeCue ? (
+        <View style={[styles.landSubBox, { bottom: Math.max(18, insets.bottom + 10) }]}>
+          {showOriginal ? (
             <Text
               style={[
-                styles.actionLabel,
-                { color: isFavorite ? theme.colors.primary : theme.colors.textSecondary },
+                styles.landSubOriginal,
+                { fontSize: landscapeFontSize },
               ]}
+              numberOfLines={2}
             >
-              收藏
+              {activeCue.text}
             </Text>
-          </Pressable>
-          <Pressable style={styles.action} onPress={shareVideo}>
-            <Ionicons name="share-social-outline" size={22} color={theme.colors.textSecondary} />
-            <Text style={[styles.actionLabel, { color: theme.colors.textSecondary }]}>分享</Text>
-          </Pressable>
-          <Pressable style={styles.action} onPress={handleFullscreen}>
-            <Ionicons name="expand-outline" size={22} color={theme.colors.textSecondary} />
-            <Text style={[styles.actionLabel, { color: theme.colors.textSecondary }]}>全屏</Text>
-          </Pressable>
+          ) : null}
+          {showTranslation && activeCue.translation ? (
+            <Text
+              style={[
+                styles.landSubTranslation,
+                { fontSize: Math.max(13, landscapeFontSize - 5) },
+              ]}
+              numberOfLines={2}
+            >
+              {activeCue.translation}
+            </Text>
+          ) : null}
         </View>
       ) : null}
     </View>
-  );
+  ) : null;
 
   const transcript = (
     <ScrollView
@@ -769,25 +1035,27 @@ export default function PlayerScreen() {
                 past && { opacity: 0.5 },
               ]}
             >
-              <Text
-                style={[
-                  styles.cueOriginal,
-                  { color: theme.colors.textSecondary, fontSize: Math.max(14, fontSize) },
-                  active && { color: theme.colors.primary, fontWeight: '800' },
-                  past && { color: theme.colors.textTertiary },
-                ]}
-              >
-                {cue.text}
-              </Text>
+              {showOriginal ? (
+                <Text
+                  style={[
+                    styles.cueOriginal,
+                    { color: theme.colors.textSecondary, fontSize: Math.max(14, fontSize) },
+                    active && { color: theme.colors.primary, fontWeight: '800' },
+                    past && { color: theme.colors.textTertiary },
+                  ]}
+                >
+                  {cue.text}
+                </Text>
+              ) : null}
               {showTranslation && cue.translation ? (
                 <Text
                   style={[
                     styles.cueTranslation,
                     {
-                      color: theme.colors.textTertiary,
-                      fontSize: Math.max(12, fontSize - 3),
+                      color: showOriginal ? theme.colors.textTertiary : theme.colors.textSecondary,
+                      fontSize: Math.max(12, fontSize - (showOriginal ? 3 : 0)),
                     },
-                    active && { color: theme.colors.text },
+                    active && { color: showOriginal ? theme.colors.text : theme.colors.primary },
                   ]}
                 >
                   {cue.translation}
@@ -800,40 +1068,204 @@ export default function PlayerScreen() {
     </ScrollView>
   );
 
+  const nowCard = activeCue ? (
+    <View
+      style={[
+        styles.nowCard,
+        { backgroundColor: theme.colors.card, borderColor: theme.colors.border },
+      ]}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Ionicons name="time-outline" size={14} color={theme.colors.textTertiary} />
+          <Text style={{ color: theme.colors.textTertiary, fontSize: 11 }}>
+            {formatTime(activeCue.start)}
+          </Text>
+        </View>
+        {providerLabel ? (
+          <Text style={{ color: theme.colors.textTertiary, fontSize: 10 }}>
+            译 · {providerLabel}
+          </Text>
+        ) : null}
+      </View>
+      {showOriginal ? (
+        <Text
+          style={{
+            color: theme.colors.primary,
+            fontSize: Math.min(30, fontSize + 2),
+            lineHeight: Math.min(38, fontSize + 9),
+            fontWeight: '800',
+            marginTop: 8,
+            letterSpacing: -0.2,
+          }}
+        >
+          {activeCue.text}
+        </Text>
+      ) : null}
+      {showTranslation && activeCue.translation ? (
+        <Text
+          style={{
+            color: showOriginal ? theme.colors.text : theme.colors.primary,
+            fontSize: showOriginal ? Math.max(14, fontSize) : Math.min(28, fontSize + 2),
+            lineHeight: showOriginal ? Math.max(22, fontSize + 7) : Math.min(36, fontSize + 9),
+            fontWeight: showOriginal ? '500' : '800',
+            marginTop: 6,
+          }}
+        >
+          {activeCue.translation}
+        </Text>
+      ) : null}
+    </View>
+  ) : null;
+
+  const blindCard = (
+    <View style={{ flex: 1, paddingHorizontal: 18, paddingTop: 8 }}>
+      <View
+        style={{
+          backgroundColor: theme.colors.card,
+          borderRadius: 18,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: theme.colors.border,
+          padding: 18,
+          minHeight: 210,
+        }}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+          <Ionicons name="time-outline" size={15} color={theme.colors.textSecondary} />
+          <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>
+            {formatTime(activeCue?.start ?? current)}
+          </Text>
+          <View style={{ flex: 1 }} />
+          <View
+            style={{
+              backgroundColor: theme.colors.primary,
+              borderRadius: 999,
+              paddingHorizontal: 11,
+              paddingVertical: 4,
+            }}
+          >
+            <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '800' }}>
+              盲听 {Math.max(1, activeIndex + 1)}/{Math.max(1, cues.length)}
+            </Text>
+          </View>
+        </View>
+
+        {blindReveal ? (
+          <View style={{ marginTop: 18 }}>
+            {activeCue ? (
+              <>
+                {showOriginal ? (
+                  <Text
+                    style={{
+                      color: theme.colors.primary,
+                      fontSize: 21,
+                      lineHeight: 29,
+                      fontWeight: '800',
+                    }}
+                  >
+                    {activeCue.text}
+                  </Text>
+                ) : null}
+                {showTranslation && activeCue.translation ? (
+                  <Text
+                    style={{
+                      color: theme.colors.text,
+                      fontSize: 17,
+                      lineHeight: 25,
+                      marginTop: 8,
+                    }}
+                  >
+                    {activeCue.translation}
+                  </Text>
+                ) : null}
+              </>
+            ) : (
+              <Text style={{ color: theme.colors.textTertiary, fontSize: 14 }}>
+                播放到有字幕的位置后会自动出现。
+              </Text>
+            )}
+          </View>
+        ) : (
+          <View style={{ marginTop: 20, gap: 10 }}>
+            {[92, 78, 54].map((width, index) => (
+              <View
+                key={width}
+                style={{
+                  height: 12,
+                  width: `${width}%` as any,
+                  borderRadius: 6,
+                  backgroundColor: theme.colors.surfaceAlt,
+                  opacity: 1 - index * 0.18,
+                }}
+              />
+            ))}
+          </View>
+        )}
+
+        <Pressable
+          onPress={() => setBlindReveal((value) => !value)}
+          style={{ marginTop: 26, alignSelf: 'flex-start' }}
+        >
+          <Text style={{ color: theme.colors.textTertiary, fontSize: 11.5 }}>
+            {blindReveal ? '轻点隐藏原文' : '轻点显示原文'}
+          </Text>
+        </Pressable>
+      </View>
+      <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 14 }}>
+        <Pressable
+          onPress={() => setBlindMode(false)}
+          style={{
+            paddingHorizontal: 15,
+            height: 34,
+            borderRadius: 17,
+            backgroundColor: theme.colors.surfaceAlt,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>退出盲听</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+
   return (
-    <View style={[styles.root, { backgroundColor: landscape ? '#000000' : theme.colors.bg }]}>
+    <View
+      style={[
+        styles.root,
+        { backgroundColor: landscape ? '#000000' : theme.colors.playerBg },
+      ]}
+    >
       <StatusBar hidden={landscape} style={landscape || theme.dark ? 'light' : 'dark'} />
 
       <View
         style={[
           styles.header,
-          { paddingTop: Math.max(10, insets.top) },
+          { paddingTop: Math.max(8, insets.top) },
           landscape && { display: 'none' },
         ]}
       >
-        <Pressable
-          style={[styles.headerButton, { backgroundColor: theme.colors.surfaceAlt }]}
-          onPress={() => router.back()}
-          hitSlop={10}
-        >
-          <Ionicons name="chevron-back" size={24} color={theme.colors.text} />
+        <Pressable style={styles.headerPlain} onPress={() => router.back()} hitSlop={10}>
+          <Ionicons name="arrow-back" size={23} color={theme.colors.text} />
         </Pressable>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={[styles.headerTitle, { color: theme.colors.text }]} numberOfLines={1}>
+        <View style={{ flex: 1, minWidth: 0, alignItems: 'center', paddingHorizontal: 6 }}>
+          <Text
+            style={[styles.headerTitle, { color: theme.colors.text }]}
+            numberOfLines={1}
+          >
             {displayTitle}
           </Text>
           {displayAuthor ? (
-            <Text style={[styles.headerSubtitle, { color: theme.colors.textSecondary }]} numberOfLines={1}>
+            <Text
+              style={[styles.headerSubtitle, { color: theme.colors.textTertiary }]}
+              numberOfLines={1}
+            >
               {displayAuthor}
             </Text>
           ) : null}
         </View>
-        <Pressable
-          style={[styles.headerButton, { backgroundColor: theme.colors.surfaceAlt }]}
-          onPress={() => setSheet(true)}
-          hitSlop={10}
-        >
-          <Ionicons name="ellipsis-vertical" size={22} color={theme.colors.text} />
+        <Pressable style={styles.headerPlain} onPress={() => setSheet(true)} hitSlop={10}>
+          <Ionicons name="ellipsis-horizontal" size={22} color={theme.colors.text} />
         </Pressable>
       </View>
 
@@ -841,55 +1273,39 @@ export default function PlayerScreen() {
 
       {!landscape ? (
         <View style={{ flex: 1 }}>
-          <View style={styles.transcriptHeader}>
-            <Text style={[styles.transcriptTitle, { color: theme.colors.text }]}>字幕稿</Text>
-            {status ? (
-              <View style={styles.statusRow}>
-                <ActivityIndicator size="small" color={theme.colors.primary} />
-                <Text
-                  style={[styles.statusText, { color: theme.colors.textTertiary }]}
-                  numberOfLines={1}
-                >
-                  {status}
+          {blindMode ? (
+            blindCard
+          ) : (
+            <>
+              {nowCard}
+              <View style={styles.transcriptHeader}>
+                <Text style={[styles.transcriptTitle, { color: theme.colors.text }]}>
+                  字幕稿
                 </Text>
+                {status ? (
+                  <View style={styles.statusRow}>
+                    <ActivityIndicator size="small" color={theme.colors.primary} />
+                    <Text
+                      style={[styles.statusText, { color: theme.colors.textTertiary }]}
+                      numberOfLines={1}
+                    >
+                      {status}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={[styles.statusText, { color: theme.colors.textTertiary }]}>
+                    点句子可跳转
+                  </Text>
+                )}
               </View>
-            ) : (
-              <Text style={[styles.statusText, { color: theme.colors.textTertiary }]}>
-                点句子可跳转
-              </Text>
-            )}
-          </View>
-          {transcript}
+              {transcript}
+            </>
+          )}
           {controls}
         </View>
       ) : (
         <>
-          <Pressable
-            style={[styles.landscapeBack, { top: Math.max(12, insets.top) }]}
-            onPress={exitFullscreen}
-          >
-            <Ionicons name="chevron-back" size={24} color="#FFFFFF" />
-          </Pressable>
-          <View
-            style={[styles.landscapeTitle, { top: Math.max(12, insets.top) }]}
-            pointerEvents="none"
-          >
-            <Text style={styles.landscapeTitleText} numberOfLines={1}>
-              {displayTitle}
-            </Text>
-            {displayAuthor ? (
-              <Text style={styles.landscapeAuthor} numberOfLines={1}>
-                {displayAuthor}
-              </Text>
-            ) : null}
-          </View>
-          <Pressable
-            style={[styles.landscapeMore, { top: Math.max(12, insets.top) }]}
-            onPress={() => setSheet(true)}
-          >
-            <Ionicons name="ellipsis-vertical" size={22} color="#FFFFFF" />
-          </Pressable>
-          {controls}
+          {landscapeOverlay}
         </>
       )}
 
@@ -899,9 +1315,73 @@ export default function PlayerScreen() {
         </View>
       ) : null}
 
+      {modeMenu ? modeMenuOverlay() : null}
       {sheet ? sheetOverlay() : null}
     </View>
   );
+
+  function modeMenuOverlay() {
+    const options: Array<{ id: SubtitleMode; label: string; desc: string }> = [
+      { id: 'original', label: '原文字幕', desc: '只显示视频原语言' },
+      { id: 'translation', label: '翻译字幕', desc: '只显示中文翻译' },
+      { id: 'bilingual', label: '双语字幕', desc: '原文 + 翻译' },
+    ];
+    return (
+      <View style={styles.modeMask}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={() => setModeMenu(false)} />
+        <View style={[styles.modeCard, { backgroundColor: theme.colors.card }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '800' }}>
+              字幕显示
+            </Text>
+            <Pressable onPress={() => setModeMenu(false)} hitSlop={8}>
+              <Ionicons name="close" size={20} color={theme.colors.textTertiary} />
+            </Pressable>
+          </View>
+          {options.map((option) => {
+            const active = subtitleMode === option.id;
+            return (
+              <Pressable
+                key={option.id}
+                onPress={() => setSubtitleMode(option.id)}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingVertical: 12,
+                  gap: 10,
+                  borderBottomWidth:
+                    option.id === 'bilingual' ? 0 : StyleSheet.hairlineWidth,
+                  borderBottomColor: theme.colors.border,
+                }}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: theme.colors.text, fontSize: 14.5, fontWeight: '700' }}>
+                    {option.label}
+                  </Text>
+                  <Text style={{ color: theme.colors.textTertiary, fontSize: 11, marginTop: 2 }}>
+                    {option.desc}
+                  </Text>
+                </View>
+                {active ? (
+                  <Ionicons name="checkmark-circle" size={22} color={theme.colors.primary} />
+                ) : (
+                  <View
+                    style={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: 11,
+                      borderWidth: 1.4,
+                      borderColor: theme.colors.borderStrong,
+                    }}
+                  />
+                )}
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+    );
+  }
 
   function sheetOverlay() {
     return (
@@ -945,16 +1425,34 @@ export default function PlayerScreen() {
               />
               <SheetRow
                 icon="text-outline"
-                title="字体大小"
+                title="竖屏字幕字号"
                 right={
                   <View style={[styles.fontStepper, { backgroundColor: theme.colors.surface }]}>
-                    <Pressable onPress={() => changeFontSize(-1)} style={styles.stepButton}>
+                    <Pressable onPress={() => changeFontSize(-1, 'portrait')} style={styles.stepButton}>
                       <Ionicons name="remove" size={18} color={theme.colors.text} />
                     </Pressable>
                     <Text style={[styles.fontStepValue, { color: theme.colors.textSecondary }]}>
                       {fontSize}px
                     </Text>
-                    <Pressable onPress={() => changeFontSize(1)} style={styles.stepButton}>
+                    <Pressable onPress={() => changeFontSize(1, 'portrait')} style={styles.stepButton}>
+                      <Ionicons name="add" size={18} color={theme.colors.text} />
+                    </Pressable>
+                  </View>
+                }
+              />
+              <SheetRow
+                icon="scan-outline"
+                title="全屏字幕字号"
+                subtitle="横屏全屏独立字号，不影响竖屏"
+                right={
+                  <View style={[styles.fontStepper, { backgroundColor: theme.colors.surface }]}>
+                    <Pressable onPress={() => changeFontSize(-1, 'landscape')} style={styles.stepButton}>
+                      <Ionicons name="remove" size={18} color={theme.colors.text} />
+                    </Pressable>
+                    <Text style={[styles.fontStepValue, { color: theme.colors.textSecondary }]}>
+                      {landscapeFontSize}px
+                    </Text>
+                    <Pressable onPress={() => changeFontSize(1, 'landscape')} style={styles.stepButton}>
                       <Ionicons name="add" size={18} color={theme.colors.text} />
                     </Pressable>
                   </View>
@@ -963,21 +1461,7 @@ export default function PlayerScreen() {
               <SheetRow
                 icon="color-wand-outline"
                 title="翻译引擎"
-                value={
-                  settings.provider === 'auto'
-                    ? '自动'
-                    : settings.provider === 'microsoft'
-                      ? 'Microsoft'
-                      : settings.provider === 'google'
-                        ? 'Google'
-                        : settings.provider === 'google2'
-                          ? 'Google2'
-                          : settings.provider === 'deepseek'
-                            ? 'DeepSeek'
-                            : settings.provider === 'siliconflow'
-                              ? 'SiliconFlow'
-                              : 'OpenAI'
-                }
+                value={providerDisplayName(settings.provider)}
                 onPress={() => {
                   setSheet(false);
                   router.push('/settings/translation' as any);
@@ -1035,8 +1519,10 @@ export default function PlayerScreen() {
     try {
       const translated = await translateCueList(videoId, sourceCues, trackKey, {
         contextTitle: metaTitle,
+        from: trackKey.split(':')[0],
       });
       setTranslatedCues(translated.cues);
+      setProviderLabel(providerDisplayName(translated.provider));
       setStatus('');
       setToast('字幕已重新翻译');
     } catch (error) {
@@ -1113,25 +1599,23 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingBottom: 10,
+    paddingHorizontal: 12,
+    paddingBottom: 8,
     gap: 4,
   },
-  headerButton: {
+  headerPlain: {
     width: 40,
     height: 40,
-    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
   },
   headerTitle: { color: '#F5F2FF', fontSize: 16, fontWeight: '800', letterSpacing: -0.2 },
   headerSubtitle: { color: '#8D849D', fontSize: 11, marginTop: 2 },
   videoFrame: {
-    width: '100%',
+    marginHorizontal: 14,
     backgroundColor: '#000000',
     overflow: 'hidden',
-    borderRadius: 0,
+    borderRadius: 18,
   },
   landscapeVideo: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000000' },
   webview: { flex: 1, backgroundColor: '#000000' },
@@ -1163,7 +1647,7 @@ const styles = StyleSheet.create({
   },
   qualityChip: {
     position: 'absolute',
-    right: 10,
+    left: 10,
     top: 10,
     backgroundColor: 'rgba(12,9,18,0.68)',
     borderWidth: StyleSheet.hairlineWidth,
@@ -1173,6 +1657,19 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   qualityChipText: { color: '#C9BFFF', fontSize: 10, fontWeight: '700' },
+  videoFullscreen: {
+    position: 'absolute',
+    right: 10,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(10,8,16,0.7)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 8,
+  },
   problemOverlay: {
     position: 'absolute',
     top: 0,
@@ -1195,12 +1692,20 @@ const styles = StyleSheet.create({
   problemButtonGhost: { backgroundColor: 'rgba(255,255,255,0.1)' },
   problemButtonText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
   activeTranslation: { color: '#E7E1F5', fontSize: 16, lineHeight: 23, marginTop: 5 },
+  nowCard: {
+    marginHorizontal: 18,
+    marginTop: 12,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
   transcriptHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    marginTop: 10,
+    marginTop: 14,
     paddingBottom: 2,
   },
   transcriptTitle: { color: '#F5F2FF', fontSize: 15, fontWeight: '800' },
@@ -1214,8 +1719,8 @@ const styles = StyleSheet.create({
   cueTranslationActive: { color: '#F1ECFA' },
   emptyTranscript: { alignItems: 'center', paddingTop: 36, gap: 10 },
   emptyTranscriptText: { color: '#8D849D', fontSize: 12, textAlign: 'center', lineHeight: 18, paddingHorizontal: 20 },
-  controls: { backgroundColor: '#120E1B', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#241C33', paddingHorizontal: 18, paddingTop: 10 },
-  progressTouch: { height: 24, justifyContent: 'center' },
+  controls: { backgroundColor: '#120E1B', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#241C33', paddingHorizontal: 18, paddingTop: 6 },
+  progressTouch: { height: 22, justifyContent: 'center' },
   progressRail: { height: 4, borderRadius: 2, backgroundColor: '#2B2340', overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 2, backgroundColor: '#8B72FF' },
   progressThumb: {
@@ -1226,10 +1731,34 @@ const styles = StyleSheet.create({
     backgroundColor: '#C4B5FD',
     marginLeft: -6,
   },
-  timeRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 },
+  timeRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 0 },
   timeText: { color: '#8A8099', fontSize: 11, fontVariant: ['tabular-nums'] },
-  transport: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 32, paddingVertical: 8 },
+  transport: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+  },
   transportSmall: { width: 42, height: 38, alignItems: 'center', justifyContent: 'center' },
+  ratePill: {
+    minWidth: 52,
+    height: 30,
+    paddingHorizontal: 9,
+    borderRadius: 15,
+    backgroundColor: '#F0ECFF',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+  },
+  loopButton: {
+    width: 38,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   playButton: {
     width: 56,
     height: 56,
@@ -1276,6 +1805,118 @@ const styles = StyleSheet.create({
   },
   landscapeSubOriginal: { color: '#FFFFFF', fontSize: 18, fontWeight: '800', textAlign: 'center', textShadowColor: '#000', textShadowRadius: 6 },
   landscapeSubTranslation: { color: '#E4DEF2', fontSize: 14, textAlign: 'center', marginTop: 3, textShadowColor: '#000', textShadowRadius: 6 },
+  landTop: {
+    position: 'absolute',
+    left: 16,
+    right: 12,
+    top: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    zIndex: 10,
+  },
+  landTime: {
+    color: '#EDE9F7',
+    fontSize: 11,
+    fontVariant: ['tabular-nums'],
+    textShadowColor: '#000',
+    textShadowRadius: 4,
+  },
+  landProgressTouch: { flex: 1, height: 22, justifyContent: 'center', minWidth: 80 },
+  landProgressRail: { height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.28)', overflow: 'hidden' },
+  landProgressFill: { height: '100%', backgroundColor: '#FFFFFF' },
+  landIconButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0,0,0,0.42)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  landIconActive: { backgroundColor: 'rgba(124,92,255,0.78)' },
+  landCc: { color: '#FFFFFF', fontSize: 12, fontWeight: '900', letterSpacing: 0.5 },
+  landCenter: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: '43%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 20,
+    zIndex: 9,
+  },
+  landTransportButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(0,0,0,0.42)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  landPlay: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    backgroundColor: 'rgba(124,92,255,0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  landRatePill: {
+    minWidth: 46,
+    height: 30,
+    paddingHorizontal: 8,
+    borderRadius: 15,
+    backgroundColor: 'rgba(0,0,0,0.48)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  landRateText: { color: '#FFFFFF', fontSize: 11.5, fontWeight: '800' },
+  landLoopActive: { backgroundColor: 'rgba(124,92,255,0.8)' },
+  landSubBox: {
+    position: 'absolute',
+    left: 40,
+    right: 40,
+    backgroundColor: 'rgba(16,13,24,0.6)',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    zIndex: 8,
+  },
+  landSubOriginal: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    lineHeight: 30,
+    textAlign: 'center',
+    textShadowColor: '#000',
+    textShadowRadius: 6,
+  },
+  landSubTranslation: {
+    color: '#E9E3F5',
+    lineHeight: 24,
+    textAlign: 'center',
+    marginTop: 2,
+    textShadowColor: '#000',
+    textShadowRadius: 6,
+  },
+  modeMask: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: 'rgba(10,8,16,0.45)',
+    justifyContent: 'flex-end',
+    padding: 16,
+    paddingBottom: 92,
+    zIndex: 90,
+  },
+  modeCard: {
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 4,
+  },
   toast: {
     position: 'absolute',
     alignSelf: 'center',

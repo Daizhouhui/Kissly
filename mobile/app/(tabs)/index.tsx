@@ -1,6 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import {
@@ -19,7 +18,6 @@ import { useAppStore } from '../../src/core/store';
 import { DiscoverLayout } from '../../src/core/types';
 import { relativeTime } from '../../src/core/utils';
 import { useFeed } from '../../src/hooks/useFeed';
-import { PrimaryButton } from '../../src/ui/components';
 import { useAppTheme } from '../../src/ui/theme';
 import { VideoCard } from '../../src/ui/VideoCard';
 
@@ -39,9 +37,11 @@ export default function HomeScreen() {
   const history = useAppStore((state) => state.history);
   const layout = useAppStore((state) => state.settings.discoverLayout);
   const patchSettings = useAppStore((state) => state.patchSettings);
-  const { items, loading, refreshing, updatedAt, refresh } = useFeed();
   const [filter, setFilter] = useState<Filter>('all');
   const [channelFilter, setChannelFilter] = useState('');
+  const { items, loading, refreshing, loadingMore, hasMore, total, updatedAt, refresh, loadMore } =
+    useFeed(channelFilter);
+
   const watched = useMemo(
     () =>
       new Set(
@@ -54,18 +54,20 @@ export default function HomeScreen() {
 
   const visible = useMemo(() => {
     return items.filter((item) => {
-      if (channelFilter && item.channelId !== channelFilter) return false;
       if (filter === 'unwatched' && watched.has(item.videoId)) return false;
       return true;
     });
-  }, [channelFilter, filter, items, watched]);
+  }, [filter, items, watched]);
 
-  const openSearch = () => {
-    router.push('/add-subscription' as any);
-  };
+  const openSearch = () => router.push('/add-subscription' as any);
 
-  const filterRow = (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 14, marginBottom: 10 }}>
+  const chips = (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={{ gap: 8, paddingRight: 18 }}
+      style={{ marginTop: 12, marginBottom: 4 }}
+    >
       {(['all', 'unwatched'] as Filter[]).map((value) => {
         const active = filter === value;
         return (
@@ -73,21 +75,21 @@ export default function HomeScreen() {
             key={value}
             onPress={() => setFilter(value)}
             style={{
-              paddingHorizontal: 14,
-              height: 32,
-              borderRadius: 16,
+              paddingHorizontal: 16,
+              height: 34,
+              borderRadius: 17,
               alignItems: 'center',
               justifyContent: 'center',
               backgroundColor: active ? theme.colors.primary : 'transparent',
               borderWidth: active ? 0 : StyleSheet.hairlineWidth,
-              borderColor: theme.colors.border,
+              borderColor: theme.colors.borderStrong,
             }}
           >
             <Text
               style={{
                 color: active ? '#FFFFFF' : theme.colors.textSecondary,
-                fontSize: 12,
-                fontWeight: active ? '700' : '500',
+                fontSize: 12.5,
+                fontWeight: active ? '800' : '600',
               }}
             >
               {value === 'all' ? '全部' : '未看完'}
@@ -95,69 +97,55 @@ export default function HomeScreen() {
           </Pressable>
         );
       })}
-      <View style={{ flex: 1 }} />
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-        {LAYOUTS.map((option) => {
-          const active = layout === option.id;
-          return (
-            <Pressable
-              key={option.id}
-              onPress={() => patchSettings({ discoverLayout: option.id })}
-              hitSlop={6}
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 10,
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: active ? theme.colors.primarySoft : 'transparent',
-              }}
-            >
-              <Ionicons
-                name={option.icon}
-                size={19}
-                color={active ? theme.colors.primary : theme.colors.textTertiary}
-              />
-            </Pressable>
-          );
-        })}
-      </View>
-    </View>
+      {LAYOUTS.map((option) => {
+        const active = layout === option.id;
+        return (
+          <Pressable
+            key={option.id}
+            onPress={() => patchSettings({ discoverLayout: option.id })}
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 17,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: active ? theme.colors.primarySoft : 'transparent',
+              borderWidth: active ? 0 : StyleSheet.hairlineWidth,
+              borderColor: theme.colors.borderStrong,
+            }}
+          >
+            <Ionicons
+              name={option.icon}
+              size={17}
+              color={active ? theme.colors.primary : theme.colors.textTertiary}
+            />
+          </Pressable>
+        );
+      })}
+    </ScrollView>
   );
 
   const header = (
     <View>
       <View style={styles.titleRow}>
         <View style={{ flex: 1 }}>
-          <Text style={{ color: theme.colors.text, fontSize: 30, fontWeight: '900', letterSpacing: -0.9 }}>
+          <Text style={{ color: theme.colors.text, fontSize: 25, fontWeight: '900', letterSpacing: -0.7 }}>
             发现
           </Text>
-          <Text style={{ color: theme.colors.textSecondary, fontSize: 12.5, marginTop: 4 }}>
+          <Text style={{ color: theme.colors.textSecondary, fontSize: 11.5, marginTop: 3 }}>
             订阅更新 · 点开就能看双语字幕
           </Text>
         </View>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          <Pressable
-            onPress={() => router.push('/subscriptions' as any)}
-            style={({ pressed }) => [
-              styles.circleButton,
-              { backgroundColor: theme.colors.card, borderColor: theme.colors.border },
-              pressed && { opacity: 0.7 },
-            ]}
-          >
-            <Ionicons name="albums-outline" size={19} color={theme.colors.primary} />
-          </Pressable>
-          <Pressable
-            onPress={openSearch}
-            style={({ pressed }) => [
-              styles.circleButton,
-              { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
-              pressed && { opacity: 0.8 },
-            ]}
-          >
-            <Ionicons name="add" size={22} color="#FFFFFF" />
-          </Pressable>
-        </View>
+        <Pressable
+          onPress={() => router.push('/subscriptions' as any)}
+          hitSlop={8}
+          style={({ pressed }) => [styles.headerIcon, pressed && { opacity: 0.6 }]}
+        >
+          <Ionicons name="albums-outline" size={21} color={theme.colors.text} />
+        </Pressable>
+        <Pressable onPress={openSearch} hitSlop={8} style={({ pressed }) => [styles.headerIcon, pressed && { opacity: 0.6 }]}>
+          <Ionicons name="add" size={24} color={theme.colors.text} />
+        </Pressable>
       </View>
 
       <Pressable
@@ -167,49 +155,48 @@ export default function HomeScreen() {
           alignItems: 'center',
           gap: 9,
           backgroundColor: theme.colors.card,
-          borderRadius: 16,
-          paddingHorizontal: 14,
-          height: 48,
-          marginTop: 18,
+          borderRadius: 24,
+          paddingHorizontal: 16,
+          height: 46,
+          marginTop: 16,
           borderWidth: StyleSheet.hairlineWidth,
           borderColor: theme.colors.border,
         }}
       >
-        <Ionicons name="search" size={18} color={theme.colors.textTertiary} />
+        <Ionicons name="search" size={19} color={theme.colors.textTertiary} />
         <Text style={{ flex: 1, color: theme.colors.textTertiary, fontSize: 14 }}>
           搜索 YouTube 频道
         </Text>
-        <Text style={{ color: theme.colors.primary, fontSize: 11.5, fontWeight: '700' }}>搜索</Text>
       </Pressable>
 
       {subscriptions.length > 0 ? (
         <View style={{ marginTop: 16 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 9 }}>
             <Text style={{ color: theme.colors.text, fontSize: 14, fontWeight: '800' }}>我的频道</Text>
             <Pressable onPress={() => router.push('/subscriptions' as any)} hitSlop={8}>
               <Text style={{ color: theme.colors.primary, fontSize: 11.5, fontWeight: '700' }}>
-                管理频道
+                全部频道
               </Text>
             </Pressable>
           </View>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: 14, paddingRight: 4, paddingBottom: 4 }}
+            contentContainerStyle={{ gap: 13, paddingRight: 4, paddingBottom: 4 }}
           >
-            <Pressable onPress={() => setChannelFilter('')} style={{ alignItems: 'center', width: 56 }}>
+            <Pressable onPress={() => setChannelFilter('')} style={{ alignItems: 'center', width: 54 }}>
               <View
                 style={[
                   styles.channelAvatar,
                   {
-                    backgroundColor: theme.colors.surfaceAlt,
+                    backgroundColor: channelFilter ? theme.colors.surfaceAlt : theme.colors.primarySoft,
                     borderColor: channelFilter ? 'transparent' : theme.colors.primary,
                   },
                 ]}
               >
                 <Ionicons
                   name="grid-outline"
-                  size={20}
+                  size={19}
                   color={channelFilter ? theme.colors.textTertiary : theme.colors.primary}
                 />
               </View>
@@ -230,13 +217,13 @@ export default function HomeScreen() {
                 <Pressable
                   key={sub.channelId}
                   onPress={() => setChannelFilter(active ? '' : sub.channelId)}
-                  style={{ alignItems: 'center', width: 56 }}
+                  style={{ alignItems: 'center', width: 54 }}
                 >
                   <View
                     style={[
                       styles.channelAvatar,
                       {
-                        borderColor: active ? theme.colors.primary : theme.colors.border,
+                        borderColor: active ? theme.colors.primary : 'transparent',
                         backgroundColor: theme.colors.surfaceAlt,
                       },
                     ]}
@@ -268,21 +255,16 @@ export default function HomeScreen() {
               );
             })}
           </ScrollView>
-          {filterRow}
+          {chips}
         </View>
       ) : (
-        <View>{filterRow}</View>
+        <View>{chips}</View>
       )}
     </View>
   );
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
-      <LinearGradient
-        pointerEvents="none"
-        colors={[theme.colors.primarySoft, theme.colors.bg]}
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 260 }}
-      />
       <FlatList
         key={layout}
         data={visible}
@@ -290,9 +272,9 @@ export default function HomeScreen() {
         numColumns={layout === 'grid' ? 2 : 1}
         columnWrapperStyle={layout === 'grid' ? { gap: 12 } : undefined}
         contentContainerStyle={{
-          paddingTop: insets.top + 10,
+          paddingTop: insets.top + 14,
           paddingHorizontal: 18,
-          paddingBottom: 110,
+          paddingBottom: 96,
           flexGrow: 1,
         }}
         ListHeaderComponent={header}
@@ -314,6 +296,8 @@ export default function HomeScreen() {
             />
           </View>
         )}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.45}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -324,24 +308,24 @@ export default function HomeScreen() {
         }
         ListEmptyComponent={
           loading ? (
-            <View style={{ paddingTop: 30, alignItems: 'center', gap: 10 }}>
+            <View style={{ paddingTop: 34, alignItems: 'center', gap: 10 }}>
               <ActivityIndicator color={theme.colors.primary} />
               <Text style={{ color: theme.colors.textTertiary, fontSize: 12 }}>正在拉取订阅视频…</Text>
             </View>
           ) : subscriptions.length === 0 ? (
-            <View style={{ alignItems: 'center', paddingTop: 46, paddingHorizontal: 24 }}>
+            <View style={{ alignItems: 'center', paddingTop: 52, paddingHorizontal: 26 }}>
               <View
                 style={{
-                  width: 84,
-                  height: 84,
-                  borderRadius: 42,
+                  width: 76,
+                  height: 76,
+                  borderRadius: 38,
                   backgroundColor: theme.colors.primarySoft,
                   alignItems: 'center',
                   justifyContent: 'center',
-                  marginBottom: 18,
+                  marginBottom: 16,
                 }}
               >
-                <Ionicons name="logo-youtube" size={36} color={theme.colors.primary} />
+                <Ionicons name="logo-youtube" size={32} color={theme.colors.primary} />
               </View>
               <Text style={{ color: theme.colors.text, fontSize: 18, fontWeight: '800', marginBottom: 7 }}>
                 从第一个频道开始
@@ -352,28 +336,45 @@ export default function HomeScreen() {
                   fontSize: 13,
                   lineHeight: 20,
                   textAlign: 'center',
-                  marginBottom: 22,
+                  marginBottom: 20,
                 }}
               >
-                搜索你常看的 YouTube 频道，首页会按更新时间汇总，点开即可看双语字幕。
+                搜索常看的 YouTube 频道，首页会按更新时间汇总。
               </Text>
-              <PrimaryButton label="搜索频道" icon="search" onPress={openSearch} style={{ width: 200 }} />
+              <Pressable
+                onPress={openSearch}
+                style={{
+                  height: 44,
+                  paddingHorizontal: 26,
+                  borderRadius: 22,
+                  backgroundColor: theme.colors.primary,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Text style={{ color: '#FFFFFF', fontSize: 13.5, fontWeight: '800' }}>搜索频道</Text>
+              </Pressable>
             </View>
           ) : (
             <View style={{ alignItems: 'center', paddingTop: 46 }}>
               <Ionicons name="search-outline" size={32} color={theme.colors.textTertiary} />
               <Text style={{ color: theme.colors.textSecondary, fontSize: 13, marginTop: 12 }}>
-                没有找到匹配的视频
+                {filter === 'unwatched' ? '上滑继续加载，找没看完的视频' : '没有找到匹配的视频'}
               </Text>
             </View>
           )
         }
         ListFooterComponent={
-          !loading && visible.length > 0 ? (
-            <Text style={{ color: theme.colors.textTertiary, fontSize: 11, textAlign: 'center', paddingTop: 10 }}>
-              已加载 {visible.length} 个视频 · 下拉刷新
-              {updatedAt ? ` · ${relativeTime(updatedAt)}更新` : ''}
-            </Text>
+          visible.length > 0 ? (
+            <View style={{ paddingTop: 14, paddingBottom: 8, alignItems: 'center', gap: 6 }}>
+              {loadingMore ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
+              <Text style={{ color: theme.colors.textTertiary, fontSize: 11 }}>
+                {hasMore
+                  ? `已加载 ${visible.length} / ${Math.max(total, visible.length)} 条 · 上滑加载更多`
+                  : `已加载全部 ${visible.length} 条`}
+                {updatedAt ? ` · ${relativeTime(updatedAt)}更新` : ''}
+              </Text>
+            </View>
           ) : (
             <View />
           )
@@ -388,21 +389,21 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   titleRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingTop: 4,
+    alignItems: 'center',
+    paddingTop: 2,
+    gap: 2,
   },
-  circleButton: {
+  headerIcon: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
   channelAvatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 54,
+    height: 54,
+    borderRadius: 27,
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
