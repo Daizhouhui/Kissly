@@ -16,6 +16,7 @@ import { WebView, WebViewMessageEvent } from 'react-native-webview';
 
 import { useAppStore } from '@/src/core/store';
 import { Subscription } from '@/src/core/types';
+import { resolveChannelInput } from '@/src/core/youtube/channel';
 import { useAppTheme } from '@/src/ui/theme';
 
 const AnyWebView: any = WebView;
@@ -49,69 +50,219 @@ const CHANNEL_BRIDGE = `
   function textOf(value){
     if (!value) return '';
     if (typeof value === 'string') return value;
+    if (typeof value.content === 'string') return value.content;
     if (value.simpleText) return value.simpleText;
     if (value.runs && value.runs.length) return value.runs.map(function(r){return r.text||'';}).join('');
     return '';
   }
+  function normalizeUrl(url){
+    var value=String(url||'');
+    if (!value) return '';
+    return value.indexOf('//')===0 ? 'https:'+value : value;
+  }
   function thumbOf(value){
-    try{
-      if (value.thumbnail && value.thumbnail.thumbnails && value.thumbnail.thumbnails.length){
-        var list=value.thumbnail.thumbnails;
-        return list[list.length-1].url || '';
+    var found='';
+    function scan(node, depth){
+      if(found || !node || depth>9) return;
+      if(Array.isArray(node)){ for(var i=0;i<node.length;i++) scan(node[i], depth+1); return; }
+      if(typeof node!=='object') return;
+      var list=node.thumbnails || node.sources;
+      if(Array.isArray(list) && list.length){
+        for(var j=list.length-1;j>=0;j--){
+          if(list[j] && list[j].url){ found=normalizeUrl(list[j].url); return; }
+        }
       }
-    }catch(e){}
-    return '';
+      for(var key in node){
+        if(key==='thumbnails'||key==='sources') continue;
+        if(node[key] && typeof node[key]==='object') scan(node[key], depth+1);
+      }
+    }
+    scan(value,0);
+    return found;
   }
   function parseData(){
     var items=[];
     var seen={};
-    function add(item){
-      if(!item || !item.channelId) return;
-      var id=String(item.channelId);
-      if(id.indexOf('UC')!==0 || seen[id]) return;
-      seen[id]=true;
-      var title=textOf(item.title) || textOf(item.channelTitle) || '';
-      if(!title) return;
-      var handle='';
-      try{
-        var url=item.navigationEndpoint && item.navigationEndpoint.browseEndpoint &&
-          item.navigationEndpoint.browseEndpoint.canonicalBaseUrl;
-        if(url && url.charAt(0)==='@') handle=url;
-      }catch(e){}
-      items.push({ channelId:id, title:title, handle:handle, avatar:thumbOf(item) });
+    var byId={};
+    var byHandle={};
+    var dataCount=0;
+    var domCount=0;
+    var domLinks=0;
+    var channelIdRe=/^UC[\\w-]{22}$/;
+    function decodePart(value){
+      var text=String(value||'');
+      try{ return decodeURIComponent(text); }catch(e){ return text; }
+    }
+    function normalizeHandle(value){
+      var handle=String(value||'').trim();
+      if(!handle) return '';
+      if(handle.indexOf('/@')===0) handle=handle.slice(1);
+      if(handle.charAt(0)!=='@') handle='@'+handle;
+      return '@'+decodePart(handle.slice(1));
+    }
+    function channelIdOf(value){
+      var found='';
+      function scan(node, depth){
+        if(found || !node || depth>10) return;
+        if(Array.isArray(node)){ for(var i=0;i<node.length;i++) scan(node[i], depth+1); return; }
+        if(typeof node!=='object') return;
+        var candidates=[node.channelId,node.contentId,node.browseId,node.externalId];
+        for(var c=0;c<candidates.length;c++){
+          var candidate=String(candidates[c]||'');
+          if(channelIdRe.test(candidate)){ found=candidate; return; }
+        }
+        for(var key in node){
+          if(key==='channelId'||key==='contentId'||key==='browseId'||key==='externalId') continue;
+          if(node[key] && typeof node[key]==='object') scan(node[key], depth+1);
+        }
+      }
+      scan(value,0);
+      return found;
+    }
+    function handleOf(value){
+      var found='';
+      function scan(node, depth){
+        if(found || !node || depth>9) return;
+        if(Array.isArray(node)){ for(var i=0;i<node.length;i++) scan(node[i], depth+1); return; }
+        if(typeof node!=='object') return;
+        if(typeof node.canonicalBaseUrl==='string' && node.canonicalBaseUrl.indexOf('/@')===0){
+          found=node.canonicalBaseUrl; return;
+        }
+        if(typeof node.url==='string'){
+          var match=node.url.match(/\\/@([^/?#]+)/);
+          if(match){ found='/@'+match[1]; return; }
+        }
+        for(var key in node){
+          if(key==='canonicalBaseUrl'||key==='url') continue;
+          if(node[key] && typeof node[key]==='object') scan(node[key], depth+1);
+        }
+      }
+      scan(value,0);
+      return normalizeHandle(found);
+    }
+    function titleOf(value){
+      var title=textOf(value.title) || textOf(value.channelTitle) ||
+        textOf(value.channelName) || textOf(value.name);
+      if(title) return title;
+      var metadata=value.metadata && value.metadata.lockupMetadataViewModel;
+      return textOf(metadata && metadata.title);
+    }
+    function isChannelNode(node){
+      if(!node || typeof node!=='object') return false;
+      var type=String(node.contentType||'');
+      if(type.indexOf('CHANNEL')>=0 && channelIdRe.test(String(node.contentId||''))) return true;
+      if(channelIdRe.test(String(node.contentId||'')) && (titleOf(node)||handleOf(node))) return true;
+      if(channelIdRe.test(String(node.channelId||''))) return true;
+      return false;
+    }
+    function add(raw, source){
+      if(!raw) return;
+      var id=String(raw.channelId||'');
+      if(!channelIdRe.test(id)) id='';
+      var handle=normalizeHandle(raw.handle);
+      var title=String(raw.title||'').trim();
+      if(!id && !handle) return;
+      if(!title) title=handle || id;
+      var handleKey=handle.toLowerCase();
+      var existing=(id && byId[id]) || (handleKey && byHandle[handleKey]) || null;
+      if(existing){
+        if(!existing.channelId && id){ existing.channelId=id; byId[id]=existing; seen[id]=true; }
+        if(!existing.handle && handle){ existing.handle=handle; byHandle[handleKey]=existing; }
+        if(!existing.title && title) existing.title=title;
+        if(!existing.avatar && raw.avatar) existing.avatar=normalizeUrl(raw.avatar);
+        return;
+      }
+      var key=id || ('h:'+handleKey);
+      if(seen[key]) return;
+      seen[key]=true;
+      if(handleKey) seen['h:'+handleKey]=true;
+      var item={ channelId:id, title:title, handle:handle, avatar:normalizeUrl(raw.avatar) };
+      items.push(item);
+      if(id) byId[id]=item;
+      if(handleKey) byHandle[handleKey]=item;
+      if(source==='data') dataCount++;
+      if(source==='dom') domCount++;
     }
     function walk(node, depth){
-      if(!node || depth>10) return;
+      if(!node || depth>20) return;
       if(Array.isArray(node)){ for(var i=0;i<node.length;i++) walk(node[i], depth+1); return; }
       if(typeof node!=='object') return;
-      if(node.channelId && (node.title || node.channelTitle)) add(node);
+      if(isChannelNode(node)){
+        add({ channelId:channelIdOf(node), title:titleOf(node), handle:handleOf(node), avatar:thumbOf(node) }, 'data');
+      }
       for(var key in node){
-        if(key==='channelId'||key==='title'||key==='thumbnail'||key==='navigationEndpoint') continue;
-        var value=node[key];
-        if(value && typeof value==='object') walk(value, depth+1);
+        if(key==='channelId'||key==='contentId'||key==='title'||key==='channelTitle'||key==='thumbnail'||key==='navigationEndpoint'||key==='metadata'||key==='image') continue;
+        if(node[key] && typeof node[key]==='object') walk(node[key], depth+1);
       }
     }
-    try{ walk(window.ytInitialData, 0); }catch(e){}
-    if(!items.length){
-      try{
-        var anchors=document.querySelectorAll('a[href^="/channel/UC"], a[href*="youtube.com/channel/UC"]');
-        for(var j=0;j<anchors.length;j++){
-          var href=anchors[j].getAttribute('href')||'';
-          var match=href.match(/channel\\/(UC[^/?#]+)/);
-          if(!match) continue;
-          var id=match[1];
-          if(seen[id]) continue;
-          var container=anchors[j].closest('ytd-channel-renderer, ytm-channel-item-renderer, .channel-renderer, li') || anchors[j].parentElement;
-          var titleEl=container && container.querySelector('#channel-title, .channel-title, yt-formatted-string, .title');
-          var title=titleEl ? (titleEl.textContent||'').trim() : (anchors[j].textContent||'').trim();
-          var img=container && container.querySelector('img');
-          if(!title) continue;
-          seen[id]=true;
-          items.push({ channelId:id, title:title, handle:'', avatar:img?(img.src||''):'' });
-        }
-      }catch(e){}
+    function closestChannel(node){
+      var selector='yt-lockup-view-model, ytm-channel-item-renderer, ytd-channel-renderer, ytd-grid-channel-renderer, ytm-compact-channel-renderer, ytd-compact-channel-renderer, ytm-channel-renderer';
+      for(var i=0;i<8 && node;i++){
+        try{ if(node.matches && node.matches(selector)) return node; }catch(e){}
+        node=node.parentElement;
+      }
+      return null;
     }
-    post({ type:'channels', items:items, loggedIn: detectLogin(), count:items.length });
+    function domTitle(container, anchor){
+      if(container){
+        var selectors=['#channel-title','.channel-title','.ytLockupMetadataViewModelTitle','.yt-core-attributed-string[role="text"]','h3','yt-formatted-string','span[role="text"]'];
+        for(var i=0;i<selectors.length;i++){
+          var nodes=container.querySelectorAll(selectors[i]);
+          for(var j=0;j<nodes.length;j++){
+            var text=(nodes[j].textContent||'').trim();
+            if(text) return text;
+          }
+        }
+      }
+      var own=(anchor.getAttribute('aria-label')||anchor.textContent||'').trim();
+      return own.charAt(0)==='@' ? '' : own;
+    }
+    function collectDom(){
+      var anchors=document.querySelectorAll('a[href]');
+      for(var i=0;i<anchors.length;i++){
+        var href=anchors[i].getAttribute('href')||'';
+        var path=href.replace(/^https?:\\/\\/[^/]+/, '');
+        var idMatch=path.match(/\\/channel\\/(UC[\\w-]{22})/);
+        var handleMatch=path.match(/^\\/@([^/?#]+)/) || path.match(/\\/@([^/?#]+)/);
+        if(!idMatch && !handleMatch) continue;
+        domLinks++;
+        var id=idMatch ? idMatch[1] : '';
+        var handle=handleMatch ? normalizeHandle(handleMatch[1]) : '';
+        var mapped=(id && byId[id]) || (handle && byHandle[handle.toLowerCase()]) || null;
+        var container=closestChannel(anchors[i]) || anchors[i].parentElement;
+        var title=domTitle(container, anchors[i]) || (mapped && mapped.title) || handle || id;
+        var img=container ? container.querySelector('img') : null;
+        var avatar=(img && (img.currentSrc || img.src)) || (mapped && mapped.avatar) || '';
+        add({ channelId:id || (mapped && mapped.channelId) || '', title:title, handle:handle || (mapped && mapped.handle) || '', avatar:avatar }, 'dom');
+      }
+    }
+    function addRoot(root){
+      if(!root) return;
+      if(typeof root==='string'){
+        try{ root=JSON.parse(root); }catch(e){ return; }
+      }
+      try{ walk(root,0); }catch(e){}
+    }
+    try{ addRoot(window.ytInitialData); }catch(e){}
+    try{
+      var app=document.querySelector('ytd-app, ytm-app');
+      if(app && app.data && app.data.response) addRoot(app.data.response);
+    }catch(e){}
+    try{
+      var browse=document.querySelector('ytd-browse, ytm-browse');
+      if(browse && browse.data && browse.data.response) addRoot(browse.data.response);
+      else if(browse && browse.data) addRoot(browse.data);
+    }catch(e){}
+    collectDom();
+    var unresolved=0;
+    for(var u=0;u<items.length;u++){ if(!items[u].channelId) unresolved++; }
+    post({
+      type:'channels',
+      items:items,
+      loggedIn:detectLogin(),
+      count:items.length,
+      debug:{ data:dataCount, dom:domCount, domLinks:domLinks, unresolved:unresolved, path:location.pathname }
+    });
   }
   function detectLogin(){
     try{
@@ -134,11 +285,22 @@ const CHANNEL_BRIDGE = `
   window.__kissExtractChannels = function(){
     var tries=0;
     post({type:'status', text:'正在加载频道列表…'});
+    function scrollDown(){
+      try{ window.scrollTo(0, (document.body && document.body.scrollHeight) || 0); }catch(e){}
+      try{
+        var scroller=document.scrollingElement || document.documentElement;
+        if(scroller) scroller.scrollTop=scroller.scrollHeight;
+      }catch(e){}
+      try{
+        var app=document.querySelector('ytm-app, ytd-app');
+        if(app) app.scrollTop=app.scrollHeight;
+      }catch(e){}
+    }
     function step(){
       tries++;
-      window.scrollTo(0, document.body.scrollHeight);
-      if(tries<7){ setTimeout(step, 550); }
-      else { setTimeout(parseData, 900); }
+      scrollDown();
+      if(tries<10){ setTimeout(step, 550); }
+      else { setTimeout(parseData, 1000); }
     }
     step();
     return true;
@@ -155,6 +317,14 @@ type ExtractedChannel = {
   title: string;
   handle?: string;
   avatar?: string;
+};
+
+type ExtractDebug = {
+  data?: number;
+  dom?: number;
+  domLinks?: number;
+  unresolved?: number;
+  path?: string;
 };
 
 export default function YoutubeAccountScreen() {
@@ -211,6 +381,95 @@ export default function YoutubeAccountScreen() {
     webRef.current?.injectJavaScript('window.__kissExtractChannels && window.__kissExtractChannels(); true;');
   };
 
+  const importChannels = async (message: any) => {
+    const debug = message.debug as ExtractDebug | undefined;
+    const raw = ((message.items as ExtractedChannel[] | undefined) ?? []).filter(
+      (item) => Boolean(item?.title && (item.channelId || item.handle))
+    );
+    if (!raw.length) {
+      setExtracting(false);
+      setLastCount(0);
+      setStatus(
+        debug
+          ? `没有读取到频道（页面找到 ${debug.data ?? 0} 个数据项、${debug.domLinks ?? 0} 个频道链接）。请确认停在“订阅频道”页面后重试。`
+          : '没有读取到频道。请确认已登录，并停在“订阅频道”页面后重试。'
+      );
+      return;
+    }
+
+    const direct = raw.filter(
+      (item) => item.channelId?.startsWith('UC') && item.title
+    );
+    const pending = raw.filter(
+      (item) => !item.channelId?.startsWith('UC') && item.handle
+    );
+    const resolved: Subscription[] = direct.map((item) => ({
+      channelId: item.channelId,
+      title: item.title,
+      handle: item.handle || undefined,
+      avatar: item.avatar || undefined,
+      addedAt: Date.now(),
+    }));
+    let failed = raw.length - direct.length - pending.length;
+
+    if (pending.length) {
+      let cursor = 0;
+      let finished = 0;
+      setStatus(`已找到 ${raw.length} 个频道，正在解析 ${pending.length} 个账号…`);
+      const worker = async () => {
+        while (true) {
+          const index = cursor++;
+          if (index >= pending.length) return;
+          const item = pending[index];
+          try {
+            const sub = await resolveChannelInput(item.handle as string);
+            resolved.push({
+              channelId: sub.channelId,
+              title: sub.title || item.title,
+              handle: sub.handle || item.handle,
+              avatar: sub.avatar || item.avatar,
+              addedAt: Date.now(),
+            });
+          } catch {
+            failed++;
+          }
+          finished++;
+          if (finished % 5 === 0 || finished === pending.length) {
+            setStatus(
+              `已找到 ${raw.length} 个频道，正在解析账号 ${finished}/${pending.length}…`
+            );
+          }
+        }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(4, pending.length) }, () => worker())
+      );
+    }
+
+    setExtracting(false);
+    const before = useAppStore.getState().subscriptions.length;
+    addSubscriptions(resolved);
+    const after = useAppStore.getState().subscriptions.length;
+    const added = Math.max(0, after - before);
+    setLastCount(resolved.length);
+    const suffix = failed > 0 ? `，${failed} 个未能识别账号` : '';
+    setStatus(
+      resolved.length === 0
+        ? `没有读取到有效的 Channel ID（找到 ${raw.length} 个频道项${suffix}）。请重试或改用 CSV 导入。`
+        : `读取到 ${resolved.length} 个频道，新增 ${added} 个${suffix}。`
+    );
+    if (resolved.length > 0) {
+      Alert.alert(
+        '订阅已导入',
+        `读取到 ${resolved.length} 个频道，新增 ${added} 个${suffix}。已自动去重。`,
+        [
+          { text: '继续登录', style: 'cancel' },
+          { text: '回到发现页', onPress: () => router.replace('/' as any) },
+        ]
+      );
+    }
+  };
+
   const onMessage = (event: WebViewMessageEvent) => {
     let message: any = null;
     try {
@@ -236,37 +495,8 @@ export default function YoutubeAccountScreen() {
     if (message?.type === 'channels') {
       clearTimer();
       setLoading(false);
-      setExtracting(false);
       if (typeof message.loggedIn === 'boolean') setLoggedIn(message.loggedIn);
-      const incoming: Subscription[] = (message.items as ExtractedChannel[] | undefined ?? [])
-        .filter((item) => item.channelId?.startsWith('UC') && item.title)
-        .map((item) => ({
-          channelId: item.channelId,
-          title: item.title,
-          handle: item.handle || undefined,
-          avatar: item.avatar || undefined,
-          addedAt: Date.now(),
-        }));
-      const before = subscriptions.length;
-      addSubscriptions(incoming);
-      const after = useAppStore.getState().subscriptions.length;
-      const added = Math.max(0, after - before);
-      setLastCount(incoming.length);
-      setStatus(
-        incoming.length === 0
-          ? '没有读取到频道。请确认已登录，并停在“订阅频道”页面后重试。'
-          : `读取到 ${incoming.length} 个频道，新增 ${added} 个。`
-      );
-      if (incoming.length > 0) {
-        Alert.alert(
-          '订阅已导入',
-          `读取到 ${incoming.length} 个频道，新增 ${added} 个。已自动去重。`,
-          [
-            { text: '继续登录', style: 'cancel' },
-            { text: '回到发现页', onPress: () => router.replace('/' as any) },
-          ]
-        );
-      }
+      void importChannels(message);
       return;
     }
   };
