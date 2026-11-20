@@ -116,6 +116,8 @@ export type FavoriteItem = {
   author: string;
   thumbnail?: string;
   savedAt: number;
+  progress?: number;
+  duration?: number;
 };
 
 export type ProviderResult = {

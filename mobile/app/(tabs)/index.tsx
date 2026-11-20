@@ -42,7 +42,15 @@ export default function HomeScreen() {
   const { items, loading, refreshing, updatedAt, refresh } = useFeed();
   const [filter, setFilter] = useState<Filter>('all');
   const [channelFilter, setChannelFilter] = useState('');
-  const watched = useMemo(() => new Set(history.map((item) => item.videoId)), [history]);
+  const watched = useMemo(
+    () =>
+      new Set(
+        history
+          .filter((item) => (item.progress ?? 1) >= 0.92)
+          .map((item) => item.videoId)
+      ),
+    [history]
+  );
 
   const visible = useMemo(() => {
     return items.filter((item) => {
