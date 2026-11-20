@@ -541,6 +541,98 @@ export function SettingSwitch({
   );
 }
 
+export function SelectionCircle({ selected }: { selected: boolean }) {
+  const theme = useAppTheme();
+  return (
+    <View
+      style={[
+        styles.selectionCircle,
+        {
+          borderColor: selected ? theme.colors.primary : theme.colors.borderStrong,
+          backgroundColor: selected ? theme.colors.primary : 'transparent',
+        },
+      ]}
+    >
+      {selected ? <Ionicons name="checkmark" size={14} color="#FFFFFF" /> : null}
+    </View>
+  );
+}
+
+export function ManageBar({
+  selectedCount,
+  allSelected,
+  onToggleAll,
+  onDelete,
+}: {
+  selectedCount: number;
+  allSelected: boolean;
+  onToggleAll: () => void;
+  onDelete: () => void;
+}) {
+  const theme = useAppTheme();
+  const insets = useSafeAreaInsets();
+  const disabled = selectedCount === 0;
+  return (
+    <View
+      style={[
+        styles.manageBar,
+        {
+          backgroundColor: theme.colors.card,
+          borderTopColor: theme.colors.border,
+          paddingBottom: Math.max(12, insets.bottom + 6),
+        },
+      ]}
+    >
+      <Pressable onPress={onToggleAll} hitSlop={8} style={styles.manageSelectAll}>
+        <Ionicons
+          name={allSelected ? 'checkmark-circle' : 'ellipse-outline'}
+          size={20}
+          color={allSelected ? theme.colors.primary : theme.colors.textSecondary}
+        />
+        <Text
+          style={{
+            color: allSelected ? theme.colors.primary : theme.colors.textSecondary,
+            fontSize: 12.5,
+            fontWeight: '700',
+          }}
+        >
+          {allSelected ? '取消全选' : '全选'}
+        </Text>
+      </Pressable>
+      <View style={{ flex: 1 }} />
+      <Text style={{ color: theme.colors.textTertiary, fontSize: 11.5 }}>
+        已选 {selectedCount} 项
+      </Text>
+      <Pressable
+        onPress={onDelete}
+        disabled={disabled}
+        style={({ pressed }) => [
+          styles.manageDelete,
+          {
+            backgroundColor: disabled ? theme.colors.surfaceAlt : theme.colors.danger,
+            opacity: pressed && !disabled ? 0.78 : 1,
+          },
+        ]}
+      >
+        <Ionicons
+          name="trash-outline"
+          size={16}
+          color={disabled ? theme.colors.textTertiary : '#FFFFFF'}
+        />
+        <Text
+          style={{
+            color: disabled ? theme.colors.textTertiary : '#FFFFFF',
+            fontSize: 12.5,
+            fontWeight: '800',
+          }}
+        >
+          删除{selectedCount ? ` (${selectedCount})` : ''}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
@@ -569,5 +661,42 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  selectionCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+  },
+  manageBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 30,
+    elevation: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingTop: 10,
+    paddingHorizontal: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  manageSelectAll: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: 42,
+  },
+  manageDelete: {
+    height: 42,
+    borderRadius: 13,
+    paddingHorizontal: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
 });

@@ -39,6 +39,65 @@ const CATEGORIES: Category[] = [
   { id: 'food', label: '美食', query: 'English food vlog' },
 ];
 
+function requestErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (/failed to fetch|network request failed|load failed/i.test(raw)) {
+    return '网络请求失败：请检查本机代理是否可用，或稍后重试。';
+  }
+  return raw;
+}
+
+function ChannelAvatar({
+  uri,
+  title,
+  size = 56,
+}: {
+  uri?: string;
+  title: string;
+  size?: number;
+}) {
+  const theme = useAppTheme();
+  const [failed, setFailed] = useState(false);
+  const src = uri
+    ? uri.startsWith('//')
+      ? `https:${uri}`
+      : uri.replace(/^http:\/\//i, 'https://')
+    : uri;
+
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
+
+  if (!src || failed) {
+    return (
+      <View
+        style={{
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: theme.colors.primarySoft,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Text style={{ color: theme.colors.primary, fontSize: size * 0.38, fontWeight: '900' }}>
+          {(title || '?').slice(0, 1).toUpperCase()}
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <Image
+      source={{ uri: src }}
+      style={{ width: size, height: size, borderRadius: size / 2 }}
+      contentFit="cover"
+      transition={140}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 export default function SearchChannelsScreen() {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
@@ -74,7 +133,7 @@ export default function SearchChannelsScreen() {
     } catch (error) {
       if (requestId !== requestRef.current) return;
       setRecommended([]);
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(requestErrorMessage(error));
     } finally {
       if (requestId === requestRef.current) setLoading(false);
     }
@@ -98,7 +157,7 @@ export default function SearchChannelsScreen() {
     } catch (error) {
       if (requestId !== requestRef.current) return;
       setResults([]);
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(requestErrorMessage(error));
     } finally {
       if (requestId === requestRef.current) setLoading(false);
     }
@@ -339,29 +398,7 @@ export default function SearchChannelsScreen() {
                     borderBottomColor: theme.colors.border,
                   })}
                 >
-                  {channel.avatar ? (
-                    <Image
-                      source={{ uri: channel.avatar }}
-                      style={{ width: 56, height: 56, borderRadius: 28 }}
-                      contentFit="cover"
-                      transition={140}
-                    />
-                  ) : (
-                    <View
-                      style={{
-                        width: 56,
-                        height: 56,
-                        borderRadius: 28,
-                        backgroundColor: theme.colors.primarySoft,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                    >
-                      <Text style={{ color: theme.colors.primary, fontSize: 21, fontWeight: '900' }}>
-                        {channel.title.slice(0, 1)}
-                      </Text>
-                    </View>
-                  )}
+                  <ChannelAvatar uri={channel.avatar} title={channel.title} size={56} />
                   <View style={{ flex: 1, minWidth: 0 }}>
                     <Text
                       style={{ color: theme.colors.text, fontSize: 16, fontWeight: '800' }}
@@ -487,12 +524,7 @@ export default function SearchChannelsScreen() {
                     borderColor: theme.colors.border,
                   }}
                 >
-                  {preview.avatar ? (
-                    <Image
-                      source={{ uri: preview.avatar }}
-                      style={{ width: 40, height: 40, borderRadius: 20 }}
-                    />
-                  ) : null}
+                  <ChannelAvatar uri={preview.avatar} title={preview.title} size={40} />
                   <View style={{ flex: 1 }}>
                     <Text style={{ color: theme.colors.text, fontWeight: '700' }}>
                       {preview.title}

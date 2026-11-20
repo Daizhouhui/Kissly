@@ -1,6 +1,7 @@
 import { requireNativeModule } from 'expo-modules-core';
 
 type NativeSystemTranslate = {
+  isAvailable(): Promise<boolean>;
   prepare(from: string, to: string): Promise<boolean>;
   translate(texts: string[], from: string, to: string): Promise<string[]>;
 };
@@ -14,6 +15,15 @@ try {
 
 export function isSystemTranslationSupported() {
   return !!native;
+}
+
+export async function isSystemTranslationAvailable() {
+  if (!native) return false;
+  try {
+    return await native.isAvailable();
+  } catch {
+    return false;
+  }
 }
 
 export async function prepareSystemTranslation(from: string, to: string) {

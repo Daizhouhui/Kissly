@@ -1,40 +1,104 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
+import { useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../src/core/store';
 import { relativeTime } from '../src/core/utils';
-import { NavHeader } from '../src/ui/components';
+import { ManageBar, NavHeader, SelectionCircle } from '../src/ui/components';
 import { useAppTheme } from '../src/ui/theme';
 
 export default function HistoryScreen() {
   const theme = useAppTheme();
+  const insets = useSafeAreaInsets();
   const history = useAppStore((state) => state.history);
-  const clearHistory = useAppStore((state) => state.clearHistory);
+  const removeHistory = useAppStore((state) => state.removeHistory);
+  const [manage, setManage] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+
+  const exitManage = () => {
+    setManage(false);
+    setSelectedIds(new Set());
+  };
+
+  const toggleManage = () => {
+    if (manage) {
+      exitManage();
+      return;
+    }
+    setSelectedIds(new Set());
+    setManage(true);
+  };
+
+  const toggleSelection = (videoId: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(videoId)) next.delete(videoId);
+      else next.add(videoId);
+      return next;
+    });
+  };
+
+  const allSelected = history.length > 0 && selectedIds.size === history.length;
+
+  const toggleAll = () => {
+    setSelectedIds(allSelected ? new Set() : new Set(history.map((item) => item.videoId)));
+  };
+
+  const confirmDelete = () => {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+    Alert.alert('删除历史记录', `确定删除选中的 ${ids.length} 条观看记录吗？`, [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '删除',
+        style: 'destructive',
+        onPress: () => {
+          removeHistory(ids);
+          exitManage();
+        },
+      },
+    ]);
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
       <NavHeader
         title="历史记录"
-        subtitle={`${history.length} 个最近打开的视频`}
+        subtitle={
+          manage
+            ? `已选 ${selectedIds.size} 项`
+            : `${history.length} 个最近打开的视频`
+        }
         right={
           history.length ? (
             <Pressable
               hitSlop={8}
-              onPress={() =>
-                Alert.alert('清空历史', '确定清空全部观看记录吗？', [
-                  { text: '取消', style: 'cancel' },
-                  { text: '清空', style: 'destructive', onPress: clearHistory },
-                ])
-              }
+              onPress={toggleManage}
+              style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
             >
-              <Text style={{ color: theme.colors.textTertiary, fontSize: 12 }}>清空</Text>
+              <Text
+                style={{
+                  color: manage ? theme.colors.primary : theme.colors.textSecondary,
+                  fontSize: 13,
+                  fontWeight: '700',
+                }}
+              >
+                {manage ? '完成' : '管理'}
+              </Text>
             </Pressable>
           ) : null
         }
       />
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40 }}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{
+          paddingHorizontal: 16,
+          paddingBottom: manage ? 100 + insets.bottom : 40,
+        }}
+      >
         {history.length === 0 ? (
           <View style={styles.empty}>
             <Ionicons name="time-outline" size={40} color={theme.colors.textTertiary} />
@@ -46,44 +110,71 @@ export default function HistoryScreen() {
             </Text>
           </View>
         ) : (
-          history.map((item) => (
-            <Pressable
-              key={item.videoId}
-              onPress={() =>
-                router.push({
-                  pathname: '/player',
-                  params: { videoId: item.videoId, title: item.title, author: item.author },
-                } as any)
-              }
-              style={({ pressed }) => ({ flexDirection: 'row', gap: 12, paddingVertical: 10, opacity: pressed ? 0.8 : 1 })}
-            >
-              <Image
-                source={{ uri: item.thumbnail || `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg` }}
-                style={styles.thumb}
-                contentFit="cover"
-                transition={160}
-              />
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={{ color: theme.colors.text, fontSize: 14, fontWeight: '700', lineHeight: 19 }} numberOfLines={2}>
-                  {item.title}
-                </Text>
-                <Text style={{ color: theme.colors.textSecondary, fontSize: 11.5, marginTop: 5 }} numberOfLines={1}>
-                  {item.author || 'YouTube'}
-                </Text>
-                <Text style={{ color: theme.colors.textTertiary, fontSize: 10.5, marginTop: 4 }}>
-                  打开于 {relativeTime(item.savedAt)}
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={16} color={theme.colors.textTertiary} style={{ alignSelf: 'center' }} />
-            </Pressable>
-          ))
+          history.map((item) => {
+            const selected = selectedIds.has(item.videoId);
+            return (
+              <Pressable
+                key={item.videoId}
+                accessibilityState={manage ? { selected } : undefined}
+                onPress={() => {
+                  if (manage) {
+                    toggleSelection(item.videoId);
+                    return;
+                  }
+                  router.push({
+                    pathname: '/player',
+                    params: { videoId: item.videoId, title: item.title, author: item.author },
+                  } as any);
+                }}
+                style={({ pressed }) => [styles.row, pressed && { opacity: 0.8 }]}
+              >
+                <Image
+                  source={{ uri: item.thumbnail || `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg` }}
+                  style={styles.thumb}
+                  contentFit="cover"
+                  transition={160}
+                />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{ color: theme.colors.text, fontSize: 14, fontWeight: '700', lineHeight: 19 }} numberOfLines={2}>
+                    {item.title}
+                  </Text>
+                  <Text style={{ color: theme.colors.textSecondary, fontSize: 11.5, marginTop: 5 }} numberOfLines={1}>
+                    {item.author || 'YouTube'}
+                  </Text>
+                  <Text style={{ color: theme.colors.textTertiary, fontSize: 10.5, marginTop: 4 }}>
+                    打开于 {relativeTime(item.savedAt)}
+                  </Text>
+                </View>
+                {manage ? (
+                  <SelectionCircle selected={selected} />
+                ) : (
+                  <Ionicons
+                    name="chevron-forward"
+                    size={16}
+                    color={theme.colors.textTertiary}
+                    style={{ alignSelf: 'center' }}
+                  />
+                )}
+              </Pressable>
+            );
+          })
         )}
       </ScrollView>
+
+      {manage ? (
+        <ManageBar
+          selectedCount={selectedIds.size}
+          allSelected={allSelected}
+          onToggleAll={toggleAll}
+          onDelete={confirmDelete}
+        />
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   thumb: { width: 132, aspectRatio: 16 / 9, borderRadius: 11, backgroundColor: '#241C33' },
+  row: { flexDirection: 'row', gap: 12, paddingVertical: 10 },
   empty: { alignItems: 'center', paddingTop: 80, paddingHorizontal: 30 },
 });

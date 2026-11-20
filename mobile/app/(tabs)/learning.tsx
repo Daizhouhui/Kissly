@@ -59,47 +59,65 @@ export default function LearningScreen() {
         </View>
 
         <View
-          style={{
-            marginTop: 20,
-            backgroundColor: theme.colors.card,
-            borderRadius: 22,
-            borderWidth: StyleSheet.hairlineWidth,
-            borderColor: theme.colors.border,
-            padding: 18,
-            flexDirection: 'row',
-            alignItems: 'center',
-          }}
+          style={[
+            styles.statsCard,
+            {
+              backgroundColor: theme.colors.card,
+              borderColor: theme.colors.border,
+            },
+          ]}
         >
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: theme.colors.textSecondary, fontSize: 11, fontWeight: '600' }}>收藏视频</Text>
-            <Text style={{ color: theme.colors.text, fontSize: 28, fontWeight: '900', marginTop: 2 }}>{favorites.length}</Text>
-            <Text style={{ color: theme.colors.textTertiary, fontSize: 10.5, marginTop: 2 }}>本周新增 {weekCount} 个</Text>
-          </View>
-          <View style={{ width: 1, height: 54, backgroundColor: theme.colors.border, marginHorizontal: 16 }} />
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: theme.colors.textSecondary, fontSize: 11, fontWeight: '600' }}>最近观看</Text>
-            <Text style={{ color: theme.colors.text, fontSize: 28, fontWeight: '900', marginTop: 2 }}>{history.length}</Text>
-            <Text style={{ color: theme.colors.textTertiary, fontSize: 10.5, marginTop: 2 }}>按打开时间排序</Text>
-          </View>
-          <View
-            style={{
-              width: 58,
-              height: 58,
-              borderRadius: 18,
-              backgroundColor: theme.colors.primarySoft,
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginLeft: 8,
-            }}
+          <Pressable
+            onPress={() => router.push('/favorites' as any)}
+            accessibilityLabel="查看全部收藏视频"
+            style={({ pressed }) => [styles.statsHalf, pressed && { opacity: 0.72 }]}
           >
-            <Ionicons name="bookmark" size={34} color={theme.colors.primary} />
-          </View>
+            <View style={styles.statsCopy}>
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 11, fontWeight: '600' }}>收藏视频</Text>
+              <Text style={{ color: theme.colors.text, fontSize: 26, fontWeight: '900', marginTop: 2 }}>{favorites.length}</Text>
+              <Text
+                style={{ color: theme.colors.textTertiary, fontSize: 10.5, marginTop: 2 }}
+                numberOfLines={1}
+              >
+                本周新增 {weekCount} 个
+              </Text>
+            </View>
+            <View style={[styles.statsAction, { backgroundColor: theme.colors.primarySoft }]}>
+              <Ionicons name="bookmark" size={20} color={theme.colors.primary} />
+            </View>
+          </Pressable>
+          <View style={[styles.statsDivider, { backgroundColor: theme.colors.border }]} />
+          <Pressable
+            onPress={() => router.push('/history' as any)}
+            accessibilityLabel="查看全部观看记录"
+            style={({ pressed }) => [styles.statsHalf, pressed && { opacity: 0.72 }]}
+          >
+            <View style={styles.statsCopy}>
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 11, fontWeight: '600' }}>最近观看</Text>
+              <Text style={{ color: theme.colors.text, fontSize: 26, fontWeight: '900', marginTop: 2 }}>{history.length}</Text>
+              <Text
+                style={{ color: theme.colors.textTertiary, fontSize: 10.5, marginTop: 2 }}
+                numberOfLines={1}
+              >
+                按打开时间排序
+              </Text>
+            </View>
+            <View style={[styles.statsAction, { backgroundColor: theme.colors.primarySoft }]}>
+              <Ionicons name="play-circle" size={21} color={theme.colors.primary} />
+            </View>
+          </Pressable>
         </View>
 
         <View style={styles.sectionRow}>
           <Text style={{ color: theme.colors.text, fontSize: 17, fontWeight: '800' }}>我的收藏</Text>
           {favorites.length > 0 ? (
-            <Text style={{ color: theme.colors.textTertiary, fontSize: 11 }}>点卡片直接播放</Text>
+            <Pressable
+              onPress={() => router.push('/favorites' as any)}
+              hitSlop={8}
+              accessibilityLabel="查看全部收藏视频"
+            >
+              <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>全部</Text>
+            </Pressable>
           ) : null}
         </View>
 
@@ -158,7 +176,7 @@ export default function LearningScreen() {
             </Pressable>
           </View>
         ) : (
-          favorites.map((item) => (
+          favorites.slice(0, 2).map((item) => (
             <Pressable
               key={item.videoId}
               onPress={() =>
@@ -213,7 +231,7 @@ export default function LearningScreen() {
                 <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>全部</Text>
               </Pressable>
             </View>
-            {history.slice(0, 4).map((item) => (
+            {history.slice(0, 10).map((item) => (
               <Pressable
                 key={`history-${item.videoId}`}
                 onPress={() =>
@@ -256,6 +274,35 @@ export default function LearningScreen() {
 
 const styles = StyleSheet.create({
   titleRow: { flexDirection: 'row', alignItems: 'center' },
+  statsCard: {
+    marginTop: 20,
+    borderRadius: 22,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    overflow: 'hidden',
+  },
+  statsHalf: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+  },
+  statsCopy: { flex: 1, minWidth: 0 },
+  statsAction: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statsDivider: {
+    width: StyleSheet.hairlineWidth,
+    marginVertical: 16,
+  },
   sectionRow: {
     flexDirection: 'row',
     alignItems: 'center',

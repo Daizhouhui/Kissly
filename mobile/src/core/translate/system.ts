@@ -1,7 +1,10 @@
 import {
+  isSystemTranslationAvailable,
   prepareSystemTranslation,
   systemTranslate,
 } from '../../../modules/kissly-system-translate';
+
+export { isSystemTranslationAvailable };
 
 /** On-device ML Kit translation (Android + iOS). */
 export async function systemTranslateTexts(

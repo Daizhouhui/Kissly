@@ -16,7 +16,10 @@ import { getSecret, setSecret } from '../../src/core/secrets';
 import { useAppStore } from '../../src/core/store';
 import { ProviderId } from '../../src/core/types';
 import { testTranslation } from '../../src/core/translate';
-import { prepareSystemLanguagePack } from '../../src/core/translate/system';
+import {
+  isSystemTranslationAvailable,
+  prepareSystemLanguagePack,
+} from '../../src/core/translate/system';
 import { Card, NavHeader, SectionTitle, SettingSwitch } from '../../src/ui/components';
 import { useAppTheme } from '../../src/ui/theme';
 
@@ -33,7 +36,7 @@ const FREE: Engine[] = [
   {
     id: 'auto',
     title: '自动',
-    desc: '微软 → 谷歌 → 系统内置，不再落到 Google2',
+    desc: '微软 → 谷歌 → Google 备用',
     icon: 'flash',
     color: '#7C5CFF',
     badge: '推荐',
@@ -64,8 +67,8 @@ const FREE: Engine[] = [
   },
   {
     id: 'google2',
-    title: 'Google2 备用',
-    desc: '内置公共预设 · 仅手动选择时使用',
+    title: 'Google 备用',
+    desc: '内置公共预设 · 自动链最后兜底，也可手动选择',
     icon: 'logo-google',
     color: '#34A853',
     badge: '备用',
@@ -109,6 +112,7 @@ export default function TranslationSettingsScreen() {
   const [openaiKey, setOpenaiKey] = useState('');
   const [testing, setTesting] = useState(false);
   const [preparing, setPreparing] = useState(false);
+  const [systemAvailable, setSystemAvailable] = useState(false);
 
   useEffect(() => {
     Promise.all([getSecret('deepseek'), getSecret('siliconflow'), getSecret('openai')]).then(
@@ -118,6 +122,21 @@ export default function TranslationSettingsScreen() {
         setOpenaiKey(c);
       }
     );
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    isSystemTranslationAvailable().then((available) => {
+      if (!active) return;
+      setSystemAvailable(available);
+      if (!available) {
+        setProvider((current) => (current === 'system' ? 'auto' : current));
+        if (settings.provider === 'system') patchSettings({ provider: 'auto' });
+      }
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   const selectProvider = (id: ProviderId) => {
@@ -280,6 +299,10 @@ export default function TranslationSettingsScreen() {
     </View>
   );
 
+  const freeEngines = FREE.filter(
+    (engine) => engine.id !== 'system' || systemAvailable
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
       <NavHeader
@@ -297,7 +320,7 @@ export default function TranslationSettingsScreen() {
         showsVerticalScrollIndicator={false}
       >
         <SectionTitle title="免费引擎" />
-        {engineGroup(FREE)}
+        {engineGroup(freeEngines)}
 
         <SectionTitle title="高级引擎" />
         {engineGroup(AI)}

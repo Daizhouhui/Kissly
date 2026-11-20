@@ -214,3 +214,61 @@ export function openaiConfig(
     timeoutMs,
   };
 }
+
+const ANALYSIS_PROMPT = [
+  '你是一名英语老师，请用简体中文分析下面这句视频对话。',
+  '请按以下结构输出，语言简洁、重点明确：',
+  '1. 句子主干：指出主语、谓语、宾语（如果有）。',
+  '2. 修饰成分：指出从句、介词短语、不定式、分词等分别修饰什么。',
+  '3. 时态与语态：说明句子使用的时态、语态。',
+  '4. 翻译要点：解释关键词、短语和容易误解的地方。',
+  '5. 一句话总结这句话表达了什么。',
+  '不要输出 Markdown 表格，不要重复原句和译文。',
+].join('\n');
+
+export async function aiAnalyzeSentence(
+  config: AiConfig,
+  sentence: string,
+  translation: string,
+  contextTitle?: string
+): Promise<string> {
+  if (!config.key) throw new Error(`${config.id} 没有填写 API Key`);
+  const response = await httpText(config.url, {
+    method: 'POST',
+    timeoutMs: Math.max(20000, config.timeoutMs),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${config.key}`,
+      Accept: 'application/json',
+    },
+    body: {
+      model: config.model,
+      temperature: 0.35,
+      stream: false,
+      messages: [
+        { role: 'system', content: ANALYSIS_PROMPT },
+        {
+          role: 'user',
+          content: JSON.stringify({
+            video: contextTitle ?? '',
+            sentence,
+            translation,
+          }),
+        },
+      ],
+    },
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`${config.id} ${response.status}: ${response.text.slice(0, 160)}`);
+  }
+  const data = JSON.parse(response.text);
+  const content =
+    data?.choices?.[0]?.message?.content ??
+    data?.output?.text ??
+    data?.result ??
+    '';
+  if (typeof content !== 'string' || !content.trim()) {
+    throw new Error(`${config.id} 返回空内容`);
+  }
+  return stripFence(content);
+}

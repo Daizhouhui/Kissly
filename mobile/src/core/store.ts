@@ -3,7 +3,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 import { DEFAULT_SETTINGS } from './defaults';
-import { FavoriteItem, Settings, Subscription } from './types';
+import { FavoriteItem, SentenceFavorite, Settings, Subscription } from './types';
 
 type DeepPartial<T> = {
   [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K];
@@ -53,6 +53,7 @@ type AppState = {
   subscriptionTombstones: SubscriptionTombstones;
   subscriptionOrderUpdatedAt: number;
   favorites: FavoriteItem[];
+  sentenceFavorites: SentenceFavorite[];
   history: FavoriteItem[];
   lastSyncAt: number;
   syncState: SyncState;
@@ -74,7 +75,12 @@ type AppState = {
   ) => void;
   toggleFavorite: (item: FavoriteItem) => boolean;
   removeFavorite: (videoId: string) => void;
+  removeFavorites: (videoIds: string[]) => void;
+  toggleSentenceFavorite: (item: SentenceFavorite) => boolean;
+  removeSentenceFavorite: (id: string) => void;
+  removeSentenceFavorites: (ids: string[]) => void;
   recordHistory: (item: FavoriteItem) => void;
+  removeHistory: (videoIds: string[]) => void;
   clearHistory: () => void;
   setSync: (state: SyncState, message?: string, at?: number) => void;
 };
@@ -89,6 +95,7 @@ export const useAppStore = create<AppState>()(
       subscriptionTombstones: {},
       subscriptionOrderUpdatedAt: 0,
       favorites: [],
+      sentenceFavorites: [],
       history: [],
       lastSyncAt: 0,
       syncState: 'idle',
@@ -194,11 +201,48 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           favorites: state.favorites.filter((fav) => fav.videoId !== videoId),
         })),
+      removeFavorites: (videoIds) => {
+        const targets = new Set(videoIds);
+        set((state) => ({
+          favorites: state.favorites.filter((fav) => !targets.has(fav.videoId)),
+        }));
+      },
+      toggleSentenceFavorite: (item) => {
+        const exists = get().sentenceFavorites.some((fav) => fav.id === item.id);
+        if (exists) {
+          set((state) => ({
+            sentenceFavorites: state.sentenceFavorites.filter(
+              (fav) => fav.id !== item.id
+            ),
+          }));
+          return false;
+        }
+        set((state) => ({
+          sentenceFavorites: [item, ...state.sentenceFavorites].slice(0, 500),
+        }));
+        return true;
+      },
+      removeSentenceFavorite: (id) =>
+        set((state) => ({
+          sentenceFavorites: state.sentenceFavorites.filter((fav) => fav.id !== id),
+        })),
+      removeSentenceFavorites: (ids) => {
+        const targets = new Set(ids);
+        set((state) => ({
+          sentenceFavorites: state.sentenceFavorites.filter((fav) => !targets.has(fav.id)),
+        }));
+      },
       recordHistory: (item) =>
         set((state) => {
           const others = state.history.filter((entry) => entry.videoId !== item.videoId);
           return { history: [item, ...others].slice(0, 120) };
         }),
+      removeHistory: (videoIds) => {
+        const targets = new Set(videoIds);
+        set((state) => ({
+          history: state.history.filter((entry) => !targets.has(entry.videoId)),
+        }));
+      },
       clearHistory: () => set({ history: [] }),
       setSync: (syncState, syncMessage = '', at) =>
         set((state) => ({
@@ -219,6 +263,7 @@ export const useAppStore = create<AppState>()(
         subscriptionTombstones: state.subscriptionTombstones,
         subscriptionOrderUpdatedAt: state.subscriptionOrderUpdatedAt,
         favorites: state.favorites,
+        sentenceFavorites: state.sentenceFavorites,
         history: state.history,
         lastSyncAt: state.lastSyncAt,
         settingsUpdatedAt: state.settingsUpdatedAt,
@@ -251,6 +296,7 @@ export const useAppStore = create<AppState>()(
           subscriptionTombstones: saved?.subscriptionTombstones ?? {},
           subscriptionOrderUpdatedAt: saved?.subscriptionOrderUpdatedAt ?? 0,
           favorites: saved?.favorites ?? [],
+          sentenceFavorites: saved?.sentenceFavorites ?? [],
           history: saved?.history ?? [],
           lastSyncAt: saved?.lastSyncAt ?? 0,
           settingsUpdatedAt: saved?.settingsUpdatedAt ?? 0,

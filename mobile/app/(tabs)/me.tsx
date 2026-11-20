@@ -30,6 +30,7 @@ function MeRow({
   onPress,
   last,
   disabled,
+  roomy,
 }: {
   icon: any;
   title: string;
@@ -38,6 +39,7 @@ function MeRow({
   onPress?: () => void;
   last?: boolean;
   disabled?: boolean;
+  roomy?: boolean;
 }) {
   const theme = useAppTheme();
   return (
@@ -46,6 +48,7 @@ function MeRow({
       disabled={!onPress || disabled}
       style={({ pressed }) => [
         styles.row,
+        roomy && styles.rowRoomy,
         !last && {
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: theme.colors.border,
@@ -93,12 +96,12 @@ function MeRow({
   );
 }
 
-function Group({ children }: { children: ReactNode }) {
+function Group({ children, first }: { children: ReactNode; first?: boolean }) {
   const theme = useAppTheme();
   return (
     <View
       style={{
-        marginTop: 14,
+        marginTop: first ? 24 : 14,
         backgroundColor: theme.colors.card,
         borderRadius: 16,
         borderWidth: StyleSheet.hairlineWidth,
@@ -111,54 +114,12 @@ function Group({ children }: { children: ReactNode }) {
   );
 }
 
-function FeatureCard({
-  icon,
-  title,
-  subtitle,
-  onPress,
-}: {
-  icon: any;
-  title: string;
-  subtitle: string;
-  onPress: () => void;
-}) {
-  const theme = useAppTheme();
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.featureCard,
-        {
-          backgroundColor: theme.colors.card,
-          borderColor: theme.colors.border,
-        },
-        pressed && { opacity: 0.86 },
-      ]}
-    >
-      <View style={[styles.featureIcon, { backgroundColor: theme.colors.primarySoft }]}>
-        <Ionicons name={icon} size={22} color={theme.colors.primary} />
-      </View>
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={{ color: theme.colors.text, fontSize: 14, fontWeight: '800' }} numberOfLines={1}>
-          {title}
-        </Text>
-        <Text
-          style={{ color: theme.colors.textTertiary, fontSize: 11, marginTop: 3 }}
-          numberOfLines={1}
-        >
-          {subtitle}
-        </Text>
-      </View>
-    </Pressable>
-  );
-}
-
 function providerLabel(provider: string) {
   const labels: Record<string, string> = {
     auto: '自动 · 免费优先',
     microsoft: '微语',
     google: 'Google',
-    google2: 'Google2',
+    google2: 'Google 备用',
     deepseek: 'DeepSeek',
     siliconflow: 'SiliconFlow',
     openai: 'OpenAI',
@@ -184,8 +145,6 @@ export default function MeScreen() {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
   const settings = useAppStore((state) => state.settings);
-  const subscriptions = useAppStore((state) => state.subscriptions);
-  const favorites = useAppStore((state) => state.favorites);
   const historyCount = useAppStore((state) => state.history.length);
   const lastSyncAt = useAppStore((state) => state.lastSyncAt);
   const syncState = useAppStore((state) => state.syncState);
@@ -220,33 +179,31 @@ export default function MeScreen() {
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
       <ScrollView
         contentContainerStyle={{
-          paddingTop: insets.top + 12,
+          paddingTop: insets.top + 26,
           paddingHorizontal: 16,
           paddingBottom: 110,
         }}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.featureRow}>
-          <FeatureCard
-            icon="language"
-            title="翻译引擎"
-            subtitle={providerLabel(settings.provider)}
-            onPress={() => router.push('/settings/translation' as any)}
-          />
-          <FeatureCard
-            icon="volume-high"
-            title="发音与朗读"
-            subtitle={speechLabel}
-            onPress={() => router.push('/settings/voice' as any)}
-          />
-        </View>
+        <Text
+          style={{
+            color: theme.colors.text,
+            fontSize: 28,
+            fontWeight: '800',
+            marginTop: 0,
+            marginBottom: 12,
+          }}
+        >
+          我的
+        </Text>
 
-        <Group>
+        <Group first>
           <MeRow
             icon="person-circle-outline"
             title="账号"
             subtitle="YouTube 登录、头像与订阅同步"
             onPress={() => router.push('/youtube-account' as any)}
+            roomy
           />
           <MeRow
             icon="time-outline"
@@ -255,16 +212,22 @@ export default function MeScreen() {
             onPress={() => router.push('/history' as any)}
           />
           <MeRow
+            icon="language-outline"
+            title="翻译引擎"
+            value={providerLabel(settings.provider)}
+            onPress={() => router.push('/settings/translation' as any)}
+          />
+          <MeRow
+            icon="volume-high-outline"
+            title="发音与朗读"
+            value={speechLabel}
+            onPress={() => router.push('/settings/voice' as any)}
+          />
+          <MeRow
             icon="download-outline"
             title="导出"
             subtitle="历史、收藏、订阅与设置"
             onPress={() => router.push('/settings/export' as any)}
-          />
-          <MeRow
-            icon="albums-outline"
-            title="订阅管理"
-            value={`${subscriptions.length} 个`}
-            onPress={() => router.push('/subscriptions' as any)}
             last
           />
         </Group>
@@ -423,31 +386,16 @@ export default function MeScreen() {
 }
 
 const styles = StyleSheet.create({
-  featureRow: { flexDirection: 'row', gap: 10 },
-  featureCard: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    minHeight: 72,
-    borderRadius: 16,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-  },
-  featureIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     minHeight: 54,
     paddingHorizontal: 14,
     paddingVertical: 7,
+  },
+  rowRoomy: {
+    minHeight: 66,
+    paddingVertical: 12,
   },
   rowIcon: { width: 28, marginRight: 9 },
   syncButton: {

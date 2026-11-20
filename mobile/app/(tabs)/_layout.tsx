@@ -60,9 +60,7 @@ export default function TabLayout() {
           bottom: 0,
           height: 58 + insets.bottom,
           borderRadius: 0,
-          backgroundColor: theme.dark
-            ? 'rgba(17,20,16,0.98)'
-            : 'rgba(251,249,244,0.98)',
+          backgroundColor: theme.colors.bgElevated,
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: theme.colors.border,
           paddingBottom: insets.bottom,
