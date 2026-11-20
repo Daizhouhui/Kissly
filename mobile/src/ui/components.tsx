@@ -300,7 +300,7 @@ export function PrimaryButton({
       ]}
     >
       <LinearGradient
-        colors={['#8B72FF', '#6C4DF6']}
+        colors={[theme.colors.primary, theme.colors.primaryDeep]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={{

@@ -22,7 +22,7 @@ export default function LearningScreen() {
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
       <LinearGradient
         pointerEvents="none"
-        colors={['#241B39', '#100C18']}
+        colors={[theme.colors.primarySoft, theme.colors.bg]}
         style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 260 }}
       />
       <ScrollView
@@ -35,54 +35,126 @@ export default function LearningScreen() {
       >
         <View style={styles.titleRow}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.title}>学习</Text>
-            <Text style={styles.subtitle}>把收藏的视频集中到这里，随时接着看</Text>
+            <Text style={{ color: theme.colors.text, fontSize: 30, fontWeight: '900', letterSpacing: -0.8 }}>学习</Text>
+            <Text style={{ color: theme.colors.textSecondary, fontSize: 12.5, marginTop: 4 }}>
+              把收藏的视频集中到这里，随时接着看
+            </Text>
           </View>
           <Pressable
             onPress={() => router.push('/favorites' as any)}
-            style={styles.headerIcon}
+            style={{
+              width: 42,
+              height: 42,
+              borderRadius: 21,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+              backgroundColor: theme.colors.card,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
             hitSlop={8}
           >
-            <Ionicons name="heart-outline" size={21} color="#C4B5FD" />
+            <Ionicons name="heart-outline" size={21} color={theme.colors.primary} />
           </Pressable>
         </View>
 
-        <View style={styles.statsCard}>
+        <View
+          style={{
+            marginTop: 20,
+            backgroundColor: theme.colors.card,
+            borderRadius: 22,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: theme.colors.border,
+            padding: 18,
+            flexDirection: 'row',
+            alignItems: 'center',
+          }}
+        >
           <View style={{ flex: 1 }}>
-            <Text style={styles.statsLabel}>收藏视频</Text>
-            <Text style={styles.statsValue}>{favorites.length}</Text>
-            <Text style={styles.statsHint}>本周新增 {weekCount} 个</Text>
+            <Text style={{ color: theme.colors.textSecondary, fontSize: 11, fontWeight: '600' }}>收藏视频</Text>
+            <Text style={{ color: theme.colors.text, fontSize: 28, fontWeight: '900', marginTop: 2 }}>{favorites.length}</Text>
+            <Text style={{ color: theme.colors.textTertiary, fontSize: 10.5, marginTop: 2 }}>本周新增 {weekCount} 个</Text>
           </View>
-          <View style={styles.statsDivider} />
+          <View style={{ width: 1, height: 54, backgroundColor: theme.colors.border, marginHorizontal: 16 }} />
           <View style={{ flex: 1 }}>
-            <Text style={styles.statsLabel}>最近观看</Text>
-            <Text style={styles.statsValue}>{history.length}</Text>
-            <Text style={styles.statsHint}>按打开时间排序</Text>
+            <Text style={{ color: theme.colors.textSecondary, fontSize: 11, fontWeight: '600' }}>最近观看</Text>
+            <Text style={{ color: theme.colors.text, fontSize: 28, fontWeight: '900', marginTop: 2 }}>{history.length}</Text>
+            <Text style={{ color: theme.colors.textTertiary, fontSize: 10.5, marginTop: 2 }}>按打开时间排序</Text>
           </View>
-          <View style={styles.statsArt}>
-            <Ionicons name="bookmark" size={34} color="#C4B5FD" />
+          <View
+            style={{
+              width: 58,
+              height: 58,
+              borderRadius: 18,
+              backgroundColor: theme.colors.primarySoft,
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginLeft: 8,
+            }}
+          >
+            <Ionicons name="bookmark" size={34} color={theme.colors.primary} />
           </View>
         </View>
 
         <View style={styles.sectionRow}>
-          <Text style={styles.sectionTitle}>我的收藏</Text>
+          <Text style={{ color: theme.colors.text, fontSize: 17, fontWeight: '800' }}>我的收藏</Text>
           {favorites.length > 0 ? (
-            <Text style={styles.sectionHint}>点卡片直接播放</Text>
+            <Text style={{ color: theme.colors.textTertiary, fontSize: 11 }}>点卡片直接播放</Text>
           ) : null}
         </View>
 
         {favorites.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <View style={styles.emptyIcon}>
-              <Ionicons name="bookmark-outline" size={34} color="#A78BFA" />
+          <View
+            style={{
+              alignItems: 'center',
+              backgroundColor: theme.colors.card,
+              borderRadius: 22,
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.colors.border,
+              padding: 28,
+              paddingHorizontal: 22,
+            }}
+          >
+            <View
+              style={{
+                width: 70,
+                height: 70,
+                borderRadius: 22,
+                backgroundColor: theme.colors.primarySoft,
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginBottom: 14,
+              }}
+            >
+              <Ionicons name="bookmark-outline" size={34} color={theme.colors.primary} />
             </View>
-            <Text style={styles.emptyTitle}>还没有收藏</Text>
-            <Text style={styles.emptyText}>
+            <Text style={{ color: theme.colors.text, fontSize: 17, fontWeight: '800' }}>还没有收藏</Text>
+            <Text
+              style={{
+                color: theme.colors.textSecondary,
+                fontSize: 12.5,
+                lineHeight: 19,
+                textAlign: 'center',
+                marginTop: 6,
+                marginBottom: 18,
+              }}
+            >
               在播放器里点“收藏”，视频会出现在这里；不用再翻订阅流去找。
             </Text>
-            <Pressable style={styles.emptyButton} onPress={() => router.push('/' as any)}>
+            <Pressable
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 7,
+                height: 44,
+                paddingHorizontal: 18,
+                borderRadius: 14,
+                backgroundColor: theme.colors.primary,
+              }}
+              onPress={() => router.push('/' as any)}
+            >
               <Ionicons name="play" size={16} color="#FFFFFF" />
-              <Text style={styles.emptyButtonText}>去发现视频</Text>
+              <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '800' }}>去发现视频</Text>
             </Pressable>
           </View>
         ) : (
@@ -95,9 +167,16 @@ export default function LearningScreen() {
                   params: { videoId: item.videoId, title: item.title, author: item.author },
                 } as any)
               }
-              style={({ pressed }) => [styles.card, pressed && { opacity: 0.9 }]}
+              style={({ pressed }) => [
+                styles.card,
+                {
+                  backgroundColor: theme.colors.card,
+                  borderColor: theme.colors.border,
+                  opacity: pressed ? 0.9 : 1,
+                },
+              ]}
             >
-              <View style={styles.thumbWrap}>
+              <View style={[styles.thumbWrap, { backgroundColor: theme.colors.surfaceAlt }]}>
                 <Image
                   source={{ uri: item.thumbnail || `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg` }}
                   style={StyleSheet.absoluteFill}
@@ -109,20 +188,18 @@ export default function LearningScreen() {
                 </View>
               </View>
               <View style={styles.cardBody}>
-                <Text style={styles.cardTitle} numberOfLines={2}>
+                <Text style={{ color: theme.colors.text, fontSize: 14, fontWeight: '700', lineHeight: 19 }} numberOfLines={2}>
                   {item.title}
                 </Text>
-                <Text style={styles.cardAuthor} numberOfLines={1}>
+                <Text style={{ color: theme.colors.textSecondary, fontSize: 11.5, marginTop: 4 }} numberOfLines={1}>
                   {item.author || 'YouTube'}
                 </Text>
-                <Text style={styles.cardMeta}>收藏于 {relativeTime(item.savedAt)}</Text>
+                <Text style={{ color: theme.colors.textTertiary, fontSize: 10, marginTop: 4 }}>
+                  收藏于 {relativeTime(item.savedAt)}
+                </Text>
               </View>
-              <Pressable
-                hitSlop={10}
-                onPress={() => removeFavorite(item.videoId)}
-                style={styles.removeButton}
-              >
-                <Ionicons name="heart" size={19} color="#A78BFA" />
+              <Pressable hitSlop={10} onPress={() => removeFavorite(item.videoId)} style={styles.removeButton}>
+                <Ionicons name="heart" size={19} color={theme.colors.primary} />
               </Pressable>
             </Pressable>
           ))
@@ -131,9 +208,9 @@ export default function LearningScreen() {
         {history.length > 0 ? (
           <>
             <View style={styles.sectionRow}>
-              <Text style={styles.sectionTitle}>最近观看</Text>
+              <Text style={{ color: theme.colors.text, fontSize: 17, fontWeight: '800' }}>最近观看</Text>
               <Pressable onPress={() => router.push('/history' as any)}>
-                <Text style={styles.more}>全部</Text>
+                <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>全部</Text>
               </Pressable>
             </View>
             {history.slice(0, 4).map((item) => (
@@ -145,22 +222,29 @@ export default function LearningScreen() {
                     params: { videoId: item.videoId, title: item.title, author: item.author },
                   } as any)
                 }
-                style={styles.historyRow}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 11,
+                  paddingVertical: 8,
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderBottomColor: theme.colors.border,
+                }}
               >
                 <Image
                   source={{ uri: item.thumbnail || `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg` }}
-                  style={styles.historyThumb}
+                  style={[styles.historyThumb, { backgroundColor: theme.colors.surfaceAlt }]}
                   contentFit="cover"
                 />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.historyTitle} numberOfLines={2}>
+                  <Text style={{ color: theme.colors.text, fontSize: 13, fontWeight: '600', lineHeight: 18 }} numberOfLines={2}>
                     {item.title}
                   </Text>
-                  <Text style={styles.historyMeta} numberOfLines={1}>
+                  <Text style={{ color: theme.colors.textTertiary, fontSize: 10.5, marginTop: 4 }} numberOfLines={1}>
                     {item.author} · {relativeTime(item.savedAt)}
                   </Text>
                 </View>
-                <Ionicons name="chevron-forward" size={16} color="#6F6580" />
+                <Ionicons name="chevron-forward" size={16} color={theme.colors.textTertiary} />
               </Pressable>
             ))}
           </>
@@ -172,41 +256,6 @@ export default function LearningScreen() {
 
 const styles = StyleSheet.create({
   titleRow: { flexDirection: 'row', alignItems: 'center' },
-  title: { color: '#F7F3FF', fontSize: 30, fontWeight: '900', letterSpacing: -0.8 },
-  subtitle: { color: '#A7A0B6', fontSize: 12.5, marginTop: 4 },
-  headerIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    borderWidth: 1,
-    borderColor: 'rgba(167,139,250,0.22)',
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  statsCard: {
-    marginTop: 20,
-    backgroundColor: 'rgba(32,24,48,0.92)',
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: 'rgba(124,92,255,0.16)',
-    padding: 18,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  statsLabel: { color: '#948AA7', fontSize: 11, fontWeight: '600' },
-  statsValue: { color: '#F5F2FF', fontSize: 28, fontWeight: '900', marginTop: 2 },
-  statsHint: { color: '#7F7590', fontSize: 10.5, marginTop: 2 },
-  statsDivider: { width: 1, height: 54, backgroundColor: '#302643', marginHorizontal: 16 },
-  statsArt: {
-    width: 58,
-    height: 58,
-    borderRadius: 18,
-    backgroundColor: 'rgba(124,92,255,0.16)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 8,
-  },
   sectionRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -214,39 +263,6 @@ const styles = StyleSheet.create({
     marginTop: 24,
     marginBottom: 12,
   },
-  sectionTitle: { color: '#F5F2FF', fontSize: 17, fontWeight: '800' },
-  sectionHint: { color: '#837A93', fontSize: 11 },
-  more: { color: '#A78BFA', fontSize: 12, fontWeight: '700' },
-  emptyCard: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(28,22,40,0.9)',
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: 'rgba(124,92,255,0.12)',
-    padding: 28,
-    paddingHorizontal: 22,
-  },
-  emptyIcon: {
-    width: 70,
-    height: 70,
-    borderRadius: 22,
-    backgroundColor: 'rgba(124,92,255,0.13)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 14,
-  },
-  emptyTitle: { color: '#F5F2FF', fontSize: 17, fontWeight: '800' },
-  emptyText: { color: '#A79EB8', fontSize: 12.5, lineHeight: 19, textAlign: 'center', marginTop: 6, marginBottom: 18 },
-  emptyButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    height: 44,
-    paddingHorizontal: 18,
-    borderRadius: 14,
-    backgroundColor: '#7C5CFF',
-  },
-  emptyButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -254,12 +270,10 @@ const styles = StyleSheet.create({
     padding: 9,
     paddingRight: 12,
     borderRadius: 18,
-    backgroundColor: 'rgba(28,22,40,0.88)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    borderWidth: StyleSheet.hairlineWidth,
     marginBottom: 10,
   },
-  thumbWrap: { width: 132, aspectRatio: 16 / 9, borderRadius: 12, overflow: 'hidden', backgroundColor: '#241C33' },
+  thumbWrap: { width: 132, aspectRatio: 16 / 9, borderRadius: 12, overflow: 'hidden' },
   playBadge: {
     position: 'absolute',
     left: 8,
@@ -272,19 +286,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   cardBody: { flex: 1, minWidth: 0 },
-  cardTitle: { color: '#F2ECFB', fontSize: 14, fontWeight: '700', lineHeight: 19 },
-  cardAuthor: { color: '#A79EB8', fontSize: 11.5, marginTop: 4 },
-  cardMeta: { color: '#7A7089', fontSize: 10, marginTop: 4 },
   removeButton: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center' },
-  historyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 11,
-    paddingVertical: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#2A2238',
-  },
-  historyThumb: { width: 100, aspectRatio: 16 / 9, borderRadius: 9, backgroundColor: '#241C33' },
-  historyTitle: { color: '#EAE4F5', fontSize: 13, fontWeight: '600', lineHeight: 18 },
-  historyMeta: { color: '#817791', fontSize: 10.5, marginTop: 4 },
+  historyThumb: { width: 100, aspectRatio: 16 / 9, borderRadius: 9 },
 });

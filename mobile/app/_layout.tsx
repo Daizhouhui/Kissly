@@ -36,11 +36,17 @@ export default function RootLayout() {
           }}
         >
           <Stack.Screen name="(tabs)" options={{ animation: 'none' }} />
-          <Stack.Screen name="player" options={{ animation: 'fade' }} />
+          <Stack.Screen
+            name="player"
+            options={{ animation: 'fade', gestureEnabled: false }}
+          />
           <Stack.Screen name="subscriptions" />
           <Stack.Screen name="favorites" />
           <Stack.Screen name="add-subscription" options={{ animation: 'slide_from_bottom' }} />
+          <Stack.Screen name="channel" />
           <Stack.Screen name="settings/translation" />
+          <Stack.Screen name="settings/language" />
+          <Stack.Screen name="settings/appearance" />
           <Stack.Screen name="settings/webdav" />
           <Stack.Screen name="settings/subtitle" />
           <Stack.Screen name="settings/about" />

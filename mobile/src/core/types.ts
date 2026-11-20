@@ -2,6 +2,7 @@ export type ProviderId =
   | 'auto'
   | 'microsoft'
   | 'google'
+  | 'google2'
   | 'deepseek'
   | 'siliconflow'
   | 'openai';
@@ -11,6 +12,10 @@ export type SubtitleMode = 'bilingual' | 'original' | 'translation';
 export type SubtitlePosition = 'bottom' | 'top';
 
 export type ThemePreference = 'system' | 'light' | 'dark';
+
+export type ThemeAccent = 'blue' | 'teal' | 'orange' | 'rose' | 'green';
+
+export type DiscoverLayout = 'list' | 'grid' | 'large';
 
 export type SubtitlePrefs = {
   fontSize: number;
@@ -35,7 +40,9 @@ export type Settings = {
   provider: ProviderId;
   autoFallbackDeepSeek: boolean;
   translateTitles: boolean;
+  discoverLayout: DiscoverLayout;
   theme: ThemePreference;
+  themeAccent: ThemeAccent;
   subtitle: SubtitlePrefs;
   webdav: WebDavConfig;
   deepseekModel: string;
