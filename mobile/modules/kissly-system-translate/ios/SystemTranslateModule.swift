@@ -8,7 +8,11 @@ public class SystemTranslateModule: Module {
     if normalized.isEmpty || normalized.lowercased() == "auto" {
       return .english
     }
-    return TranslateLanguage.fromLanguageTag(normalized) ?? .english
+    // ML Kit's iOS header exposes TranslateLanguage as an NSString-backed
+    // typed enum and does not provide the `fromLanguageTag` helper shown in
+    // some online docs. It expects the base ISO-639 code (e.g. `en`, `zh`).
+    let base = normalized.split(separator: "-").first.map(String.init) ?? normalized
+    return TranslateLanguage(rawValue: base)
   }
 
   private func makeTranslator(from: String, to: String) -> Translator {
@@ -44,7 +48,7 @@ public class SystemTranslateModule: Module {
       }
       var next = output
       next.append(translated ?? text)
-      translateSequentially(translator, texts, index + 1, next, promise)
+      self.translateSequentially(translator, texts, index + 1, next, promise)
     }
   }
 
