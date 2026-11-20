@@ -11,7 +11,7 @@ import {
   View,
 } from 'react-native';
 
-import { PROVIDER_HINTS, TARGET_LANGUAGES } from '../../src/core/defaults';
+import { PROVIDER_HINTS } from '../../src/core/defaults';
 import { getSecret, setSecret } from '../../src/core/secrets';
 import { useAppStore } from '../../src/core/store';
 import { ProviderId } from '../../src/core/types';
@@ -34,7 +34,7 @@ const FREE: Engine[] = [
     title: '自动 · 免费优先',
     desc: '微软 → 谷歌 → DeepSeek 依次尝试',
     icon: 'flash',
-    color: '#6C4DF6',
+    color: '#2F6FED',
     badge: '推荐',
   },
   {
@@ -52,6 +52,14 @@ const FREE: Engine[] = [
     icon: 'logo-google',
     color: '#EA4335',
     badge: '免费',
+  },
+  {
+    id: 'google2',
+    title: 'Google2 备用',
+    desc: '内置公共预设 · 共享 key 可能限流',
+    icon: 'logo-google',
+    color: '#34A853',
+    badge: '备用',
   },
 ];
 
@@ -318,7 +326,7 @@ export default function TranslationSettingsScreen() {
           </View>
         ) : null}
 
-        {provider === 'auto' || provider === 'microsoft' || provider === 'google' ? (
+        {provider === 'auto' || provider === 'microsoft' || provider === 'google' || provider === 'google2' ? (
           <Pressable
             onPress={test}
             disabled={testing}
@@ -342,39 +350,6 @@ export default function TranslationSettingsScreen() {
             </Text>
           </Pressable>
         ) : null}
-
-        <SectionTitle title="目标语言" />
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-          {TARGET_LANGUAGES.map((language) => {
-            const active = settings.targetLang === language.code;
-            return (
-              <Pressable
-                key={language.code}
-                onPress={() => patchSettings({ targetLang: language.code })}
-                style={{
-                  height: 38,
-                  paddingHorizontal: 14,
-                  borderRadius: 12,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: active ? theme.colors.primary : theme.colors.card,
-                  borderWidth: active ? 0 : StyleSheet.hairlineWidth,
-                  borderColor: theme.colors.border,
-                }}
-              >
-                <Text
-                  style={{
-                    color: active ? '#fff' : theme.colors.textSecondary,
-                    fontSize: 12,
-                    fontWeight: active ? '700' : '500',
-                  }}
-                >
-                  {language.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
 
         <SectionTitle title="翻译策略" />
         <Card style={{ paddingVertical: 4 }}>
