@@ -8,7 +8,6 @@ import {
   ActivityIndicator,
   BackHandler,
   Linking,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -29,31 +28,30 @@ import {
   getVideoMeta,
   pickCaptionTrack,
 } from '@/src/core/youtube/innertube';
+import { useAppTheme } from '@/src/ui/theme';
 
 const AnyWebView: any = WebView;
 
 const WATCH_UA =
   Platform.OS === 'ios'
-    ? // WKWebView has reliable H.264/HEVC support but spotty VP9/AV1 in MSE.
-      // Presenting as desktop Safari makes YouTube pick a compatible stream.
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15'
-    : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+    ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1'
+    : 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
 
 const WATCH_CSS = `
-html,body{background:#000!important;margin:0!important;overflow:hidden!important;}
-#masthead-container,#secondary,#comments,#below,ytd-watch-metadata,ytd-comments,
-#related,#chat,#chat-container,ytd-merch-shelf-renderer,ytd-donation-shelf-renderer,
-ytd-clarification-renderer,#ticker,ytd-miniplayer,.ytd-watch-next-secondary-results-renderer,
-#meta,#info,#owner,#actions,#description{display:none!important;}
-#player-container-outer,#player-container-inner,#player-container,#player,
-#player-full-bleed-container{width:100vw!important;height:100vh!important;max-width:none!important;
-max-height:none!important;min-height:0!important;padding:0!important;margin:0!important;}
-#content,#page-container{min-height:0!important;padding:0!important;margin:0!important;}
-#player{position:fixed!important;left:0!important;top:0!important;}
-.ytp-chrome-bottom,.ytp-gradient-bottom,.ytp-caption-window-container,.ytp-pause-overlay,
-.ytp-ce-element,.ytp-ad-overlay-container,.ytp-paid-content-overlay,.ytp-share-button,
-.ytp-watch-later-button,.ytp-title,.ytp-watermark,.ytp-large-play-button{display:none!important;}
-.html5-video-player,.html5-video-container,video{width:100%!important;height:100%!important;}
+html,body,ytm-app,ytm-app-root,#page-container,#content{background:#000!important;margin:0!important;padding:0!important;overflow:hidden!important;height:100%!important;width:100%!important;}
+ytm-header,ytm-header-bar,ytm-app-header,ytm-mobile-topbar-renderer,ytm-nav-bar,ytm-menu,#header,#masthead-container,
+#watch7-content,.watch-main-col,
+ytm-single-column-watch-next-results-renderer,ytm-watch-metadata,ytm-comments,ytm-comments-entry-point-header-renderer,
+ytm-item-section-renderer,#comments,#secondary,#below,#related,#chat,#chat-container,#meta,#info,#owner,#actions,#description,
+ytm-clarification-renderer,ytm-merch-shelf-renderer,ytm-donation-shelf-renderer,#ticker,ytm-miniplayer,
+#player-control-container,#player-endscreen-container,#player-shorts-container,#player-thumbnail-overlay,#player-cinematics-container,
+.app-promo,ytm-app-promo,#app-promo,.ytp-chrome-bottom,.ytp-gradient-bottom,.ytp-caption-window-container,
+.ytp-pause-overlay,.ytp-ce-element,.ytp-ad-overlay-container,.ytp-paid-content-overlay,.ytp-share-button,
+.ytp-watch-later-button,.ytp-title,.ytp-watermark,.ytp-large-play-button,.ytm-player-controls,.player-controls{display:none!important;}
+#player-base,#player-container,#player-container-id,#player-container-outer,#player-container-inner,#player,
+ytm-player,.html5-video-player{position:fixed!important;left:0!important;top:0!important;width:100vw!important;height:100vh!important;
+max-width:none!important;max-height:none!important;min-height:0!important;padding:0!important;margin:0!important;z-index:2!important;}
+.html5-video-container,video{width:100%!important;height:100%!important;left:0!important;top:0!important;}
 video{object-fit:contain!important;background:#000!important;}
 `;
 
@@ -63,7 +61,7 @@ function playerBridgeScript() {
   try {
     if (window.__kissBridge && window.__kissBridge.timer) clearInterval(window.__kissBridge.timer);
     if (window.__kissBridge && window.__kissBridge.cssTimer) clearInterval(window.__kissBridge.cssTimer);
-    var bridge = window.__kissBridge = { mode: 'watch' };
+    var bridge = window.__kissBridge = { mode: 'mobile-watch' };
     function injectCss(){
       try {
         var old = document.getElementById('kiss-watch-css');
@@ -108,9 +106,14 @@ function playerBridgeScript() {
         quality: quality
       });
     }
+    var bindTries = 0;
     function bind(){
       var v = getVideo();
-      if (!v) { setTimeout(bind, 700); return; }
+      if (!v) {
+        bindTries++;
+        if (bindTries < 14) setTimeout(bind, 700);
+        return;
+      }
       if (!v.__kissBound) {
         v.__kissBound = true;
         ['timeupdate','play','playing','pause','ended','durationchange','loadedmetadata','seeking','seeked','ratechange'].forEach(function(name){
@@ -141,7 +144,7 @@ function playerBridgeScript() {
       quality: function(){ setQuality(); return true; }
     };
     bind();
-    document.addEventListener('yt-navigate-finish', function(){ setTimeout(bind, 400); }, true);
+    document.addEventListener('yt-navigate-finish', function(){ bindTries = 0; setTimeout(bind, 400); }, true);
     setTimeout(function(){
       var v=getVideo();
       var p=getPlayer();
@@ -183,6 +186,7 @@ export default function PlayerScreen() {
   const initialTitle = String(params.title ?? '');
   const initialAuthor = String(params.author ?? '');
   const insets = useSafeAreaInsets();
+  const theme = useAppTheme();
   const windowSize = useWindowDimensions();
   const landscape = windowSize.width > windowSize.height;
   const settings = useAppStore((state) => state.settings);
@@ -432,7 +436,7 @@ export default function PlayerScreen() {
       thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
       savedAt: Date.now(),
     });
-    setToast(added ? '已保存到学习页' : '已取消收藏');
+    setToast(added ? '已收藏' : '已取消收藏');
   };
 
   const changeFontSize = (direction: 1 | -1) => {
@@ -453,7 +457,7 @@ export default function PlayerScreen() {
 
   const displayTitle = metaTitle || initialTitle || 'YouTube';
   const displayAuthor = metaAuthor || initialAuthor;
-  const webUrl = `https://www.youtube.com/watch?v=${videoId}&hl=zh-CN&autoplay=1&themeMode=dark`;
+  const webUrl = `https://m.youtube.com/watch?v=${videoId}&hl=zh-CN&autoplay=1`;
 
   if (!videoId) {
     return (
@@ -465,6 +469,7 @@ export default function PlayerScreen() {
 
   const videoBlock = (
     <View
+      key="video-stage"
       style={
         landscape
           ? styles.landscapeVideo
@@ -555,33 +560,24 @@ export default function PlayerScreen() {
     </View>
   );
 
-  const subtitleBlock = activeCue ? (
-    <View style={{ paddingHorizontal: 20, marginTop: 14 }}>
-      <Text
-        style={{
-          color: '#F3B45B',
-          fontSize: 19,
-          fontWeight: '800',
-          lineHeight: 26,
-          letterSpacing: -0.2,
-        }}
-        numberOfLines={3}
-      >
-        {activeCue.text}
-      </Text>
-      {showTranslation && activeCue.translation ? (
-        <Text style={styles.activeTranslation} numberOfLines={2}>
-          {activeCue.translation}
-        </Text>
-      ) : null}
-    </View>
-  ) : null;
-
   const controls = (
     <View
       style={[
         styles.controls,
-        landscape && { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 20 },
+        landscape
+          ? {
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              bottom: 0,
+              paddingHorizontal: 20,
+              backgroundColor: 'transparent',
+              borderTopWidth: 0,
+            }
+          : {
+              backgroundColor: theme.colors.card,
+              borderTopColor: theme.colors.border,
+            },
         { paddingBottom: landscape ? 18 : Math.max(14, insets.bottom) },
       ]}
     >
@@ -612,11 +608,12 @@ export default function PlayerScreen() {
           setSeekPreview(null);
         }}
       >
-        <View style={styles.progressRail}>
+        <View style={[styles.progressRail, { backgroundColor: landscape ? '#2B2340' : theme.colors.surfaceAlt }]}>
           <View
             style={[
               styles.progressFill,
               {
+                backgroundColor: landscape ? '#A78BFA' : theme.colors.primary,
                 width: duration
                   ? Math.max(
                       0,
@@ -634,6 +631,7 @@ export default function PlayerScreen() {
           style={[
             styles.progressThumb,
             {
+              backgroundColor: landscape ? '#C4B5FD' : theme.colors.primary,
               left: duration
                 ? Math.max(
                     0,
@@ -648,41 +646,58 @@ export default function PlayerScreen() {
         />
       </View>
       <View style={styles.timeRow}>
-        <Text style={styles.timeText}>{formatTime(seekPreview ?? current)}</Text>
-        <Text style={styles.timeText}>{formatTime(duration)}</Text>
+        <Text style={[styles.timeText, { color: landscape ? '#8A8099' : theme.colors.textTertiary }]}>
+          {formatTime(seekPreview ?? current)}
+        </Text>
+        <Text style={[styles.timeText, { color: landscape ? '#8A8099' : theme.colors.textTertiary }]}>
+          {formatTime(duration)}
+        </Text>
       </View>
       <View style={styles.transport}>
         <Pressable onPress={() => seekBy(-10)} hitSlop={10} style={styles.transportSmall}>
-          <Ionicons name="play-back" size={22} color="#F5F2FF" />
+          <Ionicons name="play-back" size={22} color={landscape ? '#F5F2FF' : theme.colors.textSecondary} />
         </Pressable>
-        <Pressable onPress={togglePlay} style={styles.playButton}>
+        <Pressable
+          onPress={togglePlay}
+          style={[
+            styles.playButton,
+            { backgroundColor: landscape ? '#7C5CFF' : theme.colors.primary },
+          ]}
+        >
           <Ionicons name={playing ? 'pause' : 'play'} size={24} color="#FFFFFF" />
         </Pressable>
         <Pressable onPress={() => seekBy(10)} hitSlop={10} style={styles.transportSmall}>
-          <Ionicons name="play-forward" size={22} color="#F5F2FF" />
+          <Ionicons name="play-forward" size={22} color={landscape ? '#F5F2FF' : theme.colors.textSecondary} />
         </Pressable>
       </View>
       {!landscape ? (
         <View style={styles.bottomActions}>
           <Pressable style={styles.action} onPress={() => setSheet(true)}>
-            <Ionicons name="options-outline" size={22} color="#C6BDDA" />
-            <Text style={styles.actionLabel}>设置</Text>
+            <Ionicons name="options-outline" size={22} color={theme.colors.textSecondary} />
+            <Text style={[styles.actionLabel, { color: theme.colors.textSecondary }]}>设置</Text>
           </Pressable>
           <Pressable style={styles.action} onPress={saveFavorite}>
             <Ionicons
               name={isFavorite ? 'heart' : 'heart-outline'}
               size={22}
-              color={isFavorite ? '#A78BFA' : '#C6BDDA'}
+              color={isFavorite ? theme.colors.primary : theme.colors.textSecondary}
             />
-            <Text style={[styles.actionLabel, isFavorite && { color: '#A78BFA' }]}>收藏</Text>
+            <Text
+              style={[
+                styles.actionLabel,
+                { color: isFavorite ? theme.colors.primary : theme.colors.textSecondary },
+              ]}
+            >
+              收藏
+            </Text>
           </Pressable>
           <Pressable style={styles.action} onPress={shareVideo}>
-            <Ionicons name="share-social-outline" size={22} color="#C6BDDA" />
-            <Text style={styles.actionLabel}>分享</Text>
+            <Ionicons name="share-social-outline" size={22} color={theme.colors.textSecondary} />
+            <Text style={[styles.actionLabel, { color: theme.colors.textSecondary }]}>分享</Text>
           </Pressable>
           <Pressable style={styles.action} onPress={handleFullscreen}>
-            <Ionicons name="expand-outline" size={22} color="#C6BDDA" />
-            <Text style={styles.actionLabel}>全屏</Text>
+            <Ionicons name="expand-outline" size={22} color={theme.colors.textSecondary} />
+            <Text style={[styles.actionLabel, { color: theme.colors.textSecondary }]}>全屏</Text>
           </Pressable>
         </View>
       ) : null}
@@ -698,8 +713,10 @@ export default function PlayerScreen() {
     >
       {cues.length === 0 ? (
         <View style={styles.emptyTranscript}>
-          <Ionicons name="document-text-outline" size={34} color="#6F6685" />
-          <Text style={styles.emptyTranscriptText}>{status || '这个视频还没有可用字幕'}</Text>
+          <Ionicons name="document-text-outline" size={34} color={theme.colors.textTertiary} />
+          <Text style={[styles.emptyTranscriptText, { color: theme.colors.textSecondary }]}>
+            {status || '这个视频还没有可用字幕'}
+          </Text>
         </View>
       ) : (
         cues.map((cue, index) => {
@@ -714,16 +731,16 @@ export default function PlayerScreen() {
               onPress={() => seekTo(cue.start)}
               style={[
                 styles.cue,
-                active && styles.cueActive,
+                active && { backgroundColor: theme.colors.primarySoft },
                 past && { opacity: 0.5 },
               ]}
             >
               <Text
                 style={[
                   styles.cueOriginal,
-                  { fontSize: Math.max(14, fontSize) },
-                  active && styles.cueOriginalActive,
-                  past && { color: '#8B829C' },
+                  { color: theme.colors.textSecondary, fontSize: Math.max(14, fontSize) },
+                  active && { color: theme.colors.primary, fontWeight: '800' },
+                  past && { color: theme.colors.textTertiary },
                 ]}
               >
                 {cue.text}
@@ -732,8 +749,11 @@ export default function PlayerScreen() {
                 <Text
                   style={[
                     styles.cueTranslation,
-                    { fontSize: Math.max(12, fontSize - 3) },
-                    active && styles.cueTranslationActive,
+                    {
+                      color: theme.colors.textTertiary,
+                      fontSize: Math.max(12, fontSize - 3),
+                    },
+                    active && { color: theme.colors.text },
                   ]}
                 >
                   {cue.translation}
@@ -746,129 +766,162 @@ export default function PlayerScreen() {
     </ScrollView>
   );
 
-  if (landscape) {
-    return (
-      <View style={styles.landscapeRoot}>
-        <StatusBar style="light" hidden />
-        {videoBlock}
-        <Pressable
-          style={[styles.landscapeBack, { top: Math.max(12, insets.top) }]}
-          onPress={exitFullscreen}
-        >
-          <Ionicons name="chevron-back" size={24} color="#FFFFFF" />
-        </Pressable>
-        <View style={[styles.landscapeTitle, { top: Math.max(12, insets.top) }]} pointerEvents="none">
-          <Text style={styles.landscapeTitleText} numberOfLines={1}>
-            {displayTitle}
-          </Text>
-          {displayAuthor ? (
-            <Text style={styles.landscapeAuthor} numberOfLines={1}>
-              {displayAuthor}
-            </Text>
-          ) : null}
-        </View>
-        <Pressable
-          style={[styles.landscapeMore, { top: Math.max(12, insets.top) }]}
-          onPress={() => setSheet(true)}
-        >
-          <Ionicons name="ellipsis-vertical" size={22} color="#FFFFFF" />
-        </Pressable>
-        {controls}
-        {toast ? (
-          <View style={styles.toast} pointerEvents="none">
-            <Text style={styles.toastText}>{toast}</Text>
-          </View>
-        ) : null}
-        {sheetModal()}
-      </View>
-    );
-  }
-
   return (
-    <View style={styles.root}>
-      <StatusBar style="light" />
-      <View style={[styles.header, { paddingTop: Math.max(10, insets.top) }]}>
-        <Pressable style={styles.headerButton} onPress={() => router.back()} hitSlop={10}>
-          <Ionicons name="chevron-back" size={24} color="#F5F2FF" />
+    <View style={[styles.root, { backgroundColor: landscape ? '#000000' : theme.colors.bg }]}>
+      <StatusBar hidden={landscape} style={landscape || theme.dark ? 'light' : 'dark'} />
+
+      <View
+        style={[
+          styles.header,
+          { paddingTop: Math.max(10, insets.top) },
+          landscape && { display: 'none' },
+        ]}
+      >
+        <Pressable
+          style={[styles.headerButton, { backgroundColor: theme.colors.surfaceAlt }]}
+          onPress={() => router.back()}
+          hitSlop={10}
+        >
+          <Ionicons name="chevron-back" size={24} color={theme.colors.text} />
         </Pressable>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.headerTitle} numberOfLines={1}>
+          <Text style={[styles.headerTitle, { color: theme.colors.text }]} numberOfLines={1}>
             {displayTitle}
           </Text>
           {displayAuthor ? (
-            <Text style={styles.headerSubtitle} numberOfLines={1}>
+            <Text style={[styles.headerSubtitle, { color: theme.colors.textSecondary }]} numberOfLines={1}>
               {displayAuthor}
             </Text>
           ) : null}
         </View>
-        <Pressable style={styles.headerButton} onPress={() => setSheet(true)} hitSlop={10}>
-          <Ionicons name="ellipsis-vertical" size={22} color="#F5F2FF" />
+        <Pressable
+          style={[styles.headerButton, { backgroundColor: theme.colors.surfaceAlt }]}
+          onPress={() => setSheet(true)}
+          hitSlop={10}
+        >
+          <Ionicons name="ellipsis-vertical" size={22} color={theme.colors.text} />
         </Pressable>
       </View>
 
       {videoBlock}
 
-      {subtitleBlock}
-
-      <View style={styles.transcriptHeader}>
-        <Text style={styles.transcriptTitle}>字幕稿</Text>
-        {status ? (
-          <View style={styles.statusRow}>
-            <ActivityIndicator size="small" color="#A78BFA" />
-            <Text style={styles.statusText} numberOfLines={1}>
-              {status}
-            </Text>
+      {!landscape ? (
+        <View style={{ flex: 1 }}>
+          <View style={styles.transcriptHeader}>
+            <Text style={[styles.transcriptTitle, { color: theme.colors.text }]}>字幕稿</Text>
+            {status ? (
+              <View style={styles.statusRow}>
+                <ActivityIndicator size="small" color={theme.colors.primary} />
+                <Text
+                  style={[styles.statusText, { color: theme.colors.textTertiary }]}
+                  numberOfLines={1}
+                >
+                  {status}
+                </Text>
+              </View>
+            ) : (
+              <Text style={[styles.statusText, { color: theme.colors.textTertiary }]}>
+                点句子可跳转
+              </Text>
+            )}
           </View>
-        ) : (
-          <Text style={styles.statusText}>点句子可跳转</Text>
-        )}
-      </View>
-
-      {transcript}
-      {controls}
+          {transcript}
+          {controls}
+        </View>
+      ) : (
+        <>
+          <Pressable
+            style={[styles.landscapeBack, { top: Math.max(12, insets.top) }]}
+            onPress={exitFullscreen}
+          >
+            <Ionicons name="chevron-back" size={24} color="#FFFFFF" />
+          </Pressable>
+          <View
+            style={[styles.landscapeTitle, { top: Math.max(12, insets.top) }]}
+            pointerEvents="none"
+          >
+            <Text style={styles.landscapeTitleText} numberOfLines={1}>
+              {displayTitle}
+            </Text>
+            {displayAuthor ? (
+              <Text style={styles.landscapeAuthor} numberOfLines={1}>
+                {displayAuthor}
+              </Text>
+            ) : null}
+          </View>
+          <Pressable
+            style={[styles.landscapeMore, { top: Math.max(12, insets.top) }]}
+            onPress={() => setSheet(true)}
+          >
+            <Ionicons name="ellipsis-vertical" size={22} color="#FFFFFF" />
+          </Pressable>
+          {controls}
+        </>
+      )}
 
       {toast ? (
         <View style={styles.toast} pointerEvents="none">
           <Text style={styles.toastText}>{toast}</Text>
         </View>
       ) : null}
-      {sheetModal()}
+
+      {sheet ? sheetOverlay() : null}
     </View>
   );
 
-  function sheetModal() {
+  function sheetOverlay() {
     return (
-      <Modal visible={sheet} transparent animationType="slide" onRequestClose={() => setSheet(false)}>
-        <Pressable style={styles.sheetMask} onPress={() => setSheet(false)}>
-          <Pressable
-            style={[styles.sheetCard, { paddingBottom: Math.max(24, insets.bottom) }]}
-            onPress={(event) => event.stopPropagation()}
-          >
-            <View style={styles.sheetHandle} />
-            <Text style={styles.sheetTitle}>更多设置</Text>
+      <View style={styles.sheetMask} pointerEvents="box-none">
+        <Pressable style={StyleSheet.absoluteFill} onPress={() => setSheet(false)} />
+        <View
+          style={[
+            styles.sheetCard,
+            { backgroundColor: theme.colors.card },
+            landscape
+              ? {
+                  alignSelf: 'flex-end',
+                  width: Math.min(460, Math.round(windowSize.width * 0.46)),
+                  height: '100%',
+                  borderTopLeftRadius: 24,
+                  borderTopRightRadius: 0,
+                  borderBottomLeftRadius: 24,
+                  paddingTop: Math.max(12, insets.top),
+                  paddingBottom: Math.max(16, insets.bottom),
+                }
+              : {
+                  maxHeight: '86%',
+                  paddingBottom: Math.max(24, insets.bottom),
+                },
+          ]}
+        >
+          <View style={[styles.sheetHandle, { backgroundColor: theme.colors.borderStrong }]} />
+          <Text style={[styles.sheetTitle, { color: theme.colors.text }]}>更多设置</Text>
 
-            <View style={styles.sheetGroup}>
+          <ScrollView
+            style={{ flexShrink: 1 }}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: 8 }}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={[styles.sheetGroup, { backgroundColor: theme.colors.surfaceAlt }]}>
               <SheetRow
                 icon="language-outline"
                 title="显示翻译"
-                right={
-                  <SwitchPill
-                    value={showTranslation}
-                    onPress={toggleTranslation}
-                  />
-                }
+                right={<SwitchPill value={showTranslation} onPress={toggleTranslation} />}
               />
               <SheetRow
                 icon="text-outline"
                 title="字体大小"
                 right={
-                  <View style={styles.fontStepper}>
+                  <View style={[styles.fontStepper, { backgroundColor: theme.colors.surface }]}>
                     <Pressable onPress={() => changeFontSize(-1)} style={styles.stepButton}>
-                      <Ionicons name="remove" size={18} color="#E9E3F7" />
+                      <Ionicons name="remove" size={18} color={theme.colors.text} />
                     </Pressable>
-                    <Text style={styles.fontStepValue}>{fontSize}px</Text>
+                    <Text style={[styles.fontStepValue, { color: theme.colors.textSecondary }]}>
+                      {fontSize}px
+                    </Text>
                     <Pressable onPress={() => changeFontSize(1)} style={styles.stepButton}>
-                      <Ionicons name="add" size={18} color="#E9E3F7" />
+                      <Ionicons name="add" size={18} color={theme.colors.text} />
                     </Pressable>
                   </View>
                 }
@@ -883,11 +936,13 @@ export default function PlayerScreen() {
                       ? 'Microsoft'
                       : settings.provider === 'google'
                         ? 'Google'
-                        : settings.provider === 'deepseek'
-                          ? 'DeepSeek'
-                          : settings.provider === 'siliconflow'
-                            ? 'SiliconFlow'
-                            : 'OpenAI'
+                        : settings.provider === 'google2'
+                          ? 'Google2'
+                          : settings.provider === 'deepseek'
+                            ? 'DeepSeek'
+                            : settings.provider === 'siliconflow'
+                              ? 'SiliconFlow'
+                              : 'OpenAI'
                 }
                 onPress={() => {
                   setSheet(false);
@@ -905,9 +960,23 @@ export default function PlayerScreen() {
               />
             </View>
 
-            <View style={styles.sheetGroup}>
-              <SheetRow icon="heart-outline" title={isFavorite ? '取消收藏' : '保存到学习页'} onPress={() => { saveFavorite(); setSheet(false); }} />
-              <SheetRow icon="share-social-outline" title="分享视频" onPress={() => { shareVideo(); setSheet(false); }} />
+            <View style={[styles.sheetGroup, { backgroundColor: theme.colors.surfaceAlt }]}>
+              <SheetRow
+                icon="heart-outline"
+                title={isFavorite ? '取消收藏' : '收藏视频'}
+                onPress={() => {
+                  saveFavorite();
+                  setSheet(false);
+                }}
+              />
+              <SheetRow
+                icon="share-social-outline"
+                title="分享视频"
+                onPress={() => {
+                  shareVideo();
+                  setSheet(false);
+                }}
+              />
               <SheetRow
                 icon="refresh-outline"
                 title="重新翻译字幕"
@@ -917,9 +986,9 @@ export default function PlayerScreen() {
                 }}
               />
             </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
+          </ScrollView>
+        </View>
+      </View>
     );
   }
 
@@ -957,18 +1026,32 @@ function SheetRow({
   right?: ReactNode;
   onPress?: () => void;
 }) {
+  const theme = useAppTheme();
   const content = (
-    <View style={styles.sheetRow}>
-      <View style={styles.sheetIcon}>
-        <Ionicons name={icon} size={18} color="#C7B8FF" />
+    <View style={[styles.sheetRow, { borderBottomColor: theme.colors.border }]}>
+      <View style={[styles.sheetIcon, { backgroundColor: theme.colors.primarySoft }]}>
+        <Ionicons name={icon} size={18} color={theme.colors.primary} />
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={styles.sheetRowTitle}>{title}</Text>
-        {subtitle ? <Text style={styles.sheetRowSubtitle}>{subtitle}</Text> : null}
+        <Text style={[styles.sheetRowTitle, { color: theme.colors.text }]}>{title}</Text>
+        {subtitle ? (
+          <Text style={[styles.sheetRowSubtitle, { color: theme.colors.textTertiary }]}>
+            {subtitle}
+          </Text>
+        ) : null}
       </View>
-      {value ? <Text style={styles.sheetRowValue}>{value}</Text> : null}
+      {value ? (
+        <Text style={[styles.sheetRowValue, { color: theme.colors.textSecondary }]}>{value}</Text>
+      ) : null}
       {right}
-      {onPress ? <Ionicons name="chevron-forward" size={16} color="#756B86" style={{ marginLeft: 6 }} /> : null}
+      {onPress ? (
+        <Ionicons
+          name="chevron-forward"
+          size={16}
+          color={theme.colors.textTertiary}
+          style={{ marginLeft: 6 }}
+        />
+      ) : null}
     </View>
   );
   if (!onPress) return content;
@@ -976,9 +1059,16 @@ function SheetRow({
 }
 
 function SwitchPill({ value, onPress }: { value: boolean; onPress: () => void }) {
+  const theme = useAppTheme();
   return (
-    <Pressable onPress={onPress} style={[styles.switchPill, value && styles.switchPillOn]}>
-      <View style={[styles.switchKnob, value && styles.switchKnobOn]} />
+    <Pressable
+      onPress={onPress}
+      style={[
+        styles.switchPill,
+        { backgroundColor: value ? theme.colors.primary : theme.colors.surfaceAlt },
+      ]}
+    >
+      <View style={[styles.switchKnob, value && { alignSelf: 'flex-end' }]} />
     </Pressable>
   );
 }
@@ -1162,9 +1252,17 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
   },
   toastText: { color: '#F5F2FF', fontSize: 12 },
-  sheetMask: { flex: 1, backgroundColor: 'rgba(4,2,8,0.6)', justifyContent: 'flex-end' },
+  sheetMask: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(4,2,8,0.6)',
+    justifyContent: 'flex-end',
+    zIndex: 100,
+  },
   sheetCard: {
-    backgroundColor: '#151020',
     borderTopLeftRadius: 26,
     borderTopRightRadius: 26,
     paddingHorizontal: 16,

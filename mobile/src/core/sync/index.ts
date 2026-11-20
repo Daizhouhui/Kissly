@@ -13,10 +13,12 @@ type SubscriptionsFile = {
   deleted: SubscriptionTombstones;
 };
 
+type SyncSettings = Omit<Settings, 'webdav' | 'theme' | 'themeAccent'>;
+
 type SettingsFile = {
   version: 1;
   updatedAt: number;
-  settings: Omit<Settings, 'webdav'>;
+  settings: SyncSettings;
 };
 
 type MergedSubscriptions = {
@@ -171,8 +173,8 @@ export async function getWebdavConfig(): Promise<WebDavConfig> {
   };
 }
 
-function syncableSettings(settings: Settings): Omit<Settings, 'webdav'> {
-  const { webdav, ...rest } = settings;
+function syncableSettings(settings: Settings): SyncSettings {
+  const { webdav, theme, themeAccent, ...rest } = settings;
   return rest;
 }
 
@@ -281,8 +283,10 @@ export async function syncNow(): Promise<string> {
     ) {
       useAppStore.getState().replaceSettings(
         {
-          ...(remoteSettings.data.settings as Settings),
+          ...(remoteSettings.data.settings as unknown as Settings),
           webdav: settings.webdav,
+          theme: settings.theme,
+          themeAccent: settings.themeAccent,
         },
         Number(remoteSettings.data.updatedAt)
       );
