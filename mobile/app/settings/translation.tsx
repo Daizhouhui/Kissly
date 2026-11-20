@@ -16,6 +16,7 @@ import { getSecret, setSecret } from '../../src/core/secrets';
 import { useAppStore } from '../../src/core/store';
 import { ProviderId } from '../../src/core/types';
 import { testTranslation } from '../../src/core/translate';
+import { prepareSystemLanguagePack } from '../../src/core/translate/system';
 import { Card, NavHeader, SectionTitle, SettingSwitch } from '../../src/ui/components';
 import { useAppTheme } from '../../src/ui/theme';
 
@@ -31,32 +32,40 @@ type Engine = {
 const FREE: Engine[] = [
   {
     id: 'auto',
-    title: '自动 · 免费优先',
-    desc: '微软 → 谷歌 → DeepSeek 依次尝试',
+    title: '自动',
+    desc: '微软 → 谷歌 → 系统内置，不再落到 Google2',
     icon: 'flash',
-    color: '#2F6FED',
+    color: '#7C5CFF',
     badge: '推荐',
   },
   {
-    id: 'microsoft',
-    title: '微软翻译',
-    desc: 'Edge 免费接口 · 无需 Key',
-    icon: 'logo-windows',
-    color: '#2563EB',
-    badge: '免费',
-  },
-  {
     id: 'google',
-    title: '谷歌翻译',
+    title: 'Google',
     desc: '网页免费接口 · 国内需代理',
     icon: 'logo-google',
     color: '#EA4335',
     badge: '免费',
   },
   {
+    id: 'system',
+    title: '系统内置',
+    desc: 'ML Kit 离线翻译 · 首次下载语言包',
+    icon: 'phone-portrait-outline',
+    color: '#7C5CFF',
+    badge: '离线',
+  },
+  {
+    id: 'microsoft',
+    title: 'Microsoft',
+    desc: 'Edge 免费接口 · 无需 Key',
+    icon: 'logo-windows',
+    color: '#2563EB',
+    badge: '免费',
+  },
+  {
     id: 'google2',
     title: 'Google2 备用',
-    desc: '内置公共预设 · 共享 key 可能限流',
+    desc: '内置公共预设 · 仅手动选择时使用',
     icon: 'logo-google',
     color: '#34A853',
     badge: '备用',
@@ -64,6 +73,14 @@ const FREE: Engine[] = [
 ];
 
 const AI: Engine[] = [
+  {
+    id: 'siliconflow',
+    title: 'SiliconFlow',
+    desc: '国内直连，可选免费模型',
+    icon: 'layers',
+    color: '#7C5CFF',
+    badge: '免费额度',
+  },
   {
     id: 'deepseek',
     title: 'DeepSeek',
@@ -73,20 +90,12 @@ const AI: Engine[] = [
     badge: '推荐',
   },
   {
-    id: 'siliconflow',
-    title: 'SiliconFlow',
-    desc: '国内直连，可选免费模型',
-    icon: 'layers',
-    color: '#0EA5A4',
-    badge: '需 Key',
-  },
-  {
     id: 'openai',
     title: 'OpenAI 兼容',
     desc: '任意兼容接口，自填 Base URL',
     icon: 'chatbubble-ellipses',
     color: '#111827',
-    badge: '需 Key',
+    badge: 'Premium',
   },
 ];
 
@@ -99,6 +108,7 @@ export default function TranslationSettingsScreen() {
   const [siliconflowKey, setSiliconflowKey] = useState('');
   const [openaiKey, setOpenaiKey] = useState('');
   const [testing, setTesting] = useState(false);
+  const [preparing, setPreparing] = useState(false);
 
   useEffect(() => {
     Promise.all([getSecret('deepseek'), getSecret('siliconflow'), getSecret('openai')]).then(
@@ -111,6 +121,38 @@ export default function TranslationSettingsScreen() {
   }, []);
 
   const selectProvider = (id: ProviderId) => {
+    if (id === 'system') {
+      Alert.alert(
+        '下载语言包？',
+        '系统内置翻译在手机上离线进行，需先下载语言包（每种约 30 MB），下载完成后自动启用。',
+        [
+          { text: '取消', style: 'cancel' },
+          {
+            text: '下载',
+            onPress: async () => {
+              setPreparing(true);
+              try {
+                await prepareSystemLanguagePack(
+                  settings.sourceLang,
+                  settings.targetLang
+                );
+                setProvider(id);
+                patchSettings({ provider: id });
+                Alert.alert('语言包已就绪', '系统内置翻译已启用，可以离线翻译字幕。');
+              } catch (error) {
+                Alert.alert(
+                  '语言包下载失败',
+                  error instanceof Error ? error.message : String(error)
+                );
+              } finally {
+                setPreparing(false);
+              }
+            },
+          },
+        ]
+      );
+      return;
+    }
     setProvider(id);
     patchSettings({ provider: id });
   };
@@ -149,47 +191,50 @@ export default function TranslationSettingsScreen() {
       <Pressable
         key={engine.id}
         onPress={() => selectProvider(engine.id)}
+        disabled={preparing}
         style={({ pressed }) => ({
           flexDirection: 'row',
           alignItems: 'center',
           gap: 12,
           paddingVertical: 13,
           paddingHorizontal: 14,
-          borderRadius: 16,
           backgroundColor: active ? theme.colors.primarySoft : theme.colors.card,
-          borderWidth: active ? 1 : StyleSheet.hairlineWidth,
-          borderColor: active ? theme.colors.primary : theme.colors.border,
-          marginBottom: last ? 0 : 8,
-          opacity: pressed ? 0.85 : 1,
+          borderBottomWidth: last ? 0 : StyleSheet.hairlineWidth,
+          borderBottomColor: theme.colors.border,
+          opacity: pressed || preparing ? 0.85 : 1,
         })}
       >
         <View
           style={{
             width: 38,
             height: 38,
-            borderRadius: 12,
+            borderRadius: 11,
             backgroundColor: `${engine.color}14`,
             alignItems: 'center',
             justifyContent: 'center',
           }}
         >
-          <Ionicons name={engine.icon} size={19} color={engine.color} />
+          {preparing && engine.id === 'system' ? (
+            <ActivityIndicator size="small" color={engine.color} />
+          ) : (
+            <Ionicons name={engine.icon} size={19} color={engine.color} />
+          )}
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-            <Text style={{ color: theme.colors.text, fontSize: 14.5, fontWeight: '700' }}>{engine.title}</Text>
+            <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '700' }}>{engine.title}</Text>
             {engine.badge ? (
               <View
                 style={{
                   paddingHorizontal: 6,
                   paddingVertical: 2,
                   borderRadius: 5,
-                  backgroundColor: active ? 'rgba(108,77,246,.14)' : theme.colors.surfaceAlt,
+                  backgroundColor: active ? theme.colors.primary : theme.colors.surfaceAlt,
                 }}
               >
                 <Text
                   style={{
-                    color: active ? theme.colors.primary : theme.colors.textTertiary,
+                    color: active ? '#FFFFFF' : theme.colors.textTertiary,
                     fontSize: 9,
                     fontWeight: '700',
                   }}
@@ -205,21 +250,35 @@ export default function TranslationSettingsScreen() {
         </View>
         <View
           style={{
-            width: 22,
-            height: 22,
-            borderRadius: 11,
-            borderWidth: 1.5,
-            borderColor: active ? theme.colors.primary : theme.colors.borderStrong,
+            width: 24,
+            height: 24,
+            borderRadius: 12,
+            borderWidth: active ? 0 : 1.5,
+            borderColor: theme.colors.borderStrong,
             alignItems: 'center',
             justifyContent: 'center',
             backgroundColor: active ? theme.colors.primary : 'transparent',
           }}
         >
-          {active ? <Ionicons name="checkmark" size={13} color="#fff" /> : null}
+          {active ? <Ionicons name="checkmark" size={14} color="#fff" /> : null}
         </View>
       </Pressable>
     );
   };
+
+  const engineGroup = (engines: Engine[]) => (
+    <View
+      style={{
+        backgroundColor: theme.colors.card,
+        borderRadius: 18,
+        overflow: 'hidden',
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.border,
+      }}
+    >
+      {engines.map((engine, index) => renderEngine(engine, index === engines.length - 1))}
+    </View>
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
@@ -238,10 +297,10 @@ export default function TranslationSettingsScreen() {
         showsVerticalScrollIndicator={false}
       >
         <SectionTitle title="免费引擎" />
-        <View>{FREE.map((engine, index) => renderEngine(engine, index === FREE.length - 1))}</View>
+        {engineGroup(FREE)}
 
-        <SectionTitle title="AI 引擎" />
-        <View>{AI.map((engine, index) => renderEngine(engine, index === AI.length - 1))}</View>
+        <SectionTitle title="高级引擎" />
+        {engineGroup(AI)}
 
         <Text style={{ color: theme.colors.textTertiary, fontSize: 11.5, lineHeight: 18, marginTop: 10, paddingHorizontal: 4 }}>
           {PROVIDER_HINTS[provider]}
@@ -326,7 +385,7 @@ export default function TranslationSettingsScreen() {
           </View>
         ) : null}
 
-        {provider === 'auto' || provider === 'microsoft' || provider === 'google' || provider === 'google2' ? (
+        {provider === 'auto' || provider === 'microsoft' || provider === 'google' || provider === 'google2' || provider === 'system' ? (
           <Pressable
             onPress={test}
             disabled={testing}

@@ -1,5 +1,6 @@
 export type ProviderId =
   | 'auto'
+  | 'system'
   | 'microsoft'
   | 'google'
   | 'google2'
@@ -13,12 +14,21 @@ export type SubtitlePosition = 'bottom' | 'top';
 
 export type ThemePreference = 'system' | 'light' | 'dark';
 
-export type ThemeAccent = 'blue' | 'teal' | 'orange' | 'rose' | 'green';
+export type ThemeAccent =
+  | 'violet'
+  | 'blue'
+  | 'teal'
+  | 'orange'
+  | 'rose'
+  | 'green';
 
 export type DiscoverLayout = 'list' | 'grid' | 'large';
 
 export type SubtitlePrefs = {
+  /** Portrait transcript font size. */
   fontSize: number;
+  /** Landscape / fullscreen overlay font size, independent from portrait. */
+  landscapeFontSize: number;
   mode: SubtitleMode;
   position: SubtitlePosition;
   backgroundOpacity: number;
@@ -43,6 +53,8 @@ export type Settings = {
   discoverLayout: DiscoverLayout;
   theme: ThemePreference;
   themeAccent: ThemeAccent;
+  /** Android-reference design migration marker. */
+  designVersion: number;
   subtitle: SubtitlePrefs;
   webdav: WebDavConfig;
   deepseekModel: string;
@@ -58,6 +70,8 @@ export type Subscription = {
   handle?: string;
   avatar?: string;
   group?: string;
+  subscriberCount?: string;
+  videoCount?: string;
   addedAt: number;
   /** Display order. Lower values come first; kept in sync across devices. */
   order?: number;

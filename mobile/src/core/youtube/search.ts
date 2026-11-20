@@ -17,6 +17,7 @@ function textOf(value: any): string {
   if (!value) return '';
   if (typeof value === 'string') return value;
   if (typeof value.simpleText === 'string') return value.simpleText;
+  if (typeof value.content === 'string') return value.content;
   if (Array.isArray(value.runs)) {
     return value.runs.map((run: any) => run?.text ?? '').join('');
   }
@@ -33,9 +34,27 @@ function handleOf(node: any): string {
   const canonical =
     node?.navigationEndpoint?.browseEndpoint?.canonicalBaseUrl ??
     node?.navigationEndpoint?.commandMetadata?.webCommandMetadata?.url ??
+    node?.subscriberCountText?.runs?.[0]?.navigationEndpoint?.browseEndpoint
+      ?.canonicalBaseUrl ??
     '';
-  if (typeof canonical === 'string' && canonical.startsWith('@')) return canonical;
-  return '';
+  if (typeof canonical !== 'string') return '';
+  const clean = canonical.startsWith('/') ? canonical.slice(1) : canonical;
+  return clean.startsWith('@') ? clean : '';
+}
+
+function parseChannel(node: any): ChannelSearchResult | null {
+  const channelId = String(node?.channelId ?? '');
+  if (!channelId.startsWith('UC')) return null;
+  const title = textOf(node.title) || textOf(node.channelTitle);
+  if (!title) return null;
+  return {
+    channelId,
+    title,
+    handle: handleOf(node) || undefined,
+    avatar: avatarOf(node) || undefined,
+    subscriberCount: textOf(node.subscriberCountText) || undefined,
+    videoCount: textOf(node.videoCountText) || undefined,
+  };
 }
 
 function walkChannels(node: any, output: Map<string, ChannelSearchResult>) {
@@ -44,22 +63,13 @@ function walkChannels(node: any, output: Map<string, ChannelSearchResult>) {
     for (const item of node) walkChannels(item, output);
     return;
   }
-  const channelId = typeof node.channelId === 'string' ? node.channelId : '';
-  if (channelId.startsWith('UC')) {
-    const title = textOf(node.title) || textOf(node.channelTitle);
-    if (title && !output.has(channelId)) {
-      output.set(channelId, {
-        channelId,
-        title,
-        handle: handleOf(node) || undefined,
-        avatar: avatarOf(node) || undefined,
-        subscriberCount: textOf(node.subscriberCountText) || undefined,
-        videoCount: textOf(node.videoCountText) || undefined,
-      });
-    }
+  const renderer = node.channelRenderer ?? node.gridChannelRenderer;
+  if (renderer) {
+    const parsed = parseChannel(renderer);
+    if (parsed && !output.has(parsed.channelId)) output.set(parsed.channelId, parsed);
   }
   for (const key of Object.keys(node)) {
-    if (key === 'channelId' || key === 'title' || key === 'channelTitle') continue;
+    if (key === 'channelRenderer' || key === 'gridChannelRenderer') continue;
     walkChannels(node[key], output);
   }
 }
@@ -84,7 +94,7 @@ export async function searchChannels(
         client: {
           clientName: 'WEB',
           clientVersion: '2.20260101.00.00',
-          hl: 'zh-CN',
+          hl: 'en',
           gl: 'US',
         },
       },

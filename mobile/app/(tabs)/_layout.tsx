@@ -15,15 +15,10 @@ function TabIcon({ name, focused }: { name: string; focused: boolean }) {
   const theme = useAppTheme();
   const config = TAB_ICONS[name] ?? TAB_ICONS.index;
   return (
-    <View
-      style={[
-        styles.iconWrap,
-        focused && { backgroundColor: theme.colors.primarySoft },
-      ]}
-    >
+    <View style={styles.iconWrap}>
       <Ionicons
         name={focused ? config.active : config.inactive}
-        size={21}
+        size={22}
         color={focused ? theme.colors.primary : theme.colors.textTertiary}
       />
     </View>
@@ -33,7 +28,6 @@ function TabIcon({ name, focused }: { name: string; focused: boolean }) {
 export default function TabLayout() {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
-  const bottom = insets.bottom > 0 ? insets.bottom + 2 : 12;
 
   return (
     <Tabs
@@ -45,33 +39,28 @@ export default function TabLayout() {
         tabBarInactiveTintColor: theme.colors.textTertiary,
         tabBarStyle: {
           position: 'absolute',
-          left: 16,
-          right: 16,
-          bottom,
-          height: 62,
-          borderRadius: 31,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: 58 + insets.bottom,
+          borderRadius: 0,
           backgroundColor: theme.dark
-            ? 'rgba(17,21,29,0.97)'
+            ? 'rgba(14,11,20,0.98)'
             : 'rgba(255,255,255,0.98)',
-          borderTopWidth: 1,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          paddingBottom: 6,
-          paddingTop: 6,
-          elevation: 12,
-          shadowColor: '#000000',
-          shadowOpacity: theme.dark ? 0.45 : 0.12,
-          shadowRadius: 18,
-          shadowOffset: { width: 0, height: 10 },
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: theme.colors.border,
+          paddingBottom: insets.bottom,
+          paddingTop: 5,
+          elevation: 0,
+          shadowOpacity: 0,
         },
         tabBarItemStyle: {
-          height: 50,
-          borderRadius: 25,
+          height: 52,
         },
         tabBarLabelStyle: {
           fontSize: 10.5,
           fontWeight: '700',
-          letterSpacing: 0.2,
+          letterSpacing: 0.1,
           marginTop: -1,
         },
         tabBarIconStyle: {
@@ -106,9 +95,8 @@ export default function TabLayout() {
 
 const styles = StyleSheet.create({
   iconWrap: {
-    width: 38,
-    height: 30,
-    borderRadius: 12,
+    width: 34,
+    height: 28,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Kissly",
     "slug": "kissly",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "kissly",
@@ -10,7 +10,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.knny.kisssubtitle",
-      "buildNumber": "4",
+      "buildNumber": "5",
       "infoPlist": {
         "UIViewControllerBasedStatusBarAppearance": true,
         "NSAppTransportSecurity": {
@@ -20,7 +20,7 @@
     },
     "android": {
       "package": "com.knny.kisssubtitle",
-      "versionCode": 4,
+      "versionCode": 5,
       "adaptiveIcon": {
         "backgroundColor": "#171126",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -60,3 +60,4 @@
     }
   }
 }
+

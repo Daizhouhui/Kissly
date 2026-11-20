@@ -19,31 +19,31 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppStore } from '../src/core/store';
 import { Subscription } from '../src/core/types';
 import { parseTakeoutCsv } from '../src/core/youtube/channel';
-import { EmptyState, GhostButton, IconButton, NavHeader, PrimaryButton } from '../src/ui/components';
+import { EmptyState, PrimaryButton } from '../src/ui/components';
 import { useAppTheme } from '../src/ui/theme';
 
-const ROW_HEIGHT = 78;
+const ROW_HEIGHT = 74;
 
 function csvEscape(value: string) {
   return `"${value.replace(/"/g, '""')}"`;
 }
 
-function CheckBox({ checked }: { checked: boolean }) {
+function CheckCircle({ checked }: { checked: boolean }) {
   const theme = useAppTheme();
   return (
     <View
       style={{
-        width: 22,
-        height: 22,
-        borderRadius: 11,
-        borderWidth: 1.5,
-        borderColor: checked ? theme.colors.primary : theme.colors.borderStrong,
+        width: 26,
+        height: 26,
+        borderRadius: 13,
+        borderWidth: checked ? 0 : 1.5,
+        borderColor: theme.colors.borderStrong,
         backgroundColor: checked ? theme.colors.primary : 'transparent',
         alignItems: 'center',
         justifyContent: 'center',
       }}
     >
-      {checked ? <Ionicons name="checkmark" size={14} color="#FFFFFF" /> : null}
+      {checked ? <Ionicons name="checkmark" size={16} color="#FFFFFF" /> : null}
     </View>
   );
 }
@@ -52,20 +52,20 @@ function SortableRow({
   item,
   index,
   count,
-  selectMode,
+  manageMode,
   selected,
   onToggle,
   onMove,
-  onRemove,
+  onOpen,
 }: {
   item: Subscription;
   index: number;
   count: number;
-  selectMode: boolean;
+  manageMode: boolean;
   selected: boolean;
   onToggle: () => void;
   onMove: (from: number, to: number) => void;
-  onRemove: () => void;
+  onOpen: () => void;
 }) {
   const theme = useAppTheme();
   const [dragY, setDragY] = useState(0);
@@ -78,9 +78,9 @@ function SortableRow({
   const pan = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => !selectMode,
+        onStartShouldSetPanResponder: () => manageMode,
         onMoveShouldSetPanResponder: (_, gesture) =>
-          !selectMode && Math.abs(gesture.dy) > 4,
+          manageMode && Math.abs(gesture.dy) > 4,
         onPanResponderGrant: () => setDragging(true),
         onPanResponderMove: (_, gesture) => setDragY(gesture.dy),
         onPanResponderRelease: (_, gesture) => {
@@ -97,91 +97,102 @@ function SortableRow({
           setDragging(false);
         },
       }),
-    [count, selectMode]
+    [count, manageMode]
   );
+
+  const subtitle =
+    [item.subscriberCount, item.videoCount].filter(Boolean).join('  ·  ') ||
+    item.handle ||
+    '已订阅频道';
 
   return (
     <View
       style={{
         height: ROW_HEIGHT,
-        marginBottom: 8,
         zIndex: dragging ? 20 : 1,
         transform: [{ translateY: dragY }],
       }}
     >
       <Pressable
-        onPress={selectMode ? onToggle : undefined}
+        onPress={manageMode ? onToggle : onOpen}
         style={{
-          height: ROW_HEIGHT - 8,
+          height: ROW_HEIGHT,
           flexDirection: 'row',
           alignItems: 'center',
-          gap: 11,
+          gap: 12,
           backgroundColor: dragging ? theme.colors.bgElevated : theme.colors.card,
-          borderRadius: 16,
-          paddingHorizontal: 12,
-          borderWidth: StyleSheet.hairlineWidth,
-          borderColor: dragging ? theme.colors.primary : theme.colors.border,
+          paddingHorizontal: 14,
+          borderBottomWidth: index === count - 1 ? 0 : StyleSheet.hairlineWidth,
+          borderBottomColor: theme.colors.border,
           shadowColor: '#000',
-          shadowOpacity: dragging ? 0.25 : 0,
-          shadowRadius: 14,
-          shadowOffset: { width: 0, height: 8 },
+          shadowOpacity: dragging ? 0.2 : 0,
+          shadowRadius: 12,
+          shadowOffset: { width: 0, height: 6 },
           elevation: dragging ? 6 : 0,
         }}
       >
-        {selectMode ? <CheckBox checked={selected} /> : null}
+        {manageMode ? (
+          <View
+            {...pan.panHandlers}
+            style={{ width: 30, height: 48, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Ionicons name="reorder-three-outline" size={24} color={theme.colors.textTertiary} />
+          </View>
+        ) : null}
+
         {item.avatar ? (
           <Image
             source={{ uri: item.avatar }}
-            style={{ width: 42, height: 42, borderRadius: 21 }}
+            style={{ width: 54, height: 54, borderRadius: 27 }}
             contentFit="cover"
             transition={180}
           />
         ) : (
           <View
             style={{
-              width: 42,
-              height: 42,
-              borderRadius: 21,
+              width: 54,
+              height: 54,
+              borderRadius: 27,
               backgroundColor: theme.colors.primarySoft,
               alignItems: 'center',
               justifyContent: 'center',
             }}
           >
-            <Text style={{ color: theme.colors.primary, fontSize: 16, fontWeight: '800' }}>
+            <Text style={{ color: theme.colors.primary, fontSize: 20, fontWeight: '900' }}>
               {item.title.slice(0, 1).toUpperCase()}
             </Text>
           </View>
         )}
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={{ color: theme.colors.text, fontSize: 14.5, fontWeight: '700' }} numberOfLines={1}>
+          <Text
+            style={{ color: theme.colors.text, fontSize: 16, fontWeight: '800' }}
+            numberOfLines={1}
+          >
             {item.title}
           </Text>
-          <Text style={{ color: theme.colors.textTertiary, fontSize: 11, marginTop: 3 }} numberOfLines={1}>
-            {item.handle ?? item.channelId}
+          <Text
+            style={{ color: theme.colors.textSecondary, fontSize: 11.5, marginTop: 4 }}
+            numberOfLines={1}
+          >
+            {subtitle}
           </Text>
         </View>
-        {!selectMode ? (
-          <View {...pan.panHandlers} style={{ width: 38, height: 44, alignItems: 'center', justifyContent: 'center' }}>
-            <Ionicons name="reorder-three-outline" size={25} color={theme.colors.textTertiary} />
-          </View>
-        ) : null}
-        {!selectMode ? (
-          <Pressable
-            onPress={onRemove}
-            hitSlop={8}
-            style={({ pressed }) => ({
-              width: 34,
-              height: 34,
-              borderRadius: 17,
+        {manageMode ? (
+          <CheckCircle checked={selected} />
+        ) : (
+          <View
+            style={{
+              width: 26,
+              height: 26,
+              borderRadius: 13,
+              backgroundColor: theme.colors.primarySoft,
               alignItems: 'center',
               justifyContent: 'center',
-              backgroundColor: theme.colors.surfaceAlt,
-              opacity: pressed ? 0.6 : 1,
-            })}
+            }}
           >
-            <Ionicons name="trash-outline" size={17} color={theme.colors.danger} />
-          </Pressable>
-        ) : null}
+            <Ionicons name="checkmark" size={16} color={theme.colors.primary} />
+          </View>
+        )}
       </Pressable>
     </View>
   );
@@ -193,16 +204,15 @@ export default function SubscriptionsScreen() {
   const router = useRouter();
   const subscriptions = useAppStore((state) => state.subscriptions);
   const addSubscriptions = useAppStore((state) => state.addSubscriptions);
-  const removeSubscription = useAppStore((state) => state.removeSubscription);
   const removeSubscriptions = useAppStore((state) => state.removeSubscriptions);
   const reorderSubscriptions = useAppStore((state) => state.reorderSubscriptions);
   const [busy, setBusy] = useState(false);
-  const [selectMode, setSelectMode] = useState(false);
+  const [manageMode, setManageMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    if (!selectMode) setSelected(new Set());
-  }, [selectMode]);
+    if (!manageMode) setSelected(new Set());
+  }, [manageMode]);
 
   const importCsv = async () => {
     try {
@@ -253,13 +263,6 @@ export default function SubscriptionsScreen() {
     }
   };
 
-  const confirmRemove = (sub: Subscription) => {
-    Alert.alert('取消订阅', `不再在首页显示「${sub.title}」？同步后其他设备也会移除。`, [
-      { text: '取消', style: 'cancel' },
-      { text: '移除', style: 'destructive', onPress: () => removeSubscription(sub.channelId) },
-    ]);
-  };
-
   const toggleSelected = (channelId: string) => {
     setSelected((current) => {
       const next = new Set(current);
@@ -286,7 +289,7 @@ export default function SubscriptionsScreen() {
         style: 'destructive',
         onPress: () => {
           removeSubscriptions(Array.from(selected));
-          setSelectMode(false);
+          setManageMode(false);
         },
       },
     ]);
@@ -301,91 +304,152 @@ export default function SubscriptionsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
-      <NavHeader
-        title="订阅管理"
-        subtitle={
-          selectMode
-            ? `已选择 ${selected.size} / ${subscriptions.length} 个频道`
-            : `${subscriptions.length} 个频道 · 拖动右侧手柄排序`
-        }
-        right={
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            {subscriptions.length ? (
-              <Pressable onPress={() => setSelectMode((value) => !value)} hitSlop={8}>
-                <Text style={{ color: theme.colors.primary, fontSize: 13, fontWeight: '700' }}>
-                  {selectMode ? '完成' : '管理'}
-                </Text>
-              </Pressable>
-            ) : null}
-            {!selectMode ? (
-              <IconButton
-                name="add"
-                bg={theme.colors.primary}
-                color="#fff"
-                onPress={() => router.push('/add-subscription' as any)}
-              />
+      <View
+        style={{
+          paddingTop: insets.top + 8,
+          paddingHorizontal: 16,
+          paddingBottom: 10,
+          backgroundColor: theme.colors.bg,
+        }}
+      >
+        <View style={{ height: 48, flexDirection: 'row', alignItems: 'center' }}>
+          <Pressable
+            onPress={() => (manageMode ? setManageMode(false) : router.back())}
+            hitSlop={10}
+            style={{ width: 40, height: 44, alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Ionicons name="arrow-back" size={23} color={theme.colors.text} />
+          </Pressable>
+          <Text
+            style={{
+              flex: 1,
+              color: theme.colors.text,
+              fontSize: 21,
+              fontWeight: '900',
+              textAlign: 'center',
+              letterSpacing: -0.4,
+            }}
+          >
+            {manageMode ? '批量管理' : '全部频道'}
+          </Text>
+          <Pressable
+            onPress={() => setManageMode((value) => !value)}
+            hitSlop={10}
+            disabled={!subscriptions.length}
+            style={{
+              width: 44,
+              height: 44,
+              alignItems: 'center',
+              justifyContent: 'center',
+              opacity: subscriptions.length ? 1 : 0.35,
+            }}
+          >
+            {manageMode ? (
+              <Text style={{ color: theme.colors.primary, fontSize: 13, fontWeight: '800' }}>
+                完成
+              </Text>
             ) : (
-              <Pressable onPress={toggleSelectAll} hitSlop={8}>
-                <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>
-                  {selected.size === subscriptions.length ? '取消全选' : '全选'}
-                </Text>
-              </Pressable>
+              <Ionicons name="options-outline" size={22} color={theme.colors.text} />
             )}
+          </Pressable>
+        </View>
+        <Text
+          style={{
+            color: theme.colors.textSecondary,
+            fontSize: 11.5,
+            textAlign: 'center',
+            marginTop: -2,
+          }}
+        >
+          {manageMode
+            ? `已选择 ${selected.size} / ${subscriptions.length}`
+            : `${subscriptions.length} 个频道 · 右上角管理`}
+        </Text>
+        {manageMode ? (
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginTop: 12,
+            }}
+          >
+            <Pressable onPress={toggleSelectAll} hitSlop={8}>
+              <Text style={{ color: theme.colors.primary, fontSize: 12.5, fontWeight: '700' }}>
+                {selected.size === subscriptions.length ? '取消全选' : '全选'}
+              </Text>
+            </Pressable>
+            <Text style={{ color: theme.colors.textTertiary, fontSize: 11 }}>
+              拖动左侧手柄排序
+            </Text>
           </View>
-        }
-      />
+        ) : null}
+      </View>
+
       <FlatList
         data={subscriptions}
         keyExtractor={(item) => item.channelId}
         contentContainerStyle={{
-          paddingHorizontal: 18,
-          paddingBottom: selectMode ? 100 : 30,
+          paddingHorizontal: 16,
+          paddingBottom: manageMode ? 110 : 36,
           flexGrow: 1,
         }}
         ListHeaderComponent={
-          selectMode ? (
-            <View />
-          ) : (
-            <View style={{ gap: 12, marginBottom: 16 }}>
-              <View
-                style={{
-                  backgroundColor: theme.colors.card,
-                  borderRadius: 18,
-                  borderWidth: StyleSheet.hairlineWidth,
-                  borderColor: theme.colors.border,
-                  padding: 16,
-                }}
-              >
-                <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '700', marginBottom: 4 }}>
-                  把订阅带走
-                </Text>
-                <Text style={{ color: theme.colors.textTertiary, fontSize: 12, lineHeight: 18, marginBottom: 14 }}>
-                  CSV 导入/导出；WebDAV 会同步新增、删除和手动排序。
-                </Text>
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                  <GhostButton label="导入 CSV" icon="download-outline" onPress={importCsv} />
-                  <GhostButton label="导出 CSV" icon="share-outline" onPress={exportCsv} />
-                  {busy ? (
-                    <Text style={{ color: theme.colors.textTertiary, fontSize: 11, alignSelf: 'center' }}>
-                      处理中…
-                    </Text>
-                  ) : null}
-                </View>
-              </View>
-            </View>
-          )
+          subscriptions.length ? (
+            <View
+              style={{
+                borderRadius: 16,
+                overflow: 'hidden',
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.card,
+              }}
+            />
+          ) : undefined
         }
         renderItem={({ item, index }) => (
-          <SortableRow
-            item={item}
-            index={index}
-            count={subscriptions.length}
-            selectMode={selectMode}
-            selected={selected.has(item.channelId)}
-            onToggle={() => toggleSelected(item.channelId)}
-            onMove={move}
-            onRemove={() => confirmRemove(item)}
-          />
+          <View
+            style={
+              index === 0
+                ? {
+                    backgroundColor: theme.colors.card,
+                    borderTopLeftRadius: 16,
+                    borderTopRightRadius: 16,
+                    overflow: 'hidden',
+                  }
+                : index === subscriptions.length - 1
+                  ? {
+                      backgroundColor: theme.colors.card,
+                      borderBottomLeftRadius: 16,
+                      borderBottomRightRadius: 16,
+                      overflow: 'hidden',
+                    }
+                  : { backgroundColor: theme.colors.card }
+            }
+          >
+            <SortableRow
+              item={item}
+              index={index}
+              count={subscriptions.length}
+              manageMode={manageMode}
+              selected={selected.has(item.channelId)}
+              onToggle={() => toggleSelected(item.channelId)}
+              onMove={move}
+              onOpen={() =>
+                router.push({
+                  pathname: '/channel',
+                  params: {
+                    channelId: item.channelId,
+                    title: item.title,
+                    avatar: item.avatar ?? '',
+                    handle: item.handle ?? '',
+                    subscribers: item.subscriberCount ?? '',
+                    videos: item.videoCount ?? '',
+                  },
+                } as any)
+              }
+            />
+          </View>
         )}
         ListEmptyComponent={
           <EmptyState
@@ -402,28 +466,41 @@ export default function SubscriptionsScreen() {
             }
           />
         }
+        ListFooterComponent={
+          subscriptions.length ? (
+            <View style={{ alignItems: 'center', paddingTop: 20, gap: 8 }}>
+              <Pressable onPress={importCsv} hitSlop={8}>
+                <Text style={{ color: theme.colors.textTertiary, fontSize: 11.5 }}>
+                  从 CSV 导入
+                </Text>
+              </Pressable>
+              <Pressable onPress={exportCsv} hitSlop={8}>
+                <Text style={{ color: theme.colors.textTertiary, fontSize: 11.5 }}>
+                  导出 CSV{busy ? '（处理中…）' : ''}
+                </Text>
+              </Pressable>
+            </View>
+          ) : undefined
+        }
         showsVerticalScrollIndicator={false}
       />
-      {selectMode && selected.size ? (
+
+      {manageMode && selected.size ? (
         <View
           style={{
             position: 'absolute',
-            left: 18,
-            right: 18,
-            bottom: Math.max(18, insets.bottom + 10),
+            left: 0,
+            right: 0,
+            bottom: 0,
+            paddingBottom: Math.max(12, insets.bottom),
+            paddingTop: 12,
+            paddingHorizontal: 16,
             backgroundColor: theme.colors.bgElevated,
-            borderRadius: 18,
-            borderWidth: StyleSheet.hairlineWidth,
-            borderColor: theme.colors.border,
-            padding: 12,
+            borderTopWidth: StyleSheet.hairlineWidth,
+            borderTopColor: theme.colors.border,
             flexDirection: 'row',
             alignItems: 'center',
             gap: 12,
-            shadowColor: '#000',
-            shadowOpacity: 0.3,
-            shadowRadius: 18,
-            shadowOffset: { width: 0, height: 8 },
-            elevation: 8,
           }}
         >
           <Text style={{ color: theme.colors.textSecondary, fontSize: 12, flex: 1 }}>
@@ -434,8 +511,8 @@ export default function SubscriptionsScreen() {
             style={{
               backgroundColor: theme.colors.danger,
               borderRadius: 12,
-              paddingHorizontal: 18,
-              height: 40,
+              paddingHorizontal: 20,
+              height: 42,
               alignItems: 'center',
               justifyContent: 'center',
             }}

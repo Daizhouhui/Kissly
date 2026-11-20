@@ -1,0 +1,7 @@
+{
+  "name": "kissly-system-translate",
+  "version": "0.1.0",
+  "description": "On-device system translation for Kissly",
+  "main": "index.ts",
+  "private": true
+}

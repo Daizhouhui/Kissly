@@ -225,9 +225,20 @@ export const useAppStore = create<AppState>()(
       }),
       merge: (persisted, current) => {
         const saved = persisted as Partial<AppState> | undefined;
+        const legacyDesign =
+          !saved?.settings ||
+          !(saved.settings as { designVersion?: number }).designVersion;
+        const mergedSettings = deepMerge(DEFAULT_SETTINGS, saved?.settings);
+        // 1.x shipped with a blue iOS-like palette. Move existing installs onto
+        // the Android-reference violet palette exactly once, while still
+        // letting the user pick blue later.
+        if (legacyDesign && mergedSettings.themeAccent === 'blue') {
+          mergedSettings.themeAccent = 'violet';
+        }
+        mergedSettings.designVersion = 2;
         return {
           ...current,
-          settings: deepMerge(DEFAULT_SETTINGS, saved?.settings),
+          settings: mergedSettings,
           subscriptions: withOrder(sortByOrder(saved?.subscriptions ?? [])),
           subscriptionTombstones: saved?.subscriptionTombstones ?? {},
           subscriptionOrderUpdatedAt: saved?.subscriptionOrderUpdatedAt ?? 0,
