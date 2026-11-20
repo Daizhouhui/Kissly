@@ -1,0 +1,417 @@
+import { useMemo, useRef, useState } from "react";
+import ApiRoundedIcon from "@mui/icons-material/ApiRounded";
+import BookmarksRoundedIcon from "@mui/icons-material/BookmarksRounded";
+import BugReportRoundedIcon from "@mui/icons-material/BugReportRounded";
+import CloudSyncRoundedIcon from "@mui/icons-material/CloudSyncRounded";
+import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
+import DescriptionRoundedIcon from "@mui/icons-material/DescriptionRounded";
+import InfoRoundedIcon from "@mui/icons-material/InfoRounded";
+import KeyboardRoundedIcon from "@mui/icons-material/KeyboardRounded";
+import LanguageRoundedIcon from "@mui/icons-material/LanguageRounded";
+import SegmentRoundedIcon from "@mui/icons-material/SegmentRounded";
+import PaletteRoundedIcon from "@mui/icons-material/PaletteRounded";
+import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
+import SelectAllRoundedIcon from "@mui/icons-material/SelectAllRounded";
+import SubtitlesRoundedIcon from "@mui/icons-material/SubtitlesRounded";
+import ImageRoundedIcon from "@mui/icons-material/ImageRounded";
+import TuneRoundedIcon from "@mui/icons-material/TuneRounded";
+import FileUploadRoundedIcon from "@mui/icons-material/FileUploadRounded";
+import MemoryRoundedIcon from "@mui/icons-material/MemoryRounded";
+import OpenInNewRoundedIcon from "@mui/icons-material/OpenInNewRounded";
+import { openFileTranslatePage } from "../../libs/navigation";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import Logo from "../../components/Logo";
+import { useI18n } from "../../hooks/I18n";
+import { useSetting } from "../../hooks/Setting";
+import {
+  getSettingsSearchEntries,
+  getSettingsSearchHighlightParts,
+  getSettingsSearchTerms,
+  normalizeSearchText,
+  searchSettingsGroups,
+} from "./search";
+import { isExt, isAutoTranslateClipboardSupported } from "../../libs/client";
+
+function SearchHighlight({ text, terms, uiLang }) {
+  return getSettingsSearchHighlightParts(text, terms, uiLang).map(
+    (part, index) =>
+      part.matched ? <mark key={index}>{part.text}</mark> : part.text
+  );
+}
+
+export default function Navigator({ open, isMobile = false, onClose }) {
+  const i18n = useI18n();
+  const {
+    setting: { uiLang },
+  } = useSetting();
+  const [inputValue, setInputValue] = useState("");
+  const [query, setQuery] = useState("");
+  // IME pre-edit text must not change results or highlights before it commits.
+  const composing = useRef(false);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const clearSearch = () => {
+    composing.current = false;
+    setInputValue("");
+    setQuery("");
+    const params = new URLSearchParams(location.search);
+    if (params.has("setting")) {
+      params.delete("setting");
+      navigate(
+        {
+          pathname: location.pathname,
+          search: params.toString() ? `?${params}` : "",
+          hash: location.hash,
+        },
+        { replace: true }
+      );
+    }
+  };
+
+  const groups = useMemo(
+    () =>
+      [
+        {
+          label: i18n("options_group_general"),
+          items: [
+            ["overview", i18n("options_overview"), "/", TuneRoundedIcon],
+            [
+              "appearance",
+              i18n("options_appearance"),
+              "/styles",
+              PaletteRoundedIcon,
+            ],
+          ],
+        },
+        {
+          label: i18n("options_group_scenarios"),
+          items: [
+            [
+              "web",
+              i18n("options_web_translation"),
+              "/rules",
+              LanguageRoundedIcon,
+            ],
+            [
+              "selection",
+              i18n("selection_translate"),
+              "/tranbox",
+              SelectAllRoundedIcon,
+            ],
+            [
+              "hover",
+              i18n("touch_paragraph"),
+              "/mousehover",
+              SegmentRoundedIcon,
+            ],
+            ["input", i18n("input_translate"), "/input", KeyboardRoundedIcon],
+            [
+              "subtitle",
+              i18n("subtitle_translate"),
+              "/subtitle",
+              SubtitlesRoundedIcon,
+            ],
+            [
+              "image-translate",
+              i18n("image_translate", "图片翻译"),
+              "/image-translate",
+              ImageRoundedIcon,
+            ],
+            ...(isAutoTranslateClipboardSupported
+              ? [
+                  [
+                    "file-translate",
+                    i18n("file_translate", "文件翻译"),
+                    "/file-translate",
+                    FileUploadRoundedIcon,
+                  ],
+                ]
+              : []),
+          ],
+        },
+        {
+          label: i18n("options_group_services"),
+          items: [
+            [
+              "apis",
+              i18n("options_service_config", "服务配置"),
+              "/apis",
+              ApiRoundedIcon,
+            ],
+            [
+              "prompts",
+              i18n("prompt_management"),
+              "/prompts",
+              DescriptionRoundedIcon,
+            ],
+            ...(["chrome", "firefox"].includes(process.env.REACT_APP_CLIENT) &&
+            typeof indexedDB !== "undefined"
+              ? [
+                  [
+                    "plugins",
+                    i18n("provider_plugins", "接口插件"),
+                    "/plugins",
+                    ApiRoundedIcon,
+                  ],
+                ]
+              : []),
+            ...(isAutoTranslateClipboardSupported
+              ? [
+                  [
+                    "local-ai",
+                    i18n("local_ai_title", "本地 AI"),
+                    "/local-ai",
+                    MemoryRoundedIcon,
+                  ],
+                ]
+              : []),
+          ],
+        },
+        {
+          label: i18n("options_group_data"),
+          items: [
+            ["sync", i18n("options_data_sync"), "/sync", CloudSyncRoundedIcon],
+            [
+              "terms",
+              i18n("terminology_tables", "Terminology tables"),
+              "/terms",
+              DescriptionRoundedIcon,
+            ],
+            ["words", i18n("favorite_words"), "/words", BookmarksRoundedIcon],
+          ],
+        },
+        {
+          label: "",
+          items: [
+            ["playground", "Playground", "/playground", BugReportRoundedIcon],
+            ...(isExt
+              ? [
+                  [
+                    "diagnostics",
+                    i18n("diagnostics_title"),
+                    "/diagnostics",
+                    BugReportRoundedIcon,
+                  ],
+                ]
+              : []),
+            ["about", i18n("about"), "/about", InfoRoundedIcon],
+          ],
+        },
+      ].map((group) => ({
+        ...group,
+        items: group.items.map((item) => [
+          ...item,
+          getSettingsSearchEntries(item[0], i18n, uiLang, {
+            isExt,
+            isAutoTranslateClipboardSupported,
+          }),
+        ]),
+      })),
+    [i18n, uiLang]
+  );
+
+  // Draft IME input should only rerender the input, not the search results.
+  const navigation = useMemo(() => {
+    const searching = Boolean(query.trim());
+    const visibleGroups = searchSettingsGroups(groups, query, uiLang);
+    const searchTerms = getSettingsSearchTerms(query, uiLang);
+    return (
+      <nav className="kt-options-nav">
+        {visibleGroups.length ? (
+          visibleGroups.map((group) => (
+            <section
+              className="kt-options-nav__group"
+              key={group.label || "other"}
+            >
+              {group.label && (
+                <h2 className="kt-options-nav__label">{group.label}</h2>
+              )}
+              {group.items.map(([id, label, path, Icon, matches]) => (
+                <div
+                  className={searching ? "kt-options-nav__result" : undefined}
+                  key={id}
+                >
+                  {id === "file-translate" ? (
+                    <button
+                      type="button"
+                      className="kt-options-nav__link"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (isMobile && onClose) onClose();
+                        openFileTranslatePage();
+                      }}
+                    >
+                      <Icon />
+                      <span style={{ flex: 1 }}>{label}</span>
+                      <OpenInNewRoundedIcon
+                        sx={{ fontSize: 16, opacity: 0.65, ml: "auto" }}
+                      />
+                    </button>
+                  ) : (
+                    <NavLink
+                      className="kt-options-nav__link"
+                      to={path}
+                      end={path === "/"}
+                      onClick={isMobile ? onClose : undefined}
+                    >
+                      <Icon />
+                      <span>{label}</span>
+                    </NavLink>
+                  )}
+                  {searching && matches.length > 0 && (
+                    <ul className="kt-options-nav__settings" aria-label={label}>
+                      {matches.map((entry) => {
+                        const search = `?setting=${encodeURIComponent(entry.key)}`;
+                        const labelText = normalizeSearchText(
+                          entry.label,
+                          uiLang
+                        );
+                        const details = [
+                          ...new Set(
+                            searchTerms
+                              .filter((term) => !labelText.includes(term))
+                              .map((term) =>
+                                entry.searchTexts.find((text) =>
+                                  normalizeSearchText(text, uiLang).includes(
+                                    term
+                                  )
+                                )
+                              )
+                              .filter(Boolean)
+                          ),
+                        ];
+                        return (
+                          <li key={entry.key}>
+                            <Link
+                              className="kt-options-nav__setting"
+                              to={{ pathname: path, search }}
+                              aria-current={
+                                location.pathname === path &&
+                                location.search === search
+                                  ? "location"
+                                  : undefined
+                              }
+                              onClick={isMobile ? onClose : undefined}
+                            >
+                              <SearchHighlight
+                                text={entry.label}
+                                terms={searchTerms}
+                                uiLang={uiLang}
+                              />
+                              {details.map((text) => (
+                                <span
+                                  className="kt-options-nav__match-detail"
+                                  key={text}
+                                >
+                                  <SearchHighlight
+                                    text={text}
+                                    terms={searchTerms}
+                                    uiLang={uiLang}
+                                  />
+                                </span>
+                              ))}
+                            </Link>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+              ))}
+            </section>
+          ))
+        ) : (
+          <div className="kt-options-nav__empty">
+            {i18n("options_no_results")}
+          </div>
+        )}
+      </nav>
+    );
+  }, [
+    groups,
+    query,
+    uiLang,
+    i18n,
+    isMobile,
+    onClose,
+    location.pathname,
+    location.search,
+  ]);
+
+  return (
+    <aside
+      id="kt-options-navigation"
+      className={`kt-options-sidebar ${open ? "kt-options-sidebar--open" : ""}`}
+      role={isMobile ? "dialog" : undefined}
+      aria-modal={isMobile ? "true" : undefined}
+      aria-labelledby={isMobile ? "kt-options-navigation-title" : undefined}
+      tabIndex={isMobile ? -1 : undefined}
+    >
+      <a
+        className="kt-options-brand"
+        href={process.env.REACT_APP_SITEURL}
+        target="_blank"
+        rel="noreferrer"
+      >
+        <Logo size={30} />
+        <span>
+          <span
+            id="kt-options-navigation-title"
+            className="kt-options-brand__name"
+          >
+            {i18n("app_name")}
+          </span>
+          <span className="kt-options-brand__version">
+            v{process.env.REACT_APP_VERSION}
+          </span>
+        </span>
+      </a>
+      <div className="kt-options-search">
+        <SearchRoundedIcon />
+        <input
+          type="search"
+          value={inputValue}
+          onChange={(event) => {
+            const value = event.target.value;
+            setInputValue(value);
+            if (!composing.current && !event.nativeEvent.isComposing)
+              setQuery(value);
+          }}
+          onCompositionStart={() => {
+            composing.current = true;
+          }}
+          onCompositionEnd={(event) => {
+            composing.current = false;
+            const value = event.currentTarget.value;
+            setInputValue(value);
+            setQuery(value);
+          }}
+          placeholder={i18n("options_search")}
+          aria-label={i18n("options_search")}
+        />
+        {inputValue.length > 0 && (
+          <button
+            type="button"
+            className="kt-options-search__clear"
+            aria-label={i18n("options_clear_search")}
+            title={i18n("options_clear_search")}
+            onClick={clearSearch}
+          >
+            <CloseRoundedIcon />
+          </button>
+        )}
+      </div>
+      {navigation}
+      {isMobile && (
+        <button
+          type="button"
+          className="kt-options-sidebar__close"
+          aria-label={i18n("options_close_navigation")}
+          onClick={onClose}
+        >
+          <CloseRoundedIcon />
+        </button>
+      )}
+    </aside>
+  );
+}
