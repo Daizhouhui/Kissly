@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -16,6 +16,7 @@ import { WebView, WebViewMessageEvent } from 'react-native-webview';
 
 import { useAppStore } from '@/src/core/store';
 import { Subscription } from '@/src/core/types';
+import { useAppTheme } from '@/src/ui/theme';
 
 const AnyWebView: any = WebView;
 
@@ -158,15 +159,46 @@ type ExtractedChannel = {
 
 export default function YoutubeAccountScreen() {
   const insets = useSafeAreaInsets();
+  const theme = useAppTheme();
   const addSubscriptions = useAppStore((state) => state.addSubscriptions);
   const subscriptions = useAppStore((state) => state.subscriptions);
   const webRef = useRef<any>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('请在下方网页中登录 YouTube 账号');
   const [extracting, setExtracting] = useState(false);
   const [loggedIn, setLoggedIn] = useState(false);
   const [blockedByGoogle, setBlockedByGoogle] = useState(false);
+  const [failed, setFailed] = useState(false);
   const [lastCount, setLastCount] = useState<number | null>(null);
+
+  const clearTimer = () => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = null;
+  };
+
+  const beginLoad = () => {
+    clearTimer();
+    setLoading(true);
+    setFailed(false);
+    timeoutRef.current = setTimeout(() => {
+      setLoading(false);
+      setFailed(true);
+      setStatus('页面加载超过 20 秒。可能是网络无法访问 Google，请重试或改用 CSV 导入。');
+    }, 20000);
+  };
+
+  useEffect(() => {
+    beginLoad();
+    return clearTimer;
+  }, []);
+
+  const reload = () => {
+    setBlockedByGoogle(false);
+    setStatus('正在重新打开 YouTube…');
+    beginLoad();
+    webRef.current?.reload();
+  };
 
   const extract = () => {
     setExtracting(true);
@@ -189,11 +221,16 @@ export default function YoutubeAccountScreen() {
       if (typeof message.loggedIn === 'boolean') setLoggedIn(message.loggedIn);
       if (typeof message.blocked === 'boolean') setBlockedByGoogle(message.blocked);
       if (message.blocked) {
+        clearTimer();
+        setLoading(false);
+        setFailed(true);
         setStatus('Google 拦截了应用内登录，请改用 CSV 导入订阅。');
       }
       return;
     }
     if (message?.type === 'channels') {
+      clearTimer();
+      setLoading(false);
       setExtracting(false);
       if (typeof message.loggedIn === 'boolean') setLoggedIn(message.loggedIn);
       const incoming: Subscription[] = (message.items as ExtractedChannel[] | undefined ?? [])
@@ -230,36 +267,53 @@ export default function YoutubeAccountScreen() {
   };
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, { backgroundColor: theme.colors.bg }]}>
       <View style={[styles.header, { paddingTop: Math.max(10, insets.top) }]}>
-        <Pressable style={styles.iconButton} onPress={() => router.back()} hitSlop={10}>
-          <Ionicons name="chevron-back" size={24} color="#F5F2FF" />
+        <Pressable
+          style={[styles.iconButton, { backgroundColor: theme.colors.surfaceAlt }]}
+          onPress={() => router.back()}
+          hitSlop={10}
+        >
+          <Ionicons name="chevron-back" size={24} color={theme.colors.text} />
         </Pressable>
         <View style={{ flex: 1 }}>
-          <Text style={styles.title}>YouTube 账户</Text>
-          <Text style={styles.subtitle} numberOfLines={1}>
+          <Text style={[styles.title, { color: theme.colors.text }]}>YouTube 账户</Text>
+          <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]} numberOfLines={1}>
             {loggedIn ? '已检测到登录态' : '登录后可同步订阅，并使用账号播放权限'}
           </Text>
         </View>
-        <View style={[styles.avatar, loggedIn && styles.avatarOn]}>
+        <View
+          style={[
+            styles.avatar,
+            { backgroundColor: loggedIn ? '#2FB980' : theme.colors.primarySoft },
+          ]}
+        >
           <Ionicons name={loggedIn ? 'checkmark' : 'person'} size={18} color="#FFFFFF" />
         </View>
       </View>
 
-      <View style={[styles.notice, blockedByGoogle && styles.noticeBlocked]}>
+      <View
+        style={[
+          styles.notice,
+          {
+            backgroundColor: blockedByGoogle ? '#2A1719' : theme.colors.card,
+            borderColor: blockedByGoogle ? '#63302F' : theme.colors.border,
+          },
+        ]}
+      >
         <Ionicons
           name={blockedByGoogle ? 'alert-circle-outline' : 'information-circle-outline'}
           size={17}
-          color={blockedByGoogle ? '#FF9D8A' : '#C4B5FD'}
+          color={blockedByGoogle ? '#FF9D8A' : theme.colors.primary}
         />
-        <Text style={styles.noticeText}>
+        <Text style={[styles.noticeText, { color: theme.colors.textSecondary }]}>
           {blockedByGoogle
-            ? 'Google 不允许在应用内嵌网页里登录。可以在电脑/手机浏览器登录后导出订阅 CSV，再从这里导入；已登录的账号权限仍可在播放器里尝试。'
+            ? 'Google 不允许在应用内嵌网页里登录。可以在电脑/手机浏览器登录后导出订阅 CSV，再从这里导入；已登录账号的播放权限仍可在播放器里尝试。'
             : '先在这里登录 YouTube，再点“导入订阅”。登录成功的 Cookie 会与播放器共享；若 Google 提示“此浏览器或应用可能不安全”，用 CSV 导入即可。'}
         </Text>
       </View>
 
-      <View style={styles.webCard}>
+      <View style={[styles.webCard, { borderColor: theme.colors.border }]}>
         <AnyWebView
           ref={webRef}
           source={{ uri: LOGIN_URL }}
@@ -274,10 +328,17 @@ export default function YoutubeAccountScreen() {
           injectedJavaScript={LOGIN_EARLY + CHANNEL_BRIDGE}
           cacheEnabled
           javaScriptCanOpenWindowsAutomatically
-          onLoadStart={() => setLoading(true)}
+          onLoadStart={beginLoad}
           onLoadEnd={() => {
+            clearTimer();
             setLoading(false);
             webRef.current?.injectJavaScript(CHANNEL_BRIDGE);
+          }}
+          onError={() => {
+            clearTimer();
+            setLoading(false);
+            setFailed(true);
+            setStatus('网页加载失败，请检查网络后重试。');
           }}
           onMessage={onMessage}
           onShouldStartLoadWithRequest={(request: any) => {
@@ -295,25 +356,83 @@ export default function YoutubeAccountScreen() {
             return false;
           }}
         />
-        {loading ? (
-          <View style={styles.webLoading} pointerEvents="none">
-            <ActivityIndicator color="#A78BFA" />
-            <Text style={styles.webLoadingText}>正在打开 YouTube…</Text>
+        {loading || failed ? (
+          <View style={[styles.webLoading, { backgroundColor: theme.colors.bg }]}>
+            {loading ? (
+              <>
+                <ActivityIndicator color={theme.colors.primary} />
+                <Text style={[styles.webLoadingText, { color: theme.colors.textSecondary }]}>
+                  正在打开 YouTube…
+                </Text>
+                <Text style={{ color: theme.colors.textTertiary, fontSize: 10 }}>
+                  首次加载可能需要 5–15 秒
+                </Text>
+              </>
+            ) : (
+              <>
+                <Ionicons name="cloud-offline-outline" size={30} color={theme.colors.textTertiary} />
+                <Text style={[styles.webLoadingText, { color: theme.colors.textSecondary }]}>
+                  页面没有加载出来
+                </Text>
+                <Text
+                  style={{
+                    color: theme.colors.textTertiary,
+                    fontSize: 11,
+                    textAlign: 'center',
+                    paddingHorizontal: 34,
+                    lineHeight: 17,
+                  }}
+                >
+                  应用内登录由 Google 控制。如果一直失败，可以先用浏览器登录导出 CSV。
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+                  <Pressable
+                    onPress={reload}
+                    style={{
+                      backgroundColor: theme.colors.primary,
+                      borderRadius: 12,
+                      paddingHorizontal: 18,
+                      height: 38,
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Text style={{ color: '#FFFFFF', fontSize: 12.5, fontWeight: '800' }}>重新加载</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => Linking.openURL(LOGIN_URL).catch(() => {})}
+                    style={{
+                      borderWidth: 1,
+                      borderColor: theme.colors.border,
+                      borderRadius: 12,
+                      paddingHorizontal: 18,
+                      height: 38,
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Text style={{ color: theme.colors.textSecondary, fontSize: 12.5, fontWeight: '700' }}>
+                      用浏览器打开
+                    </Text>
+                  </Pressable>
+                </View>
+              </>
+            )}
           </View>
         ) : null}
       </View>
 
       <View style={[styles.footer, { paddingBottom: Math.max(14, insets.bottom) }]}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.status} numberOfLines={2}>
+          <Text style={[styles.status, { color: theme.colors.textSecondary }]} numberOfLines={2}>
             {status}
           </Text>
           {lastCount !== null ? (
-            <Text style={styles.count}>上次读取 {lastCount} 个频道 · 当前共 {subscriptions.length} 个</Text>
+            <Text style={[styles.count, { color: theme.colors.textTertiary }]}>
+              上次读取 {lastCount} 个频道 · 当前共 {subscriptions.length} 个
+            </Text>
           ) : null}
         </View>
         <Pressable
-          style={[styles.importButton, extracting && { opacity: 0.6 }]}
+          style={[styles.importButton, { backgroundColor: theme.colors.primary }, extracting && { opacity: 0.6 }]}
           disabled={extracting}
           onPress={extract}
         >
@@ -340,7 +459,7 @@ const styles = StyleSheet.create({
   notice: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', backgroundColor: '#1B1427', marginHorizontal: 14, padding: 12, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: '#2B223B' },
   noticeBlocked: { backgroundColor: '#2A1719', borderColor: '#63302F' },
   noticeText: { flex: 1, color: '#A99FBA', fontSize: 11.5, lineHeight: 17 },
-  webCard: { flex: 1, backgroundColor: '#FFFFFF', marginHorizontal: 14, marginTop: 10, borderRadius: 18, overflow: 'hidden' },
+  webCard: { flex: 1, backgroundColor: '#FFFFFF', marginHorizontal: 14, marginTop: 10, borderRadius: 18, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth },
   webview: { flex: 1, backgroundColor: '#FFFFFF' },
   webLoading: {
     position: 'absolute',
