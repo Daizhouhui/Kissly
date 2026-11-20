@@ -42,6 +42,25 @@ function thumbnailOf(entry: any, videoId: string): string {
   return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
 }
 
+function linkOf(entry: any): string {
+  const links = asArray<any>(entry?.link);
+  for (const link of links) {
+    const href = link?.['@_href'];
+    if (typeof href === 'string' && href) return href;
+  }
+  return '';
+}
+
+function isShortEntry(entry: any, link: string, title: string): boolean {
+  if (link.includes('/shorts/')) return true;
+  // Some feeds keep a watch link but mark the upload in the title.
+  return /#shorts?\b/i.test(title);
+}
+
+function hideShorts(items: VideoItem[]): VideoItem[] {
+  return items.filter((item) => !item.isShort);
+}
+
 export function parseChannelFeed(xml: string, channelId: string): VideoItem[] {
   const parsed = parser.parse(xml);
   const feed = parsed?.feed;
@@ -55,13 +74,16 @@ export function parseChannelFeed(xml: string, channelId: string): VideoItem[] {
     if (!videoId) continue;
     const publishedRaw = textOf(entry?.published) || textOf(entry?.updated);
     const published = publishedRaw ? Date.parse(publishedRaw) : Date.now();
+    const link = linkOf(entry);
+    const title = textOf(entry?.title) || 'Untitled';
     items.push({
       videoId,
-      title: textOf(entry?.title) || 'Untitled',
+      title,
       channelId: textOf(entry?.['yt:channelId']) || channelId,
       channelTitle: author || 'Unknown',
       published: Number.isFinite(published) ? published : Date.now(),
       thumbnail: thumbnailOf(entry, videoId),
+      isShort: isShortEntry(entry, link, title),
     });
   }
   return items;
@@ -73,7 +95,7 @@ export async function fetchChannelFeed(
 ): Promise<VideoItem[]> {
   const cached = memory.get(channelId);
   if (!force && cached && Date.now() - cached.at < FEED_TTL) {
-    return cached.items;
+    return hideShorts(cached.items);
   }
   if (!force) {
     const stored = await loadCached<VideoItem[]>(
@@ -82,7 +104,7 @@ export async function fetchChannelFeed(
     );
     if (stored) {
       memory.set(channelId, { at: Date.now(), items: stored });
-      return stored;
+      return hideShorts(stored);
     }
   }
   const url = `https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(
@@ -95,7 +117,7 @@ export async function fetchChannelFeed(
   if (response.status !== 200) {
     throw new Error(`频道 RSS 请求失败 (${response.status})`);
   }
-  const items = parseChannelFeed(response.text, channelId);
+  const items = hideShorts(parseChannelFeed(response.text, channelId));
   memory.set(channelId, { at: Date.now(), items });
   await saveCached(`feed:${channelId}`, items);
   return items;

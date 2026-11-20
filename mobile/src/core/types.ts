@@ -73,6 +73,7 @@ export type VideoItem = {
   published: number;
   thumbnail: string;
   duration?: number;
+  isShort?: boolean;
 };
 
 export type Cue = {
