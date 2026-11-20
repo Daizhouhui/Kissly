@@ -94,6 +94,41 @@ function playerBridgeScript() {
       return document.getElementById('movie_player') || document.querySelector('.html5-video-player');
     }
     function getVideo(){ return document.querySelector('video'); }
+    var audioFixTimer = null;
+    function unmuteOverlay(){
+      try {
+        var selectors = [
+          '.ytp-unmute',
+          '.ytp-unmute-button',
+          'button[aria-label="取消静音"]',
+          'button[aria-label="Unmute"]',
+          'button[aria-label*="取消静音"]',
+          'button[aria-label*="Unmute"]'
+        ];
+        for (var i = 0; i < selectors.length; i++) {
+          var el = document.querySelector(selectors[i]);
+          if (el && el.getClientRects().length) {
+            el.click();
+            return true;
+          }
+        }
+      } catch(e) {}
+      return false;
+    }
+    function ensureAudio(){
+      var v = getVideo();
+      var p = getPlayer();
+      if (!v) return false;
+      try { if (v.muted) v.muted = false; } catch(e) {}
+      try { if (v.volume < 0.99) v.volume = 1; } catch(e) {}
+      try { if (p && p.unMute) p.unMute(); } catch(e) {}
+      try { if (p && p.setVolume) p.setVolume(100); } catch(e) {}
+      return unmuteOverlay();
+    }
+    function scheduleAudio(delay){
+      if (audioFixTimer) clearTimeout(audioFixTimer);
+      audioFixTimer = setTimeout(function(){ ensureAudio(); }, delay || 250);
+    }
     function setQuality(){
       try {
         var p = getPlayer();
@@ -132,6 +167,22 @@ function playerBridgeScript() {
         ['timeupdate','play','playing','pause','ended','durationchange','loadedmetadata','seeking','seeked','ratechange'].forEach(function(name){
           v.addEventListener(name, report);
         });
+        v.addEventListener('playing', function(){
+          scheduleAudio(180);
+          setTimeout(ensureAudio, 900);
+        });
+        v.addEventListener('loadedmetadata', function(){
+          scheduleAudio(180);
+        });
+        var audioStrikes = 0;
+        v.addEventListener('volumechange', function(){
+          if (v.muted && audioStrikes < 6) {
+            audioStrikes++;
+            scheduleAudio(120);
+          } else if (!v.muted) {
+            audioStrikes = 0;
+          }
+        });
         v.addEventListener('error', function(){
           send({ type:'problem', reason:'video-error', code: v.error ? v.error.code : 0 });
         });
@@ -141,6 +192,9 @@ function playerBridgeScript() {
         var playPromise = null;
         try { playPromise = v.play(); } catch(e) {}
         if (playPromise && playPromise.catch) playPromise.catch(function(){ send({type:'blocked'}); });
+        scheduleAudio(300);
+        setTimeout(ensureAudio, 1200);
+        setTimeout(ensureAudio, 2600);
         report();
       }
       if (!bridge.timer) {
@@ -150,11 +204,12 @@ function playerBridgeScript() {
       setQuality();
     }
     window.__kiss = {
-      play: function(){ var v=getVideo(); try{ var r=v&&v.play(); if(r&&r.catch)r.catch(function(){}); }catch(e){}; return true; },
+      play: function(){ var v=getVideo(); try{ var r=v&&v.play(); if(r&&r.catch)r.catch(function(){}); }catch(e){}; scheduleAudio(260); setTimeout(ensureAudio, 1000); return true; },
       pause: function(){ var v=getVideo(); try{ v&&v.pause(); }catch(e){}; return true; },
       seek: function(seconds){ var v=getVideo(); try{ if(v){ v.currentTime=Math.max(0, Number(seconds)||0); } }catch(e){}; return true; },
       rate: function(rate){ var v=getVideo(); try{ if(v)v.playbackRate=Number(rate)||1; }catch(e){}; return true; },
       mute: function(muted){ var v=getVideo(); try{ if(v)v.muted=!!muted; }catch(e){}; return true; },
+      audio: function(){ ensureAudio(); return true; },
       quality: function(){ setQuality(); return true; }
     };
     bind();
@@ -1272,7 +1327,7 @@ export default function PlayerScreen() {
           }}
           onLoadEnd={() => {
             send(playerBridgeScript());
-            setTimeout(() => send('window.__kiss && window.__kiss.play(); true;'), 1200);
+            setTimeout(() => send('window.__kiss && window.__kiss.play(); window.__kiss && window.__kiss.audio(); true;'), 1200);
             armVideoLoadingFallback();
           }}
           onError={() => {
