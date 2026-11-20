@@ -198,6 +198,7 @@ export default function PlayerScreen() {
   const scrollRef = useRef<any>(null);
   const cueOffsets = useRef<Record<number, number>>({});
   const recordedRef = useRef(false);
+  const progressRef = useRef({ current: 0, duration: 0 });
 
   // A top-level watch page always has a real youtube.com origin. Loading an
   // embed URL directly has no HTTP Referer and YouTube rejects it with Error
@@ -297,6 +298,31 @@ export default function PlayerScreen() {
   }, [videoId, initialAuthor, initialTitle]);
 
   useEffect(() => {
+    if (!videoId) return;
+    const persist = () => {
+      const state = progressRef.current;
+      if (!state.duration) return;
+      const previous = useAppStore
+        .getState()
+        .history.find((entry) => entry.videoId === videoId);
+      recordHistory({
+        videoId,
+        title: metaTitle || initialTitle || videoId,
+        author: metaAuthor || initialAuthor,
+        thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+        savedAt: previous?.savedAt ?? Date.now(),
+        progress: Math.max(0, Math.min(1, state.current / state.duration)),
+        duration: state.duration,
+      });
+    };
+    const timer = setInterval(persist, 15000);
+    return () => {
+      clearInterval(timer);
+      persist();
+    };
+  }, [videoId, metaTitle, metaAuthor, initialAuthor, initialTitle, recordHistory]);
+
+  useEffect(() => {
     if (recordedRef.current) return;
     recordedRef.current = true;
     const thumb = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
@@ -306,6 +332,7 @@ export default function PlayerScreen() {
       author: metaAuthor || initialAuthor,
       thumbnail: thumb,
       savedAt: Date.now(),
+      progress: 0,
     });
   }, [videoId, metaTitle, metaAuthor, initialAuthor, initialTitle, recordHistory]);
 
@@ -398,8 +425,14 @@ export default function PlayerScreen() {
       return;
     }
     if (message.type === 'time') {
-      if (typeof message.current === 'number') setCurrent(message.current);
-      if (typeof message.duration === 'number' && message.duration > 0) setDuration(message.duration);
+      if (typeof message.current === 'number') {
+        progressRef.current.current = message.current;
+        setCurrent(message.current);
+      }
+      if (typeof message.duration === 'number' && message.duration > 0) {
+        progressRef.current.duration = message.duration;
+        setDuration(message.duration);
+      }
       if (typeof message.playing === 'boolean') setPlaying(message.playing);
       if (message.quality) setQuality(String(message.quality));
       if (message.ready) setReady(true);
