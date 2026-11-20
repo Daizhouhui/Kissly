@@ -11,7 +11,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -41,30 +40,20 @@ export default function HomeScreen() {
   const layout = useAppStore((state) => state.settings.discoverLayout);
   const patchSettings = useAppStore((state) => state.patchSettings);
   const { items, loading, refreshing, updatedAt, refresh } = useFeed();
-  const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
   const [channelFilter, setChannelFilter] = useState('');
   const watched = useMemo(() => new Set(history.map((item) => item.videoId)), [history]);
 
   const visible = useMemo(() => {
-    const needle = query.trim().toLowerCase();
     return items.filter((item) => {
       if (channelFilter && item.channelId !== channelFilter) return false;
       if (filter === 'unwatched' && watched.has(item.videoId)) return false;
-      if (!needle) return true;
-      return (
-        item.title.toLowerCase().includes(needle) ||
-        item.channelTitle.toLowerCase().includes(needle) ||
-        (item.translatedTitle ?? '').toLowerCase().includes(needle)
-      );
+      return true;
     });
-  }, [channelFilter, filter, items, query, watched]);
+  }, [channelFilter, filter, items, watched]);
 
   const openSearch = () => {
-    router.push({
-      pathname: '/add-subscription',
-      params: query.trim() ? { q: query.trim() } : {},
-    } as any);
+    router.push('/add-subscription' as any);
   };
 
   const filterRow = (
@@ -163,7 +152,8 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      <View
+      <Pressable
+        onPress={openSearch}
         style={{
           flexDirection: 'row',
           alignItems: 'center',
@@ -177,29 +167,12 @@ export default function HomeScreen() {
           borderColor: theme.colors.border,
         }}
       >
-        <Pressable onPress={openSearch} hitSlop={8}>
-          <Ionicons name="search" size={18} color={theme.colors.textTertiary} />
-        </Pressable>
-        <TextInput
-          value={query}
-          onChangeText={setQuery}
-          placeholder="搜索 YouTube 频道"
-          placeholderTextColor={theme.colors.textTertiary}
-          style={{ flex: 1, color: theme.colors.text, fontSize: 14, height: '100%' }}
-          returnKeyType="search"
-          onSubmitEditing={openSearch}
-          clearButtonMode="never"
-        />
-        {query ? (
-          <Pressable onPress={() => setQuery('')} hitSlop={8}>
-            <Ionicons name="close-circle" size={18} color={theme.colors.textTertiary} />
-          </Pressable>
-        ) : (
-          <Pressable onPress={openSearch} hitSlop={8}>
-            <Text style={{ color: theme.colors.primary, fontSize: 11.5, fontWeight: '700' }}>搜索</Text>
-          </Pressable>
-        )}
-      </View>
+        <Ionicons name="search" size={18} color={theme.colors.textTertiary} />
+        <Text style={{ flex: 1, color: theme.colors.textTertiary, fontSize: 14 }}>
+          搜索 YouTube 频道
+        </Text>
+        <Text style={{ color: theme.colors.primary, fontSize: 11.5, fontWeight: '700' }}>搜索</Text>
+      </Pressable>
 
       {subscriptions.length > 0 ? (
         <View style={{ marginTop: 16 }}>
