@@ -15,6 +15,7 @@
 # production
 /build
 /.local-ai-build/
+/artifacts/
 
 # misc
 .DS_Store
