@@ -206,6 +206,35 @@ function playerBridgeScript() {
     window.__kiss = {
       play: function(){ var v=getVideo(); try{ var r=v&&v.play(); if(r&&r.catch)r.catch(function(){}); }catch(e){}; scheduleAudio(260); setTimeout(ensureAudio, 1000); return true; },
       pause: function(){ var v=getVideo(); try{ v&&v.pause(); }catch(e){}; return true; },
+      resume: function(){
+        var v=getVideo();
+        if (!v) return true;
+        try {
+          if (v.paused || v.ended) {
+            var r=v.play();
+            if (r && r.catch) r.catch(function(){});
+          }
+        } catch(e) {}
+        scheduleAudio(180);
+        setTimeout(report, 80);
+        return true;
+      },
+      toggle: function(){
+        var v=getVideo();
+        if (!v) return true;
+        try {
+          if (v.paused || v.ended) {
+            var r=v.play();
+            if (r && r.catch) r.catch(function(){});
+            scheduleAudio(180);
+            setTimeout(ensureAudio, 900);
+          } else {
+            v.pause();
+          }
+        } catch(e) {}
+        setTimeout(report, 80);
+        return true;
+      },
       seek: function(seconds){ var v=getVideo(); try{ if(v){ v.currentTime=Math.max(0, Number(seconds)||0); } }catch(e){}; return true; },
       rate: function(rate){ var v=getVideo(); try{ if(v)v.playbackRate=Number(rate)||1; }catch(e){}; return true; },
       mute: function(muted){ var v=getVideo(); try{ if(v)v.muted=!!muted; }catch(e){}; return true; },
@@ -368,6 +397,7 @@ export default function PlayerScreen() {
   const transcriptHeightRef = useRef(0);
   const fontTrackWidthRef = useRef(0);
   const rateTrackWidthRef = useRef(0);
+  const orientationResumeTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const isFavorite = favorites.some((item) => item.videoId === videoId);
   const subtitleMode = settings.subtitle.mode;
@@ -652,26 +682,54 @@ export default function PlayerScreen() {
 
   useEffect(() => {
     return () => {
+      orientationResumeTimers.current.forEach((timer) => clearTimeout(timer));
+      orientationResumeTimers.current = [];
       ScreenOrientation.unlockAsync().catch(() => {});
     };
   }, []);
 
+  const clearOrientationResume = () => {
+    orientationResumeTimers.current.forEach((timer) => clearTimeout(timer));
+    orientationResumeTimers.current = [];
+  };
+
+  const scheduleOrientationResume = () => {
+    clearOrientationResume();
+    // Android WebView can lose its playing state while the activity rotates
+    // or the window briefly loses focus. Re-check the real <video> element a
+    // few times after the new layout settles instead of trusting stale React
+    // state.
+    [450, 1200, 2400].forEach((delay) => {
+      orientationResumeTimers.current.push(
+        setTimeout(() => {
+          webRef.current?.injectJavaScript(
+            'window.__kiss && window.__kiss.resume(); window.__kiss && window.__kiss.audio(); true;'
+          );
+        }, delay)
+      );
+    });
+  };
+
   const exitFullscreen = async () => {
+    const wasPlaying = playing;
     try {
       await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
     } catch {}
     setFullscreen(false);
     setControlsVisible(true);
+    if (wasPlaying) scheduleOrientationResume();
   };
 
   const handleFullscreen = async () => {
     setControlsVisible(true);
+    const wasPlaying = playing;
     try {
       if (landscape || fullscreen) {
         await exitFullscreen();
       } else {
         await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
         setFullscreen(true);
+        if (wasPlaying) scheduleOrientationResume();
       }
     } catch {}
   };
@@ -736,9 +794,10 @@ export default function PlayerScreen() {
   };
 
   const togglePlay = () => {
-    if (playing) send('window.__kiss && window.__kiss.pause(); true;');
-    else send('window.__kiss && window.__kiss.play(); true;');
-    setPlaying(!playing);
+    // Let the WebView decide from the real <video> state. The React `playing`
+    // flag can lag behind after an orientation change and would otherwise send
+    // a second pause when the user taps play.
+    send('window.__kiss && window.__kiss.toggle(); true;');
     setBlocked(false);
   };
 
