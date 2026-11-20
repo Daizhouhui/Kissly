@@ -6,10 +6,18 @@ const BROWSE_URL = `https://www.youtube.com/youtubei/v1/browse?key=${BROWSE_KEY}
 // Videos tab of a channel. This is the same parameter the YouTube web client
 // uses; without it the browse response opens the channel home tab instead.
 const VIDEOS_TAB = 'EgZ2aWRlb3PyBgQKAjoA';
+const PLAYLISTS_TAB = 'EglwbGF5bGlzdHPyBgQKAkIA';
 
 export type ChannelVideoPage = {
   items: VideoItem[];
   continuation?: string;
+};
+
+export type ChannelPlaylist = {
+  playlistId: string;
+  title: string;
+  thumbnail: string;
+  videoCount?: number;
 };
 
 const pageCache = new Map<string, { at: number; page: ChannelVideoPage }>();
@@ -82,6 +90,33 @@ function durationOf(value: any): number | undefined {
   return undefined;
 }
 
+function viewCountOf(value: any): number | undefined {
+  const candidates = [
+    textOf(value?.viewCountText),
+    textOf(value?.shortViewCountText),
+    ...(value?.metadata?.lockupMetadataViewModel?.metadata?.contentMetadataViewModel
+      ?.metadataRows ?? []).flatMap((row: any) =>
+      (row?.metadataParts ?? []).map((part: any) => textOf(part?.text))
+    ),
+  ].filter(Boolean);
+  for (const text of candidates) {
+    if (!/(view|观看|播放)/i.test(text)) continue;
+    const normalized = text.replace(/,/g, '');
+    const match = normalized.match(/(\d+(?:\.\d+)?)\s*(万|亿|千|[KMB])?/i);
+    const number = Number(match?.[1] ?? 0);
+    if (!number) continue;
+    const suffix = (match?.[2] ?? '').toUpperCase();
+    if (suffix === '万') return Math.round(number * 10000);
+    if (suffix === '亿') return Math.round(number * 100000000);
+    if (suffix === '千') return Math.round(number * 1000);
+    if (suffix === 'K') return Math.round(number * 1000);
+    if (suffix === 'M') return Math.round(number * 1000000);
+    if (suffix === 'B') return Math.round(number * 1000000000);
+    return Math.round(number);
+  }
+  return undefined;
+}
+
 function publishedOf(value: any): number {
   const rows =
     value?.metadata?.lockupMetadataViewModel?.metadata?.contentMetadataViewModel
@@ -127,6 +162,7 @@ function parsePage(data: any, channelId: string, channelTitle: string, channelAv
           thumbnail:
             thumbnailsOf(lockup) || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
           duration: durationOf(lockup),
+          viewCount: viewCountOf(lockup),
           isShort: false,
         });
       }
@@ -146,6 +182,7 @@ function parsePage(data: any, channelId: string, channelTitle: string, channelAv
           thumbnail:
             thumbnailsOf(video) || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
           duration: durationOf(video),
+          viewCount: viewCountOf(video),
           isShort: false,
         });
       }
@@ -217,6 +254,90 @@ export async function fetchChannelVideosPage(
   const page = parsePage(data, channelId, channelTitle, channelAvatar);
   pageCache.set(cacheKey, { at: Date.now(), page });
   return page;
+}
+
+function parsePlaylistsPage(data: any): { items: ChannelPlaylist[]; continuation?: string } {
+  const items: ChannelPlaylist[] = [];
+  const seen = new Set<string>();
+  const continuations: string[] = [];
+
+  const visit = (node: any) => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      node.forEach(visit);
+      return;
+    }
+    const token =
+      node.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
+    if (typeof token === 'string') continuations.push(token);
+    const lockup = node.lockupViewModel;
+    if (lockup && typeof lockup.contentId === 'string' && !seen.has(lockup.contentId)) {
+      const id = String(lockup.contentId);
+      if (id && !id.startsWith('UC')) {
+        seen.add(id);
+        const title =
+          textOf(lockup.metadata?.lockupMetadataViewModel?.title) || '播放列表';
+        const rows =
+          lockup.metadata?.lockupMetadataViewModel?.metadata?.contentMetadataViewModel
+            ?.metadataRows ?? [];
+        const countText =
+          rows
+            .flatMap((row: any) => row?.metadataParts ?? [])
+            .map((part: any) => textOf(part?.text))
+            .find((text: string) => /(video|视频)/i.test(text)) ?? '';
+        const count = Number(countText.replace(/[^\d]/g, '')) || undefined;
+        items.push({
+          playlistId: id,
+          title,
+          thumbnail:
+            thumbnailsOf(lockup) || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+          videoCount: count,
+        });
+      }
+    }
+    for (const key of Object.keys(node)) {
+      if (key === 'lockupViewModel' || key === 'continuationCommand') continue;
+      visit(node[key]);
+    }
+  };
+  visit(data);
+  return {
+    items,
+    continuation: continuations.length ? continuations[continuations.length - 1] : undefined,
+  };
+}
+
+export async function fetchChannelPlaylistsPage(
+  channelId: string,
+  options: { continuation?: string; force?: boolean } = {}
+): Promise<{ items: ChannelPlaylist[]; continuation?: string }> {
+  const body: Record<string, unknown> = {
+    context: {
+      client: {
+        clientName: 'WEB',
+        clientVersion: '2.20260101.00.00',
+        hl: 'en',
+        gl: 'US',
+      },
+    },
+  };
+  if (options.continuation) body.continuation = options.continuation;
+  else {
+    body.browseId = channelId;
+    body.params = PLAYLISTS_TAB;
+  }
+  const data = await httpJson(BROWSE_URL, {
+    method: 'POST',
+    timeoutMs: 20000,
+    headers: {
+      ...BROWSER_HEADERS,
+      'Content-Type': 'application/json',
+      Origin: 'https://www.youtube.com',
+      Referer: `https://www.youtube.com/channel/${channelId}/playlists`,
+    },
+    body,
+  });
+  return parsePlaylistsPage(data);
 }
 
 export function clearChannelVideoCache() {

@@ -29,13 +29,13 @@ export default function SubtitleSettingsScreen() {
       <NavHeader title="字幕样式" subtitle="竖屏逐句稿与横屏字幕共用" />
       <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 36 }} showsVerticalScrollIndicator={false}>
         <LinearGradient
-          colors={['#241B38', '#0B0910']}
+          colors={['#223129', '#0B0F0C']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={{ borderRadius: 22, padding: 18, minHeight: 190, justifyContent: 'flex-end' }}
         >
           <View style={{ position: 'absolute', top: 16, left: 16, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#8B72FF' }} />
+            <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#9DC3AC' }} />
             <Text style={{ color: 'rgba(255,255,255,.55)', fontSize: 10, fontWeight: '600' }}>字幕预览</Text>
           </View>
 
@@ -65,7 +65,7 @@ export default function SubtitleSettingsScreen() {
             {subtitles.mode !== 'original' ? (
               <Text
                 style={{
-                  color: subtitles.mode === 'translation' ? '#FFFFFF' : '#C9BFFF',
+                  color: subtitles.mode === 'translation' ? '#FFFFFF' : '#BFD8C9',
                   fontSize: subtitles.mode === 'translation' ? sizeText : sizeText * 0.86,
                   lineHeight: sizeText * 1.3,
                   marginTop: subtitles.mode === 'bilingual' ? 4 : 0,
@@ -112,42 +112,85 @@ export default function SubtitleSettingsScreen() {
           })}
         </View>
 
-        <SectionTitle title="字号" />
-        <Card style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-          <Pressable
-            onPress={() => setSubtitle({ fontSize: Math.max(14, subtitles.fontSize - 1) })}
-            style={({ pressed }) => ({
-              width: 42,
-              height: 42,
-              borderRadius: 13,
-              backgroundColor: theme.colors.surfaceAlt,
-              alignItems: 'center',
-              justifyContent: 'center',
-              opacity: pressed ? 0.6 : 1,
+        <SectionTitle title="滚动与断句" />
+        <Card style={{ paddingVertical: 12, paddingHorizontal: 12 }}>
+          <Text style={{ color: theme.colors.textSecondary, fontSize: 11.5, fontWeight: '600', marginBottom: 8 }}>
+            字幕滚动
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+            {(
+              [
+                ['top', '置顶'],
+                ['page', '翻页'],
+              ] as const
+            ).map(([id, label]) => {
+              const active = subtitles.scrollMode === id;
+              return (
+                <Pressable
+                  key={id}
+                  onPress={() => setSubtitle({ scrollMode: id })}
+                  style={{
+                    flex: 1,
+                    height: 38,
+                    borderRadius: 11,
+                    backgroundColor: active ? theme.colors.primary : theme.colors.surfaceAlt,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Text style={{ color: active ? '#FFFFFF' : theme.colors.textSecondary, fontSize: 12, fontWeight: '700' }}>
+                    {label}
+                  </Text>
+                </Pressable>
+              );
             })}
-          >
-            <Ionicons name="remove" size={20} color={theme.colors.text} />
-          </Pressable>
-          <View style={{ flex: 1, alignItems: 'center' }}>
-            <Text style={{ color: theme.colors.text, fontSize: 24, fontWeight: '800' }}>{subtitles.fontSize}</Text>
-            <Text style={{ color: theme.colors.textTertiary, fontSize: 10.5, marginTop: 2 }}>
-              横屏字幕字号 · 逐句稿同步
-            </Text>
           </View>
-          <Pressable
-            onPress={() => setSubtitle({ fontSize: Math.min(30, subtitles.fontSize + 1) })}
-            style={({ pressed }) => ({
-              width: 42,
-              height: 42,
-              borderRadius: 13,
-              backgroundColor: theme.colors.surfaceAlt,
-              alignItems: 'center',
-              justifyContent: 'center',
-              opacity: pressed ? 0.6 : 1,
+          <Text style={{ color: theme.colors.textSecondary, fontSize: 11.5, fontWeight: '600', marginBottom: 8 }}>
+            断句模式
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {(
+              [
+                ['smart', '智能断句'],
+                ['whole', '整句'],
+              ] as const
+            ).map(([id, label]) => {
+              const active = subtitles.sentenceMode === id;
+              return (
+                <Pressable
+                  key={id}
+                  onPress={() => setSubtitle({ sentenceMode: id })}
+                  style={{
+                    flex: 1,
+                    height: 38,
+                    borderRadius: 11,
+                    backgroundColor: active ? theme.colors.primary : theme.colors.surfaceAlt,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Text style={{ color: active ? '#FFFFFF' : theme.colors.textSecondary, fontSize: 12, fontWeight: '700' }}>
+                    {label}
+                  </Text>
+                </Pressable>
+              );
             })}
-          >
-            <Ionicons name="add" size={20} color={theme.colors.text} />
-          </Pressable>
+          </View>
+        </Card>
+
+        <SectionTitle title="字号" />
+        <Card style={{ gap: 14 }}>
+          <SizeRow
+            label="竖屏逐句稿"
+            value={subtitles.fontSize}
+            onChange={(value) => setSubtitle({ fontSize: value })}
+          />
+          <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: theme.colors.border }} />
+          <SizeRow
+            label="全屏双语字幕"
+            value={subtitles.landscapeFontSize}
+            onChange={(value) => setSubtitle({ landscapeFontSize: value })}
+          />
         </Card>
 
         <SectionTitle title="位置与背景" />
@@ -240,6 +283,52 @@ export default function SubtitleSettingsScreen() {
           />
         </Card>
       </ScrollView>
+    </View>
+  );
+}
+
+function SizeRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  const theme = useAppTheme();
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+      <Pressable
+        onPress={() => onChange(Math.max(14, value - 2))}
+        style={{
+          width: 42,
+          height: 42,
+          borderRadius: 13,
+          backgroundColor: theme.colors.surfaceAlt,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Ionicons name="remove" size={20} color={theme.colors.text} />
+      </Pressable>
+      <View style={{ flex: 1, alignItems: 'center' }}>
+        <Text style={{ color: theme.colors.text, fontSize: 22, fontWeight: '800' }}>{value}px</Text>
+        <Text style={{ color: theme.colors.textTertiary, fontSize: 10.5, marginTop: 2 }}>{label}</Text>
+      </View>
+      <Pressable
+        onPress={() => onChange(Math.min(34, value + 2))}
+        style={{
+          width: 42,
+          height: 42,
+          borderRadius: 13,
+          backgroundColor: theme.colors.surfaceAlt,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Ionicons name="add" size={20} color={theme.colors.text} />
+      </Pressable>
     </View>
   );
 }

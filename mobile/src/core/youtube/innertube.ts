@@ -94,6 +94,7 @@ function parsePlayerResponse(response: any): VideoMeta | null {
     videoId: details.videoId,
     title: details.title ?? '',
     author: details.author ?? '',
+    channelId: details.channelId ?? undefined,
     lengthSeconds: Number(details.lengthSeconds ?? 0),
     thumbnail:
       thumbnails[thumbnails.length - 1]?.url ??

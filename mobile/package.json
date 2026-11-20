@@ -1,6 +1,6 @@
 {
   "name": "kissly",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "main": "expo-router/entry",
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
@@ -18,10 +18,12 @@
     "expo-keep-awake": "~58.0.4",
     "expo-linear-gradient": "~58.0.4",
     "expo-linking": "~58.0.17",
+    "expo-print": "~58.0.9",
     "expo-router": "~58.0.32",
     "expo-screen-orientation": "~58.0.4",
     "expo-secure-store": "~58.0.3",
     "expo-sharing": "~58.0.23",
+    "expo-speech": "~58.0.4",
     "expo-splash-screen": "~58.0.14",
     "expo-status-bar": "~58.0.5",
     "expo-symbols": "~58.0.5",
@@ -54,4 +56,3 @@
   },
   "private": true
 }
-

@@ -1,5 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useKeepAwake } from 'expo-keep-awake';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { StatusBar } from 'expo-status-bar';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -28,6 +30,7 @@ import {
   getVideoMeta,
   pickCaptionTrack,
 } from '@/src/core/youtube/innertube';
+import { fontWeightFor, fontFamilyFor, sentenceCues } from '@/src/ui/subtitleStyle';
 import { useAppTheme } from '@/src/ui/theme';
 
 const AnyWebView: any = WebView;
@@ -183,7 +186,6 @@ const FONT_STEPS = [14, 16, 18, 20, 22, 24, 26, 30, 34];
 const SPEEDS = [0.75, 1, 1.25, 1.5, 2];
 
 export default function PlayerScreen() {
-  useKeepAwake();
   const params = useLocalSearchParams<{ videoId?: string; title?: string; author?: string }>();
   const videoId = String(params.videoId ?? '');
   const initialTitle = String(params.title ?? '');
@@ -217,10 +219,16 @@ export default function PlayerScreen() {
   const [videoProblem, setVideoProblem] = useState('');
   const [fullscreen, setFullscreen] = useState(false);
   const [sheet, setSheet] = useState(false);
+  const [sheetPanel, setSheetPanel] = useState<
+    'main' | 'scroll' | 'sentence' | 'font' | 'fontSize' | 'listening'
+  >('main');
+  const [fontSizeTarget, setFontSizeTarget] = useState<'portrait' | 'landscape'>('portrait');
+  const [controlsVisible, setControlsVisible] = useState(true);
   const [sourceCues, setSourceCues] = useState<Cue[]>([]);
   const [translatedCues, setTranslatedCues] = useState<Cue[] | null>(null);
   const [metaTitle, setMetaTitle] = useState(initialTitle);
   const [metaAuthor, setMetaAuthor] = useState(initialAuthor);
+  const [metaChannelId, setMetaChannelId] = useState('');
   const [status, setStatus] = useState('正在读取字幕…');
   const [progressWidth, setProgressWidth] = useState(0);
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
@@ -233,8 +241,14 @@ export default function PlayerScreen() {
   const [blindReveal, setBlindReveal] = useState(false);
   const [modeMenu, setModeMenu] = useState(false);
   const [providerLabel, setProviderLabel] = useState('');
+  const [repeatPass, setRepeatPass] = useState(0);
   const loopGuardRef = useRef(0);
   const blindGuardRef = useRef('');
+  const repeatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const repeatBusyRef = useRef(false);
+  const transcriptScrollRef = useRef(0);
+  const transcriptHeightRef = useRef(0);
+  const fontTrackWidthRef = useRef(0);
 
   const isFavorite = favorites.some((item) => item.videoId === videoId);
   const subtitleMode = settings.subtitle.mode;
@@ -242,7 +256,17 @@ export default function PlayerScreen() {
   const showOriginal = subtitleMode !== 'translation';
   const fontSize = settings.subtitle.fontSize ?? 20;
   const landscapeFontSize = settings.subtitle.landscapeFontSize ?? 24;
-  const cues = translatedCues ?? sourceCues;
+  const hideVideo = settings.subtitle.hideVideo;
+  const scrollMode = settings.subtitle.scrollMode;
+  const learningLang = settings.learningLang;
+  const originalFont = fontFamilyFor(settings.subtitle.originalFont, 'source');
+  const translationFont = fontFamilyFor(settings.subtitle.translationFont, 'translation');
+  const originalWeight = fontWeightFor(settings.subtitle.originalWeight);
+  const translationWeight = fontWeightFor(settings.subtitle.translationWeight);
+  const cues = useMemo(
+    () => sentenceCues(translatedCues ?? sourceCues, settings.subtitle.sentenceMode),
+    [settings.subtitle.sentenceMode, sourceCues, translatedCues]
+  );
 
   const activeIndex = useMemo(() => {
     if (!cues.length) return -1;
@@ -264,9 +288,46 @@ export default function PlayerScreen() {
   }, [toast]);
 
   useEffect(() => {
+    if (sheet) setSheetPanel('main');
+  }, [sheet]);
+
+  useEffect(() => {
+    if (!settings.keepAwake) {
+      void deactivateKeepAwake();
+      return;
+    }
+    activateKeepAwakeAsync('kissly-player').catch(() => {});
+    return () => {
+      void deactivateKeepAwake();
+    };
+  }, [settings.keepAwake]);
+
+  useEffect(() => {
+    if (!landscape) {
+      setControlsVisible(true);
+      return;
+    }
+    if (!controlsVisible || !playing) return;
+    const timer = setTimeout(() => setControlsVisible(false), 3800);
+    return () => clearTimeout(timer);
+  }, [controlsVisible, landscape, playing]);
+
+  useEffect(() => {
+    setRepeatPass(0);
+    repeatBusyRef.current = false;
+    if (repeatTimerRef.current) clearTimeout(repeatTimerRef.current);
+  }, [activeIndex]);
+
+  useEffect(() => {
+    return () => {
+      if (repeatTimerRef.current) clearTimeout(repeatTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!videoId) return;
     let cancelled = false;
-    const subtitle = getSettings().subtitle;
+    const currentSettings = getSettings();
     setStatus('正在读取字幕…');
     const load = async () => {
       try {
@@ -274,7 +335,8 @@ export default function PlayerScreen() {
         if (cancelled) return;
         setMetaTitle(meta.title || initialTitle);
         setMetaAuthor(meta.author || initialAuthor);
-        const track = pickCaptionTrack(meta.captionTracks, 'en');
+        setMetaChannelId(meta.channelId ?? '');
+        const track = pickCaptionTrack(meta.captionTracks, learningLang.startsWith('en') ? 'en' : learningLang);
         if (!track) {
           setSourceCues([]);
           setStatus('这个视频没有可用英文字幕');
@@ -312,7 +374,7 @@ export default function PlayerScreen() {
     return () => {
       cancelled = true;
     };
-  }, [videoId, initialAuthor, initialTitle]);
+  }, [videoId, initialAuthor, initialTitle, learningLang]);
 
   useEffect(() => {
     if (!videoId) return;
@@ -356,10 +418,19 @@ export default function PlayerScreen() {
   useEffect(() => {
     if (activeIndex < 0) return;
     const y = cueOffsets.current[activeIndex];
-    if (typeof y === 'number') {
+    if (typeof y !== 'number') return;
+    if (settings.subtitle.scrollMode === 'top') {
+      scrollRef.current?.scrollTo({ y: Math.max(0, y - 80), animated: true });
+      return;
+    }
+    const viewTop = transcriptScrollRef.current;
+    const viewHeight = transcriptHeightRef.current;
+    const isAbove = y < viewTop + 24;
+    const isBelow = y > viewTop + Math.max(80, viewHeight - 130);
+    if (isAbove || isBelow) {
       scrollRef.current?.scrollTo({ y: Math.max(0, y - 80), animated: true });
     }
-  }, [activeIndex]);
+  }, [activeIndex, settings.subtitle.scrollMode]);
 
   useEffect(() => {
     return () => {
@@ -372,9 +443,11 @@ export default function PlayerScreen() {
       await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
     } catch {}
     setFullscreen(false);
+    setControlsVisible(true);
   };
 
   const handleFullscreen = async () => {
+    setControlsVisible(true);
     try {
       if (landscape || fullscreen) {
         await exitFullscreen();
@@ -489,18 +562,43 @@ export default function PlayerScreen() {
   useEffect(() => {
     if (!loopSentence || !activeCue || !playing || blindMode) return;
     if (current <= activeCue.end + 0.08) return;
-    if (Date.now() - loopGuardRef.current < 1600) return;
-    loopGuardRef.current = Date.now();
-    seekTo(activeCue.start + 0.01);
-  }, [activeCue, blindMode, current, loopSentence, playing]);
+    if (repeatBusyRef.current) return;
+    const repeatCount = Math.max(1, settings.subtitle.repeatCount || 1);
+    const pauseMs = Math.max(0, settings.subtitle.repeatInterval || 0) * 1000;
+    repeatBusyRef.current = true;
+    if (repeatPass + 1 < repeatCount) {
+      send('window.__kiss && window.__kiss.pause(); true;');
+      repeatTimerRef.current = setTimeout(() => {
+        seekTo(activeCue.start + 0.01);
+        send('window.__kiss && window.__kiss.play(); true;');
+        setPlaying(true);
+        setRepeatPass((value) => value + 1);
+        repeatBusyRef.current = false;
+      }, pauseMs);
+      return;
+    }
+    setRepeatPass(0);
+    repeatBusyRef.current = false;
+    if (settings.subtitle.autoNext) {
+      jumpCue(1);
+    } else {
+      send('window.__kiss && window.__kiss.pause(); true;');
+      setPlaying(false);
+    }
+  }, [activeCue, blindMode, current, loopSentence, playing, repeatPass, settings.subtitle.autoNext, settings.subtitle.repeatCount, settings.subtitle.repeatInterval]);
 
   useEffect(() => {
     if (!blindMode || blindReveal || !activeCue || !playing) return;
     if (current <= activeCue.end + 0.12) return;
     if (blindGuardRef.current === activeCue.text) return;
     blindGuardRef.current = activeCue.text;
-    jumpCue(1);
-  }, [activeCue, blindMode, blindReveal, current, playing]);
+    if (settings.subtitle.autoNext) {
+      jumpCue(1);
+    } else {
+      send('window.__kiss && window.__kiss.pause(); true;');
+      setPlaying(false);
+    }
+  }, [activeCue, blindMode, blindReveal, current, playing, settings.subtitle.autoNext]);
 
   const handleMessage = (event: WebViewMessageEvent) => {
     let message: any = null;
@@ -572,6 +670,54 @@ export default function PlayerScreen() {
     setToast(added ? '已收藏' : '已取消收藏');
   };
 
+  const exportSubtitlePdf = async () => {
+    if (!cues.length) {
+      setToast('还没有可导出的字幕');
+      return;
+    }
+    try {
+      const escapeHtml = (value: string) =>
+        value
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      const rows = cues
+        .map(
+          (cue) => `<section>
+            <time>${formatTime(cue.start)} – ${formatTime(cue.end)}</time>
+            ${showOriginal ? `<p class="original">${escapeHtml(cue.text)}</p>` : ''}
+            ${showTranslation && cue.translation ? `<p class="translation">${escapeHtml(cue.translation)}</p>` : ''}
+          </section>`
+        )
+        .join('');
+      const html = `<!doctype html><html><head><meta charset="utf-8"/>
+        <style>
+          body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans SC",sans-serif;color:#27251f;margin:34px 40px;line-height:1.55;}
+          h1{font-size:22px;margin:0 0 4px;} .meta{color:#7a766a;font-size:12px;margin-bottom:24px;}
+          section{page-break-inside:avoid;border-bottom:1px solid #e8e3d8;padding:10px 0;}
+          time{display:block;color:#9b968a;font-size:10px;margin-bottom:5px;}
+          .original{font-size:15px;font-weight:600;margin:0;} .translation{font-size:13px;color:#4d6658;margin:4px 0 0;}
+        </style></head><body>
+        <h1>${escapeHtml(metaTitle || 'YouTube 字幕')}</h1>
+        <div class="meta">${escapeHtml(metaAuthor || 'YouTube')} · https://youtu.be/${videoId}</div>
+        ${rows}
+        </body></html>`;
+      const result = await Print.printToFileAsync({ html });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(result.uri, {
+          mimeType: 'application/pdf',
+          dialogTitle: '导出字幕 PDF',
+          UTI: 'com.adobe.pdf',
+        });
+      } else {
+        setToast('文件已生成，但当前设备不支持分享');
+      }
+    } catch (error) {
+      setToast(`导出失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
   const changeFontSize = (direction: 1 | -1, target: 'portrait' | 'landscape') => {
     const value = target === 'portrait' ? fontSize : landscapeFontSize;
     const index = FONT_STEPS.findIndex((size) => size >= value);
@@ -612,14 +758,26 @@ export default function PlayerScreen() {
       style={
         landscape
           ? styles.landscapeVideo
-          : [styles.videoFrame, { aspectRatio: 16 / 9 }]
+          : hideVideo
+            ? styles.videoFrameHidden
+            : [styles.videoFrame, { aspectRatio: 16 / 9 }]
       }
     >
       <AnyWebView
         key="watch"
         ref={webRef}
         source={{ uri: webUrl }}
-        style={styles.webview}
+        style={
+          hideVideo && !landscape
+            ? [
+                styles.hiddenWebview,
+                {
+                  width: windowSize.width,
+                  height: Math.round(windowSize.width * 9 / 16),
+                },
+              ]
+            : styles.webview
+        }
         originWhitelist={['*']}
         javaScriptEnabled
         domStorageEnabled
@@ -667,39 +825,56 @@ export default function PlayerScreen() {
           return false;
         }}
       />
-      {videoLoading ? (
+      {hideVideo && !landscape ? (
+        <Pressable
+          onPress={() => patchSettings({ subtitle: { ...settings.subtitle, hideVideo: false } })}
+          style={styles.hiddenVideoBanner}
+        >
+          <Ionicons name="eye-off-outline" size={18} color={theme.colors.textSecondary} />
+          <Text style={{ color: theme.colors.textSecondary, fontSize: 11.5, fontWeight: '700' }}>
+            视频已隐藏 · 点击恢复画面
+          </Text>
+        </Pressable>
+      ) : null}
+      {videoLoading && !hideVideo ? (
         <View style={styles.videoLoading} pointerEvents="none">
-          <ActivityIndicator color="#A78BFA" />
+          <ActivityIndicator color={theme.colors.primary} />
           <Text style={styles.videoLoadingText}>
             {'正在连接 YouTube…'}
           </Text>
         </View>
       ) : null}
-      {!playing && !landscape ? (
+      {!playing && !landscape && !hideVideo ? (
         <Pressable style={styles.centerPlay} onPress={togglePlay}>
           <Ionicons name="play" size={34} color="#FFFFFF" />
         </Pressable>
       ) : null}
-      <View style={styles.qualityChip} pointerEvents="none">
-        <Text style={styles.qualityChipText}>
-          {quality ? quality.toUpperCase() : 'HD1080'} · 优先
-        </Text>
-      </View>
-      <Pressable
-        onPress={handleFullscreen}
-        hitSlop={10}
-        style={[
-          styles.videoFullscreen,
-          { top: landscape ? Math.max(58, insets.top + 48) : 10 },
-        ]}
-      >
-        <Ionicons
-          name={landscape || fullscreen ? 'contract-outline' : 'expand-outline'}
-          size={18}
-          color="#FFFFFF"
-        />
-      </Pressable>
-      {videoProblem ? (
+      {!landscape && !hideVideo ? (
+        <View style={styles.qualityChip} pointerEvents="none">
+          <Text style={styles.qualityChipText}>
+            {quality ? quality.toUpperCase() : 'HD1080'} · 优先
+          </Text>
+        </View>
+      ) : null}
+      {!landscape && !hideVideo ? (
+        <>
+          <Pressable
+            onPress={toggleTranslation}
+            hitSlop={10}
+            style={styles.videoTranslate}
+          >
+            <Ionicons name="language" size={18} color="#FFFFFF" />
+          </Pressable>
+          <Pressable
+            onPress={handleFullscreen}
+            hitSlop={10}
+            style={styles.videoFullscreen}
+          >
+            <Ionicons name="expand-outline" size={18} color="#FFFFFF" />
+          </Pressable>
+        </>
+      ) : null}
+      {videoProblem && !hideVideo ? (
         <View style={styles.problemOverlay}>
           <Ionicons name="alert-circle-outline" size={30} color="#FCA5A5" />
           <Text style={styles.problemTitle}>YouTube 未能播放这个视频</Text>
@@ -873,7 +1048,7 @@ export default function PlayerScreen() {
               { color: blindMode ? theme.colors.primary : theme.colors.textSecondary },
             ]}
           >
-            耳机
+            盲听
           </Text>
         </Pressable>
         <Pressable style={styles.action} onPress={handleFullscreen}>
@@ -886,102 +1061,123 @@ export default function PlayerScreen() {
 
   const landscapeOverlay = landscape ? (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-      <View style={[styles.landTop, { paddingTop: Math.max(8, insets.top) }]}>
-        <Text style={styles.landTime}>{formatTime(current)}</Text>
-        <View
-          style={styles.landProgressTouch}
-          onLayout={(event) => setProgressWidth(event.nativeEvent.layout.width)}
-          onStartShouldSetResponder={() => true}
-          onMoveShouldSetResponder={() => true}
-          onResponderGrant={(event) => seekFromEvent(event.nativeEvent.locationX)}
-          onResponderMove={(event) => {
-            if (!duration || !progressWidth) return;
-            setSeekPreview(
-              (event.nativeEvent.locationX / progressWidth) * duration
-            );
-          }}
-          onResponderRelease={(event) => {
-            seekFromEvent(event.nativeEvent.locationX);
-            setSeekPreview(null);
-          }}
-        >
-          <View style={styles.landProgressRail}>
+      <Pressable
+        style={StyleSheet.absoluteFill}
+        onPress={() => setControlsVisible((value) => !value)}
+      />
+      {controlsVisible ? (
+        <>
+          <View style={[styles.landTop, { paddingTop: Math.max(8, insets.top) }]}>
+            <Text style={styles.landTime}>{formatTime(current)}</Text>
             <View
-              style={[
-                styles.landProgressFill,
-                {
-                  width: duration
-                    ? Math.max(
-                        0,
-                        Math.min(
-                          progressWidth,
-                          ((seekPreview ?? current) / duration) * progressWidth
-                        )
-                      )
-                    : 0,
-                },
-              ]}
-            />
+              style={styles.landProgressTouch}
+              onLayout={(event) => setProgressWidth(event.nativeEvent.layout.width)}
+              onStartShouldSetResponder={() => true}
+              onMoveShouldSetResponder={() => true}
+              onResponderGrant={(event) => seekFromEvent(event.nativeEvent.locationX)}
+              onResponderMove={(event) => {
+                if (!duration || !progressWidth) return;
+                setSeekPreview(
+                  (event.nativeEvent.locationX / progressWidth) * duration
+                );
+              }}
+              onResponderRelease={(event) => {
+                seekFromEvent(event.nativeEvent.locationX);
+                setSeekPreview(null);
+              }}
+            >
+              <View style={styles.landProgressRail}>
+                <View
+                  style={[
+                    styles.landProgressFill,
+                    {
+                      width: duration
+                        ? Math.max(
+                            0,
+                            Math.min(
+                              progressWidth,
+                              ((seekPreview ?? current) / duration) * progressWidth
+                            )
+                          )
+                        : 0,
+                    },
+                  ]}
+                />
+              </View>
+            </View>
+            <Text style={styles.landTime}>{formatTime(duration)}</Text>
+            <Pressable
+              onPress={() => setModeMenu(true)}
+              style={[styles.landIconButton, subtitleMode !== 'original' && styles.landIconActive]}
+            >
+              <Text style={styles.landCc}>CC</Text>
+            </Pressable>
+            <Pressable
+              onPress={() =>
+                setSubtitleMode(subtitleMode === 'original' ? 'bilingual' : 'original')
+              }
+              style={[styles.landIconButton, subtitleMode !== 'original' && styles.landIconActive]}
+            >
+              <Ionicons name="language" size={20} color="#FFFFFF" />
+            </Pressable>
+            <Pressable onPress={toggleMute} style={styles.landIconButton}>
+              <Ionicons
+                name={muted ? 'volume-mute' : 'volume-high'}
+                size={20}
+                color="#FFFFFF"
+              />
+            </Pressable>
+            <Pressable onPress={() => setSheet(true)} style={styles.landIconButton}>
+              <Ionicons name="ellipsis-horizontal" size={21} color="#FFFFFF" />
+            </Pressable>
+            <Pressable onPress={exitFullscreen} style={styles.landIconButton}>
+              <Ionicons name="contract-outline" size={20} color="#FFFFFF" />
+            </Pressable>
           </View>
-        </View>
-        <Text style={styles.landTime}>{formatTime(duration)}</Text>
-        <Pressable
-          onPress={() => setModeMenu(true)}
-          style={[styles.landIconButton, subtitleMode !== 'original' && styles.landIconActive]}
-        >
-          <Text style={styles.landCc}>CC</Text>
-        </Pressable>
-        <Pressable
-          onPress={() =>
-            setSubtitleMode(subtitleMode === 'original' ? 'bilingual' : 'original')
-          }
-          style={[styles.landIconButton, subtitleMode !== 'original' && styles.landIconActive]}
-        >
-          <Ionicons name="language" size={20} color="#FFFFFF" />
-        </Pressable>
-        <Pressable onPress={toggleMute} style={styles.landIconButton}>
-          <Ionicons
-            name={muted ? 'volume-mute' : 'volume-high'}
-            size={20}
-            color="#FFFFFF"
-          />
-        </Pressable>
-        <Pressable onPress={() => setSheet(true)} style={styles.landIconButton}>
-          <Ionicons name="ellipsis-horizontal" size={21} color="#FFFFFF" />
-        </Pressable>
-        <Pressable onPress={exitFullscreen} style={styles.landIconButton}>
-          <Ionicons name="contract-outline" size={20} color="#FFFFFF" />
-        </Pressable>
-      </View>
 
-      <View style={styles.landCenter}>
-        <Pressable onPress={cycleRate} style={styles.landRatePill}>
-          <Text style={styles.landRateText}>{rate}x</Text>
-        </Pressable>
-        <Pressable onPress={() => jumpCue(-1)} style={styles.landTransportButton}>
-          <Ionicons name="play-back" size={28} color="#FFFFFF" />
-        </Pressable>
-        <Pressable onPress={togglePlay} style={styles.landPlay}>
-          <Ionicons name={playing ? 'pause' : 'play'} size={30} color="#FFFFFF" />
-        </Pressable>
-        <Pressable onPress={() => jumpCue(1)} style={styles.landTransportButton}>
-          <Ionicons name="play-forward" size={28} color="#FFFFFF" />
-        </Pressable>
-        <Pressable
-          onPress={() => setLoopSentence((value) => !value)}
-          style={[styles.landRatePill, loopSentence && styles.landLoopActive]}
-        >
-          <Ionicons name="repeat" size={20} color="#FFFFFF" />
-        </Pressable>
-      </View>
+          <View style={styles.landCenter}>
+            <Pressable onPress={cycleRate} style={styles.landRatePill}>
+              <Text style={styles.landRateText}>{rate}x</Text>
+            </Pressable>
+            <Pressable onPress={() => jumpCue(-1)} style={styles.landTransportButton}>
+              <Ionicons name="play-back" size={28} color="#FFFFFF" />
+            </Pressable>
+            <Pressable onPress={togglePlay} style={styles.landPlay}>
+              <Ionicons name={playing ? 'pause' : 'play'} size={30} color="#FFFFFF" />
+            </Pressable>
+            <Pressable onPress={() => jumpCue(1)} style={styles.landTransportButton}>
+              <Ionicons name="play-forward" size={28} color="#FFFFFF" />
+            </Pressable>
+            <Pressable
+              onPress={() => setLoopSentence((value) => !value)}
+              style={[styles.landRatePill, loopSentence && styles.landLoopActive]}
+            >
+              <Ionicons name="repeat" size={20} color="#FFFFFF" />
+            </Pressable>
+          </View>
+        </>
+      ) : null}
 
       {activeCue ? (
-        <View style={[styles.landSubBox, { bottom: Math.max(18, insets.bottom + 10) }]}>
+        <View
+          style={[
+            styles.landSubBox,
+            {
+              bottom: controlsVisible ? Math.max(28, insets.bottom + 18) : Math.max(20, insets.bottom + 12),
+              backgroundColor: controlsVisible ? 'rgba(16,13,24,0.6)' : 'rgba(0,0,0,0.28)',
+            },
+          ]}
+          pointerEvents="none"
+        >
           {showOriginal ? (
             <Text
               style={[
                 styles.landSubOriginal,
-                { fontSize: landscapeFontSize },
+                {
+                  fontSize: landscapeFontSize,
+                  fontFamily: originalFont,
+                  fontWeight: originalWeight,
+                },
               ]}
               numberOfLines={2}
             >
@@ -992,7 +1188,11 @@ export default function PlayerScreen() {
             <Text
               style={[
                 styles.landSubTranslation,
-                { fontSize: Math.max(13, landscapeFontSize - 5) },
+                {
+                  fontSize: Math.max(13, landscapeFontSize - 5),
+                  fontFamily: translationFont,
+                  fontWeight: translationWeight,
+                },
               ]}
               numberOfLines={2}
             >
@@ -1010,6 +1210,13 @@ export default function PlayerScreen() {
       style={{ flex: 1 }}
       contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 10, paddingBottom: 18 }}
       showsVerticalScrollIndicator={false}
+      scrollEventThrottle={16}
+      onScroll={(event) => {
+        transcriptScrollRef.current = event.nativeEvent.contentOffset.y;
+      }}
+      onLayout={(event) => {
+        transcriptHeightRef.current = event.nativeEvent.layout.height;
+      }}
     >
       {cues.length === 0 ? (
         <View style={styles.emptyTranscript}>
@@ -1039,7 +1246,12 @@ export default function PlayerScreen() {
                 <Text
                   style={[
                     styles.cueOriginal,
-                    { color: theme.colors.textSecondary, fontSize: Math.max(14, fontSize) },
+                    {
+                      color: theme.colors.textSecondary,
+                      fontSize: Math.max(14, fontSize),
+                      fontFamily: originalFont,
+                      fontWeight: originalWeight,
+                    },
                     active && { color: theme.colors.primary, fontWeight: '800' },
                     past && { color: theme.colors.textTertiary },
                   ]}
@@ -1054,6 +1266,8 @@ export default function PlayerScreen() {
                     {
                       color: showOriginal ? theme.colors.textTertiary : theme.colors.textSecondary,
                       fontSize: Math.max(12, fontSize - (showOriginal ? 3 : 0)),
+                      fontFamily: translationFont,
+                      fontWeight: translationWeight,
                     },
                     active && { color: showOriginal ? theme.colors.text : theme.colors.primary },
                   ]}
@@ -1082,11 +1296,23 @@ export default function PlayerScreen() {
             {formatTime(activeCue.start)}
           </Text>
         </View>
-        {providerLabel ? (
-          <Text style={{ color: theme.colors.textTertiary, fontSize: 10 }}>
-            译 · {providerLabel}
-          </Text>
-        ) : null}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          {providerLabel ? (
+            <Text style={{ color: theme.colors.textTertiary, fontSize: 10 }}>
+              译 · {providerLabel}
+            </Text>
+          ) : null}
+          <Pressable onPress={() => setSheet(true)} hitSlop={8}>
+            <Ionicons name="sparkles-outline" size={20} color={theme.colors.textSecondary} />
+          </Pressable>
+          <Pressable onPress={saveFavorite} hitSlop={8}>
+            <Ionicons
+              name={isFavorite ? 'heart' : 'heart-outline'}
+              size={20}
+              color={isFavorite ? theme.colors.primary : theme.colors.textSecondary}
+            />
+          </Pressable>
+        </View>
       </View>
       {showOriginal ? (
         <Text
@@ -1095,6 +1321,7 @@ export default function PlayerScreen() {
             fontSize: Math.min(30, fontSize + 2),
             lineHeight: Math.min(38, fontSize + 9),
             fontWeight: '800',
+            fontFamily: originalFont,
             marginTop: 8,
             letterSpacing: -0.2,
           }}
@@ -1108,7 +1335,8 @@ export default function PlayerScreen() {
             color: showOriginal ? theme.colors.text : theme.colors.primary,
             fontSize: showOriginal ? Math.max(14, fontSize) : Math.min(28, fontSize + 2),
             lineHeight: showOriginal ? Math.max(22, fontSize + 7) : Math.min(36, fontSize + 9),
-            fontWeight: showOriginal ? '500' : '800',
+            fontWeight: showOriginal ? translationWeight : '800',
+            fontFamily: translationFont,
             marginTop: 6,
           }}
         >
@@ -1384,6 +1612,14 @@ export default function PlayerScreen() {
   }
 
   function sheetOverlay() {
+    const titles: Record<typeof sheetPanel, string> = {
+      main: '更多设置',
+      scroll: '字幕滚动',
+      sentence: '断句模式',
+      font: '字体',
+      fontSize: '字体大小',
+      listening: '精听设置',
+    };
     return (
       <View style={styles.sheetMask} pointerEvents="box-none">
         <Pressable style={StyleSheet.absoluteFill} onPress={() => setSheet(false)} />
@@ -1403,13 +1639,30 @@ export default function PlayerScreen() {
                   paddingBottom: Math.max(16, insets.bottom),
                 }
               : {
-                  maxHeight: '86%',
+                  maxHeight: '88%',
                   paddingBottom: Math.max(24, insets.bottom),
                 },
           ]}
         >
-          <View style={[styles.sheetHandle, { backgroundColor: theme.colors.borderStrong }]} />
-          <Text style={[styles.sheetTitle, { color: theme.colors.text }]}>更多设置</Text>
+          <View style={styles.sheetHeader}>
+            <Pressable
+              onPress={() => {
+                if (sheetPanel === 'main') setSheet(false);
+                else setSheetPanel('main');
+              }}
+              style={[styles.sheetHeaderButton, { backgroundColor: theme.colors.surfaceAlt }]}
+            >
+              <Ionicons
+                name={sheetPanel === 'main' ? 'close' : 'arrow-back'}
+                size={20}
+                color={theme.colors.text}
+              />
+            </Pressable>
+            <Text style={[styles.sheetHeaderTitle, { color: theme.colors.text }]}>
+              {titles[sheetPanel]}
+            </Text>
+            <View style={{ width: 40 }} />
+          </View>
 
           <ScrollView
             style={{ flexShrink: 1 }}
@@ -1417,97 +1670,663 @@ export default function PlayerScreen() {
             contentContainerStyle={{ paddingBottom: 8 }}
             keyboardShouldPersistTaps="handled"
           >
-            <View style={[styles.sheetGroup, { backgroundColor: theme.colors.surfaceAlt }]}>
-              <SheetRow
-                icon="language-outline"
-                title="显示翻译"
-                right={<SwitchPill value={showTranslation} onPress={toggleTranslation} />}
-              />
-              <SheetRow
-                icon="text-outline"
-                title="竖屏字幕字号"
-                right={
-                  <View style={[styles.fontStepper, { backgroundColor: theme.colors.surface }]}>
-                    <Pressable onPress={() => changeFontSize(-1, 'portrait')} style={styles.stepButton}>
-                      <Ionicons name="remove" size={18} color={theme.colors.text} />
-                    </Pressable>
-                    <Text style={[styles.fontStepValue, { color: theme.colors.textSecondary }]}>
-                      {fontSize}px
-                    </Text>
-                    <Pressable onPress={() => changeFontSize(1, 'portrait')} style={styles.stepButton}>
-                      <Ionicons name="add" size={18} color={theme.colors.text} />
-                    </Pressable>
-                  </View>
-                }
-              />
-              <SheetRow
-                icon="scan-outline"
-                title="全屏字幕字号"
-                subtitle="横屏全屏独立字号，不影响竖屏"
-                right={
-                  <View style={[styles.fontStepper, { backgroundColor: theme.colors.surface }]}>
-                    <Pressable onPress={() => changeFontSize(-1, 'landscape')} style={styles.stepButton}>
-                      <Ionicons name="remove" size={18} color={theme.colors.text} />
-                    </Pressable>
-                    <Text style={[styles.fontStepValue, { color: theme.colors.textSecondary }]}>
-                      {landscapeFontSize}px
-                    </Text>
-                    <Pressable onPress={() => changeFontSize(1, 'landscape')} style={styles.stepButton}>
-                      <Ionicons name="add" size={18} color={theme.colors.text} />
-                    </Pressable>
-                  </View>
-                }
-              />
-              <SheetRow
-                icon="color-wand-outline"
-                title="翻译引擎"
-                value={providerDisplayName(settings.provider)}
-                onPress={() => {
-                  setSheet(false);
-                  router.push('/settings/translation' as any);
-                }}
-              />
-              <SheetRow
-                icon="person-circle-outline"
-                title="登录 YouTube"
-                subtitle="同步订阅与账号播放权限"
-                onPress={() => {
-                  setSheet(false);
-                  router.push('/youtube-account' as any);
-                }}
-              />
-            </View>
+            {sheetPanel === 'main' ? (
+              <>
+                <View style={[styles.sheetGroup, { backgroundColor: theme.colors.surfaceAlt }]}>
+                  <SheetRow
+                    icon="language-outline"
+                    title="显示翻译"
+                    right={<SwitchPill value={showTranslation} onPress={toggleTranslation} />}
+                  />
+                  <SheetRow
+                    icon="color-wand-outline"
+                    title="翻译引擎"
+                    value={providerDisplayName(settings.provider)}
+                    onPress={() => {
+                      setSheet(false);
+                      router.push('/settings/translation' as any);
+                    }}
+                  />
+                </View>
 
-            <View style={[styles.sheetGroup, { backgroundColor: theme.colors.surfaceAlt }]}>
-              <SheetRow
-                icon="heart-outline"
-                title={isFavorite ? '取消收藏' : '收藏视频'}
-                onPress={() => {
-                  saveFavorite();
-                  setSheet(false);
-                }}
-              />
-              <SheetRow
-                icon="share-social-outline"
-                title="分享视频"
-                onPress={() => {
-                  shareVideo();
-                  setSheet(false);
-                }}
-              />
-              <SheetRow
-                icon="refresh-outline"
-                title="重新翻译字幕"
-                onPress={() => {
-                  setSheet(false);
-                  retranslate();
-                }}
-              />
-            </View>
+                <View style={[styles.sheetGroup, { backgroundColor: theme.colors.surfaceAlt }]}>
+                  <SheetRow
+                    icon="text-outline"
+                    title="逐词高亮"
+                    subtitle="仅 AI 字幕可用"
+                    disabled
+                    right={<SwitchPill value={false} onPress={() => {}} />}
+                  />
+                  <SheetRow
+                    icon="volume-high-outline"
+                    title="朗读高亮效果"
+                    subtitle="当前字幕不带语音时间轴"
+                    value="聚焦"
+                    disabled
+                  />
+                </View>
+
+                <View style={[styles.sheetGroup, { backgroundColor: theme.colors.surfaceAlt }]}>
+                  <SheetRow
+                    icon="swap-vertical-outline"
+                    title="字幕滚动"
+                    value={settings.subtitle.scrollMode === 'top' ? '置顶' : '翻页'}
+                    onPress={() => setSheetPanel('scroll')}
+                  />
+                  <SheetRow
+                    icon="cut-outline"
+                    title="断句模式"
+                    value={settings.subtitle.sentenceMode === 'smart' ? '智能断句' : '整句'}
+                    onPress={() => setSheetPanel('sentence')}
+                  />
+                  <SheetRow
+                    icon="text-outline"
+                    title="字体大小"
+                    value={`${fontSize} / ${landscapeFontSize}`}
+                    onPress={() => {
+                      setFontSizeTarget(landscape ? 'landscape' : 'portrait');
+                      setSheetPanel('fontSize');
+                    }}
+                  />
+                  <SheetRow
+                    icon="brush-outline"
+                    title="字体"
+                    value="默认"
+                    onPress={() => setSheetPanel('font')}
+                  />
+                </View>
+
+                <View style={[styles.sheetGroup, { backgroundColor: theme.colors.surfaceAlt }]}>
+                  <SheetRow
+                    icon="eye-off-outline"
+                    title="隐藏视频"
+                    right={
+                      <SwitchPill
+                        value={hideVideo}
+                        onPress={() =>
+                          patchSettings({
+                            subtitle: { ...settings.subtitle, hideVideo: !hideVideo },
+                          })
+                        }
+                      />
+                    }
+                  />
+                  <SheetRow
+                    icon="sunny-outline"
+                    title="播放时屏幕常亮"
+                    subtitle="播放页不会自动变暗或锁屏"
+                    right={
+                      <SwitchPill
+                        value={settings.keepAwake}
+                        onPress={() => patchSettings({ keepAwake: !settings.keepAwake })}
+                      />
+                    }
+                  />
+                  <SheetRow
+                    icon="headset-outline"
+                    title="精听设置"
+                    value={`每句 ${settings.subtitle.repeatCount} 遍`}
+                    onPress={() => setSheetPanel('listening')}
+                  />
+                </View>
+
+                <View style={[styles.sheetGroup, { backgroundColor: theme.colors.surfaceAlt }]}>
+                  <SheetRow
+                    icon="share-social-outline"
+                    title="分享视频"
+                    onPress={() => {
+                      shareVideo();
+                      setSheet(false);
+                    }}
+                  />
+                  <SheetRow
+                    icon="heart-outline"
+                    title={isFavorite ? '取消收藏' : '收藏视频'}
+                    onPress={() => {
+                      saveFavorite();
+                      setSheet(false);
+                    }}
+                  />
+                  <SheetRow
+                    icon="document-text-outline"
+                    title="导出字幕 PDF"
+                    subtitle={cues.length ? `${cues.length} 句 · 含双语对照` : '当前没有字幕'}
+                    onPress={() => {
+                      setSheet(false);
+                      exportSubtitlePdf();
+                    }}
+                  />
+                  <SheetRow
+                    icon="albums-outline"
+                    title="频道详情"
+                    value={metaAuthor || 'YouTube'}
+                    onPress={() => {
+                      setSheet(false);
+                      router.push({
+                        pathname: '/channel',
+                        params: {
+                          channelId: metaChannelId,
+                          title: metaAuthor || 'YouTube',
+                        },
+                      } as any);
+                    }}
+                  />
+                  <SheetRow
+                    icon="person-circle-outline"
+                    title="登录 YouTube"
+                    subtitle="同步订阅与账号播放权限"
+                    onPress={() => {
+                      setSheet(false);
+                      router.push('/youtube-account' as any);
+                    }}
+                  />
+                </View>
+
+                <View style={[styles.sheetGroup, { backgroundColor: theme.colors.surfaceAlt }]}>
+                  <SheetRow
+                    icon="refresh-outline"
+                    title="重新翻译字幕"
+                    onPress={() => {
+                      setSheet(false);
+                      retranslate();
+                    }}
+                  />
+                </View>
+              </>
+            ) : null}
+
+            {sheetPanel === 'scroll' ? (
+              <View style={styles.optionList}>
+                {[
+                  {
+                    id: 'top' as const,
+                    title: '置顶',
+                    desc: '当前句始终固定在最上面，边听边看下一句。',
+                  },
+                  {
+                    id: 'page' as const,
+                    title: '翻页',
+                    desc: '字幕按顺序往下播放，当前句接近底部时再翻页。',
+                  },
+                ].map((option) => {
+                  const active = settings.subtitle.scrollMode === option.id;
+                  return (
+                    <Pressable
+                      key={option.id}
+                      onPress={() =>
+                        patchSettings({
+                          subtitle: { ...settings.subtitle, scrollMode: option.id },
+                        })
+                      }
+                      style={[
+                        styles.optionCard,
+                        {
+                          backgroundColor: active ? theme.colors.primarySoft : theme.colors.surfaceAlt,
+                        },
+                      ]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.optionTitle, { color: theme.colors.text }]}>
+                          {option.title}
+                        </Text>
+                        <Text style={[styles.optionDesc, { color: theme.colors.textSecondary }]}>
+                          {option.desc}
+                        </Text>
+                      </View>
+                      {active ? (
+                        <Ionicons name="checkmark" size={22} color={theme.colors.primary} />
+                      ) : null}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : null}
+
+            {sheetPanel === 'sentence' ? (
+              <View style={styles.optionList}>
+                {[
+                  {
+                    id: 'smart' as const,
+                    title: '智能断句',
+                    desc: '把长句按意思分成小段，每段短而完整，边看边理解更轻松，跟读也更容易开口。',
+                  },
+                  {
+                    id: 'whole' as const,
+                    title: '整句',
+                    desc: '一张卡就是一个完整句子，能看清整句的结构和语法，翻译也更准确。',
+                  },
+                ].map((option) => {
+                  const active = settings.subtitle.sentenceMode === option.id;
+                  return (
+                    <Pressable
+                      key={option.id}
+                      onPress={() =>
+                        patchSettings({
+                          subtitle: { ...settings.subtitle, sentenceMode: option.id },
+                        })
+                      }
+                      style={[
+                        styles.optionCard,
+                        {
+                          backgroundColor: active ? theme.colors.primarySoft : theme.colors.surfaceAlt,
+                        },
+                      ]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.optionTitle, { color: theme.colors.text }]}>
+                          {option.title}
+                        </Text>
+                        <Text style={[styles.optionDesc, { color: theme.colors.textSecondary }]}>
+                          {option.desc}
+                        </Text>
+                      </View>
+                      {active ? (
+                        <Ionicons name="checkmark" size={22} color={theme.colors.primary} />
+                      ) : null}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : null}
+
+            {sheetPanel === 'font' ? (
+              <View>
+                <Text style={[styles.panelSectionLabel, { color: theme.colors.textSecondary }]}>
+                  原文 · {learningLang.toUpperCase()}
+                </Text>
+                {(
+                  [
+                    ['default', '默认', '系统字体'],
+                    ['rounded', '圆角体', '系统圆角'],
+                    ['serif', '衬线', 'Serif'],
+                    ['geometric', '几何', '轻几何'],
+                  ] as const
+                ).map(([id, label, desc]) => {
+                  const active = settings.subtitle.originalFont === id;
+                  return (
+                    <Pressable
+                      key={`source-${id}`}
+                      onPress={() =>
+                        patchSettings({
+                          subtitle: { ...settings.subtitle, originalFont: id },
+                        })
+                      }
+                      style={[
+                        styles.fontOption,
+                        { backgroundColor: active ? theme.colors.primarySoft : theme.colors.surfaceAlt },
+                      ]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '700' }}>
+                          {label}
+                        </Text>
+                        <Text style={{ color: theme.colors.textTertiary, fontSize: 11, marginTop: 2 }}>
+                          {desc}
+                        </Text>
+                      </View>
+                      {active ? <Ionicons name="checkmark" size={20} color={theme.colors.primary} /> : null}
+                    </Pressable>
+                  );
+                })}
+                <Text style={[styles.panelSectionLabel, { color: theme.colors.textSecondary }]}>
+                  粗细
+                </Text>
+                <WeightPicker
+                  value={settings.subtitle.originalWeight}
+                  onChange={(weight) =>
+                    patchSettings({
+                      subtitle: { ...settings.subtitle, originalWeight: weight },
+                    })
+                  }
+                />
+
+                <Text style={[styles.panelSectionLabel, { color: theme.colors.textSecondary, marginTop: 24 }]}>
+                  翻译 · 中文
+                </Text>
+                {(
+                  [
+                    ['default', '默认', '系统字体'],
+                    ['serif', '宋体', 'Serif'],
+                    ['kai', '楷体', 'Kai'],
+                  ] as const
+                ).map(([id, label, desc]) => {
+                  const active = settings.subtitle.translationFont === id;
+                  return (
+                    <Pressable
+                      key={`translation-${id}`}
+                      onPress={() =>
+                        patchSettings({
+                          subtitle: { ...settings.subtitle, translationFont: id },
+                        })
+                      }
+                      style={[
+                        styles.fontOption,
+                        { backgroundColor: active ? theme.colors.primarySoft : theme.colors.surfaceAlt },
+                      ]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '700' }}>
+                          {label}
+                        </Text>
+                        <Text style={{ color: theme.colors.textTertiary, fontSize: 11, marginTop: 2 }}>
+                          {desc}
+                        </Text>
+                      </View>
+                      {active ? <Ionicons name="checkmark" size={20} color={theme.colors.primary} /> : null}
+                    </Pressable>
+                  );
+                })}
+                <Text style={[styles.panelSectionLabel, { color: theme.colors.textSecondary }]}>
+                  粗细
+                </Text>
+                <WeightPicker
+                  value={settings.subtitle.translationWeight}
+                  onChange={(weight) =>
+                    patchSettings({
+                      subtitle: { ...settings.subtitle, translationWeight: weight },
+                    })
+                  }
+                />
+              </View>
+            ) : null}
+
+            {sheetPanel === 'fontSize' ? (
+              <View>
+                <Text style={[styles.panelSectionLabel, { color: theme.colors.textSecondary }]}>
+                  调整范围
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 22 }}>
+                  {[
+                    { id: 'portrait' as const, label: '竖屏字幕', value: fontSize },
+                    { id: 'landscape' as const, label: '全屏字幕', value: landscapeFontSize },
+                  ].map((target) => {
+                    const active = fontSizeTarget === target.id;
+                    return (
+                      <Pressable
+                        key={target.id}
+                        onPress={() => setFontSizeTarget(target.id)}
+                        style={{
+                          flex: 1,
+                          height: 42,
+                          borderRadius: 12,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          backgroundColor: active ? theme.colors.primarySoft : theme.colors.surfaceAlt,
+                          borderWidth: active ? 1 : 0,
+                          borderColor: theme.colors.primary,
+                        }}
+                      >
+                        <Text
+                          style={{
+                            color: active ? theme.colors.primary : theme.colors.textSecondary,
+                            fontSize: 12.5,
+                            fontWeight: active ? '800' : '600',
+                          }}
+                        >
+                          {target.label} · {target.value}px
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                <View style={{ alignItems: 'center', marginBottom: 10 }}>
+                  <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '800' }}>
+                    {fontSizeTarget === 'portrait' ? '标准' : '全屏'}
+                  </Text>
+                  <Text style={{ color: theme.colors.textTertiary, fontSize: 11, marginTop: 3 }}>
+                    {fontSizeTarget === 'portrait' ? fontSize : landscapeFontSize}px
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <Text style={{ color: theme.colors.textTertiary, fontSize: 15, fontWeight: '700' }}>A</Text>
+                  <View
+                    style={styles.fontTrackWrap}
+                    onLayout={(event) => {
+                      fontTrackWidthRef.current = event.nativeEvent.layout.width;
+                    }}
+                    onStartShouldSetResponder={() => true}
+                    onMoveShouldSetResponder={() => true}
+                    onResponderGrant={(event) =>
+                      applyFontFromX(event.nativeEvent.locationX, fontSizeTarget)
+                    }
+                    onResponderMove={(event) =>
+                      applyFontFromX(event.nativeEvent.locationX, fontSizeTarget)
+                    }
+                  >
+                    <View style={[styles.fontTrack, { backgroundColor: theme.colors.surfaceAlt }]}>
+                      <View
+                        style={[
+                          styles.fontTrackFill,
+                          {
+                            backgroundColor: theme.colors.primary,
+                            width: `${fontStepPercent(fontSizeTarget === 'portrait' ? fontSize : landscapeFontSize)}%` as any,
+                          },
+                        ]}
+                      />
+                    </View>
+                    {FONT_STEPS.map((size) => (
+                      <View
+                        key={size}
+                        style={[
+                          styles.fontDot,
+                          {
+                            left: `${((FONT_STEPS.indexOf(size) / (FONT_STEPS.length - 1)) * 100)}%` as any,
+                            backgroundColor: size <= (fontSizeTarget === 'portrait' ? fontSize : landscapeFontSize)
+                              ? theme.colors.primary
+                              : theme.colors.borderStrong,
+                          },
+                        ]}
+                      />
+                    ))}
+                  </View>
+                  <Text style={{ color: theme.colors.text, fontSize: 23, fontWeight: '800' }}>A</Text>
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 26, marginTop: 10 }}>
+                  {[14, 20, 26, 34].map((size) => (
+                    <Text key={size} style={{ color: theme.colors.textTertiary, fontSize: 10 }}>
+                      {size}
+                    </Text>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+
+            {sheetPanel === 'listening' ? (
+              <View>
+                <View style={[styles.sheetGroup, { backgroundColor: theme.colors.surfaceAlt }]}>
+                  <SheetRow
+                    icon="play-forward-outline"
+                    title="自动播放下一句"
+                    subtitle="盲听时播完自动进入下一句"
+                    right={
+                      <SwitchPill
+                        value={settings.subtitle.autoNext}
+                        onPress={() =>
+                          patchSettings({
+                            subtitle: {
+                              ...settings.subtitle,
+                              autoNext: !settings.subtitle.autoNext,
+                            },
+                          })
+                        }
+                      />
+                    }
+                  />
+                  <SheetRow
+                    icon="eye-off-outline"
+                    title="隐藏视频"
+                    right={
+                      <SwitchPill
+                        value={hideVideo}
+                        onPress={() =>
+                          patchSettings({
+                            subtitle: { ...settings.subtitle, hideVideo: !hideVideo },
+                          })
+                        }
+                      />
+                    }
+                  />
+                </View>
+                <View style={[styles.sheetGroup, { backgroundColor: theme.colors.surfaceAlt }]}>
+                  <SheetRow
+                    icon="text-outline"
+                    title="字体大小"
+                    value={`${fontSize}px / ${landscapeFontSize}px`}
+                    onPress={() => {
+                      setFontSizeTarget(landscape ? 'landscape' : 'portrait');
+                      setSheetPanel('fontSize');
+                    }}
+                  />
+                  <SheetRow
+                    icon="repeat-outline"
+                    title="每句播放遍数"
+                    right={
+                      <Stepper
+                        value={settings.subtitle.repeatCount}
+                        min={1}
+                        max={5}
+                        onChange={(value) =>
+                          patchSettings({
+                            subtitle: { ...settings.subtitle, repeatCount: value },
+                          })
+                        }
+                      />
+                    }
+                  />
+                  <SheetRow
+                    icon="hourglass-outline"
+                    title="每遍间隔"
+                    right={
+                      <Stepper
+                        value={settings.subtitle.repeatInterval}
+                        min={0}
+                        max={3}
+                        suffix="秒"
+                        onChange={(value) =>
+                          patchSettings({
+                            subtitle: { ...settings.subtitle, repeatInterval: value },
+                          })
+                        }
+                      />
+                    }
+                  />
+                </View>
+                <Text style={[styles.panelHint, { color: theme.colors.textTertiary }]}>
+                  打开播放器底部的「单句循环」后，会按这里的遍数和间隔重复当前句；盲听模式下则控制是否自动跳到下一句。
+                </Text>
+              </View>
+            ) : null}
           </ScrollView>
         </View>
       </View>
     );
+  }
+
+  function WeightPicker({
+    value,
+    onChange,
+  }: {
+    value: 'regular' | 'medium' | 'bold';
+    onChange: (value: 'regular' | 'medium' | 'bold') => void;
+  }) {
+    return (
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        {(
+          [
+            ['regular', '常规', '400'],
+            ['medium', '中等', '600'],
+            ['bold', '粗', '800'],
+          ] as const
+        ).map(([id, label, weight]) => {
+          const active = value === id;
+          return (
+            <Pressable
+              key={id}
+              onPress={() => onChange(id)}
+              style={{
+                flex: 1,
+                height: 40,
+                borderRadius: 20,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: active ? theme.colors.primary : theme.colors.surfaceAlt,
+              }}
+            >
+              <Text
+                style={{
+                  color: active ? '#FFFFFF' : theme.colors.textSecondary,
+                  fontSize: 12.5,
+                  fontWeight: weight as any,
+                }}
+              >
+                {label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    );
+  }
+
+  function Stepper({
+    value,
+    min,
+    max,
+    suffix,
+    onChange,
+  }: {
+    value: number;
+    min: number;
+    max: number;
+    suffix?: string;
+    onChange: (value: number) => void;
+  }) {
+    return (
+      <View style={[styles.fontStepper, { backgroundColor: theme.colors.surface }]}>
+        <Pressable
+          onPress={() => onChange(Math.max(min, value - 1))}
+          style={styles.stepButton}
+          disabled={value <= min}
+        >
+          <Ionicons name="remove" size={17} color={value <= min ? theme.colors.textTertiary : theme.colors.text} />
+        </Pressable>
+        <Text style={[styles.fontStepValue, { color: theme.colors.textSecondary }]}>
+          {value}
+          {suffix ?? ''}
+        </Text>
+        <Pressable
+          onPress={() => onChange(Math.min(max, value + 1))}
+          style={styles.stepButton}
+          disabled={value >= max}
+        >
+          <Ionicons name="add" size={17} color={value >= max ? theme.colors.textTertiary : theme.colors.text} />
+        </Pressable>
+      </View>
+    );
+  }
+
+  function fontStepPercent(value: number) {
+    const nearest = FONT_STEPS.reduce(
+      (best, size, index) =>
+        Math.abs(size - value) < Math.abs(FONT_STEPS[best] - value) ? index : best,
+      0
+    );
+    return (nearest / (FONT_STEPS.length - 1)) * 100;
+  }
+
+  function applyFontFromX(x: number, target: 'portrait' | 'landscape') {
+    const width = fontTrackWidthRef.current;
+    if (!width) return;
+    const ratio = Math.max(0, Math.min(1, x / width));
+    const index = Math.round(ratio * (FONT_STEPS.length - 1));
+    const next = FONT_STEPS[index] ?? FONT_STEPS[0];
+    patchSettings({
+      subtitle: {
+        ...settings.subtitle,
+        ...(target === 'portrait' ? { fontSize: next } : { landscapeFontSize: next }),
+      },
+    });
   }
 
   async function retranslate() {
@@ -1538,6 +2357,7 @@ function SheetRow({
   value,
   right,
   onPress,
+  disabled,
 }: {
   icon: any;
   title: string;
@@ -1545,10 +2365,17 @@ function SheetRow({
   value?: string;
   right?: ReactNode;
   onPress?: () => void;
+  disabled?: boolean;
 }) {
   const theme = useAppTheme();
   const content = (
-    <View style={[styles.sheetRow, { borderBottomColor: theme.colors.border }]}>
+    <View
+      style={[
+        styles.sheetRow,
+        { borderBottomColor: theme.colors.border },
+        disabled && { opacity: 0.38 },
+      ]}
+    >
       <View style={[styles.sheetIcon, { backgroundColor: theme.colors.primarySoft }]}>
         <Ionicons name={icon} size={18} color={theme.colors.primary} />
       </View>
@@ -1564,7 +2391,7 @@ function SheetRow({
         <Text style={[styles.sheetRowValue, { color: theme.colors.textSecondary }]}>{value}</Text>
       ) : null}
       {right}
-      {onPress ? (
+      {onPress && !disabled ? (
         <Ionicons
           name="chevron-forward"
           size={16}
@@ -1574,7 +2401,7 @@ function SheetRow({
       ) : null}
     </View>
   );
-  if (!onPress) return content;
+  if (!onPress || disabled) return content;
   return <Pressable onPress={onPress}>{content}</Pressable>;
 }
 
@@ -1617,6 +2444,33 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderRadius: 18,
   },
+  videoFrameHidden: {
+    marginHorizontal: 14,
+    height: 56,
+    borderRadius: 14,
+    overflow: 'hidden',
+    backgroundColor: 'transparent',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(90,85,74,0.18)',
+  },
+  hiddenWebview: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    opacity: 0,
+  },
+  hiddenVideoBanner: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    backgroundColor: 'rgba(120,116,104,0.10)',
+  },
   landscapeVideo: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000000' },
   webview: { flex: 1, backgroundColor: '#000000' },
   videoLoading: {
@@ -1656,10 +2510,25 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 8,
   },
-  qualityChipText: { color: '#C9BFFF', fontSize: 10, fontWeight: '700' },
+  qualityChipText: { color: '#CFE2D7', fontSize: 10, fontWeight: '700' },
   videoFullscreen: {
     position: 'absolute',
     right: 10,
+    bottom: 10,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(10,8,16,0.7)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 8,
+  },
+  videoTranslate: {
+    position: 'absolute',
+    right: 50,
+    bottom: 10,
     width: 34,
     height: 34,
     borderRadius: 17,
@@ -1684,7 +2553,7 @@ const styles = StyleSheet.create({
   problemTitle: { color: '#F5F2FF', fontSize: 15, fontWeight: '800', marginTop: 8 },
   problemText: { color: '#9A90AB', fontSize: 12, textAlign: 'center', lineHeight: 18, marginTop: 6 },
   problemButton: {
-    backgroundColor: '#7C5CFF',
+    backgroundColor: '#446B5B',
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 9,
@@ -1722,7 +2591,7 @@ const styles = StyleSheet.create({
   controls: { backgroundColor: '#120E1B', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#241C33', paddingHorizontal: 18, paddingTop: 6 },
   progressTouch: { height: 22, justifyContent: 'center' },
   progressRail: { height: 4, borderRadius: 2, backgroundColor: '#2B2340', overflow: 'hidden' },
-  progressFill: { height: '100%', borderRadius: 2, backgroundColor: '#8B72FF' },
+  progressFill: { height: '100%', borderRadius: 2, backgroundColor: '#446B5B' },
   progressThumb: {
     position: 'absolute',
     width: 12,
@@ -1746,7 +2615,7 @@ const styles = StyleSheet.create({
     height: 30,
     paddingHorizontal: 9,
     borderRadius: 15,
-    backgroundColor: '#F0ECFF',
+    backgroundColor: '#E2ECE5',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1763,10 +2632,10 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#7C5CFF',
+    backgroundColor: '#446B5B',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#7C5CFF',
+    shadowColor: '#446B5B',
     shadowOpacity: 0.4,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 6 },
@@ -1833,7 +2702,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  landIconActive: { backgroundColor: 'rgba(124,92,255,0.78)' },
+  landIconActive: { backgroundColor: 'rgba(68,107,91,0.86)' },
   landCc: { color: '#FFFFFF', fontSize: 12, fontWeight: '900', letterSpacing: 0.5 },
   landCenter: {
     position: 'absolute',
@@ -1858,7 +2727,7 @@ const styles = StyleSheet.create({
     width: 62,
     height: 62,
     borderRadius: 31,
-    backgroundColor: 'rgba(124,92,255,0.9)',
+    backgroundColor: 'rgba(68,107,91,0.92)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1872,7 +2741,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   landRateText: { color: '#FFFFFF', fontSize: 11.5, fontWeight: '800' },
-  landLoopActive: { backgroundColor: 'rgba(124,92,255,0.8)' },
+  landLoopActive: { backgroundColor: 'rgba(68,107,91,0.86)' },
   landSubBox: {
     position: 'absolute',
     left: 40,
@@ -1943,6 +2812,69 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 10,
   },
+  sheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  sheetHeaderButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sheetHeaderTitle: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 19,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+  },
+  optionList: { gap: 10, paddingBottom: 8 },
+  optionCard: {
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 15,
+    minHeight: 72,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  optionTitle: { fontSize: 16, fontWeight: '800' },
+  optionDesc: { fontSize: 12, lineHeight: 19, marginTop: 5 },
+  panelSectionLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 8,
+    marginTop: 2,
+  },
+  fontOption: {
+    minHeight: 58,
+    borderRadius: 14,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  fontTrackWrap: {
+    flex: 1,
+    height: 34,
+    justifyContent: 'center',
+  },
+  fontTrack: { height: 7, borderRadius: 4, overflow: 'hidden' },
+  fontTrackFill: { height: 7, borderRadius: 4 },
+  fontDot: {
+    position: 'absolute',
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    marginLeft: -2,
+  },
+  panelHint: { fontSize: 11, lineHeight: 18, marginTop: 2, paddingHorizontal: 4 },
   sheetHandle: { alignSelf: 'center', width: 42, height: 4, borderRadius: 2, backgroundColor: '#4A4058', marginBottom: 12 },
   sheetTitle: { color: '#F5F2FF', fontSize: 18, fontWeight: '800', marginBottom: 12 },
   sheetGroup: {
@@ -1966,7 +2898,7 @@ const styles = StyleSheet.create({
   sheetRowSubtitle: { color: '#817791', fontSize: 11, marginTop: 2 },
   sheetRowValue: { color: '#A99FBA', fontSize: 12 },
   switchPill: { width: 46, height: 27, borderRadius: 14, backgroundColor: '#332A44', padding: 3 },
-  switchPillOn: { backgroundColor: '#7C5CFF' },
+  switchPillOn: { backgroundColor: '#446B5B' },
   switchKnob: { width: 21, height: 21, borderRadius: 11, backgroundColor: '#FFFFFF' },
   switchKnobOn: { alignSelf: 'flex-end' },
   fontStepper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#2A2238', borderRadius: 10, height: 32 },

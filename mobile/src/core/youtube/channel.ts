@@ -133,6 +133,18 @@ export async function refreshChannelInfo(
   }
 }
 
+export async function fetchChannelDescription(channelId: string): Promise<string> {
+  if (!CHANNEL_ID_RE.test(channelId)) return '';
+  try {
+    const html = await fetchHtml(
+      `https://www.youtube.com/channel/${channelId}?hl=en&gl=US`
+    );
+    return metaContent(html, 'og:description') || metaContent(html, 'description') || '';
+  } catch {
+    return '';
+  }
+}
+
 export function parseTakeoutCsv(content: string): Subscription[] {
   const rows: string[][] = [];
   let field = '';

@@ -225,17 +225,25 @@ export const useAppStore = create<AppState>()(
       }),
       merge: (persisted, current) => {
         const saved = persisted as Partial<AppState> | undefined;
-        const legacyDesign =
-          !saved?.settings ||
-          !(saved.settings as { designVersion?: number }).designVersion;
+        const previousDesign =
+          Number(
+            (saved?.settings as { designVersion?: number } | undefined)
+              ?.designVersion ?? 0
+          ) || 0;
         const mergedSettings = deepMerge(DEFAULT_SETTINGS, saved?.settings);
-        // 1.x shipped with a blue iOS-like palette. Move existing installs onto
-        // the Android-reference violet palette exactly once, while still
-        // letting the user pick blue later.
-        if (legacyDesign && mergedSettings.themeAccent === 'blue') {
-          mergedSettings.themeAccent = 'violet';
+        // 1.x shipped with a blue iOS-like palette, 1.2 used violet. Move
+        // installs that still carry the untouched default onto the Android
+        // reference sage palette exactly once.
+        if (previousDesign < 1 && mergedSettings.themeAccent === 'blue') {
+          mergedSettings.themeAccent = 'sage';
         }
-        mergedSettings.designVersion = 2;
+        if (previousDesign < 3 && mergedSettings.themeAccent === 'violet') {
+          mergedSettings.themeAccent = 'sage';
+        }
+        if (previousDesign < 3 && mergedSettings.discoverLayout === 'list') {
+          mergedSettings.discoverLayout = 'grid';
+        }
+        mergedSettings.designVersion = 3;
         return {
           ...current,
           settings: mergedSettings,

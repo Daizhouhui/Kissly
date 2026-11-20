@@ -49,6 +49,8 @@ export default function RootLayout() {
           <Stack.Screen name="settings/appearance" />
           <Stack.Screen name="settings/webdav" />
           <Stack.Screen name="settings/subtitle" />
+          <Stack.Screen name="settings/voice" />
+          <Stack.Screen name="settings/export" />
           <Stack.Screen name="settings/about" />
         </Stack>
       </View>

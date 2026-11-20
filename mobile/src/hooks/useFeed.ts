@@ -31,7 +31,9 @@ function uniqueSorted(items: VideoItem[]): VideoItem[] {
 
 export function useFeed(channelFilter = '') {
   const subscriptions = useAppStore((state) => state.subscriptions);
-  const translateTitlesEnabled = useAppStore((state) => state.settings.translateTitles);
+  const translateTitlesEnabled = useAppStore(
+    (state) => state.settings.titleTranslationMode !== 'none'
+  );
   const [pool, setPool] = useState<VideoItem[]>([]);
   const [visibleCount, setVisibleCount] = useState(HOME_PAGE_SIZE);
   const [loading, setLoading] = useState(false);
@@ -77,7 +79,7 @@ export function useFeed(channelFilter = '') {
   };
 
   const translateVisibleTitles = async (items: VideoItem[], requestId: number) => {
-    if (!useAppStore.getState().settings.translateTitles) return;
+    if (useAppStore.getState().settings.titleTranslationMode === 'none') return;
     const missing = Array.from(
       new Set(
         items
@@ -267,7 +269,16 @@ export function useFeed(channelFilter = '') {
     if (!translateTitlesEnabled) {
       translatedTitles.current = new Set();
       setPoolSafe(poolRef.current.map((item) => ({ ...item, translatedTitle: undefined })));
+      return;
     }
+    if (poolRef.current.length) {
+      void translateVisibleTitles(
+        poolRef.current.slice(0, visibleRef.current),
+        requestRef.current
+      );
+    }
+    // translateVisibleTitles is intentionally read from the current render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [translateTitlesEnabled]);
 
   return {

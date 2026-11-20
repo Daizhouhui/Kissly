@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-na
 
 import { VideoItem } from '../core/types';
 import { formatTime, relativeTime } from '../core/utils';
+import { useAppStore } from '../core/store';
 import { useAppTheme } from './theme';
 
 export type VideoCardVariant = 'list' | 'grid' | 'large';
@@ -18,9 +19,14 @@ export function VideoCard({
   variant?: VideoCardVariant;
 }) {
   const theme = useAppTheme();
+  const titleMode = useAppStore((state) => state.settings.titleTranslationMode);
   const { width } = useWindowDimensions();
   const thumbWidth = Math.min(152, Math.max(124, width * 0.37));
   const translatedColor = theme.colors.textSecondary;
+  const translationOnly = titleMode === 'translation' && !!item.translatedTitle;
+  const primaryTitle = translationOnly ? item.translatedTitle! : item.title;
+  const secondaryTitle =
+    titleMode === 'bilingual' && item.translatedTitle ? item.translatedTitle : undefined;
 
   const meta = (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 7 }}>
@@ -38,6 +44,16 @@ export function VideoCard({
       >
         {item.channelTitle}
       </Text>
+      {item.viewCount ? (
+        <>
+          <Text style={{ color: theme.colors.textTertiary, fontSize: 10 }}>·</Text>
+          <Text style={{ color: theme.colors.textTertiary, fontSize: 10 }}>
+            {item.viewCount >= 10000
+              ? `${(item.viewCount / 10000).toFixed(1)}万次观看`
+              : `${item.viewCount} 次观看`}
+          </Text>
+        </>
+      ) : null}
       <Text style={{ color: theme.colors.textTertiary, fontSize: 10 }}>·</Text>
       <Text style={{ color: theme.colors.textTertiary, fontSize: 10 }}>
         {relativeTime(item.published)}
@@ -96,9 +112,9 @@ export function VideoCard({
           }}
           numberOfLines={2}
         >
-          {item.title}
+          {primaryTitle}
         </Text>
-        {item.translatedTitle ? (
+        {secondaryTitle ? (
           <Text
             style={{
               color: translatedColor,
@@ -110,7 +126,7 @@ export function VideoCard({
             }}
             numberOfLines={2}
           >
-            {item.translatedTitle}
+            {secondaryTitle}
           </Text>
         ) : null}
         {meta}
@@ -169,9 +185,9 @@ export function VideoCard({
           }}
           numberOfLines={2}
         >
-          {item.title}
+          {primaryTitle}
         </Text>
-        {item.translatedTitle ? (
+        {secondaryTitle ? (
           <Text
             style={{
               color: translatedColor,
@@ -183,7 +199,7 @@ export function VideoCard({
             }}
             numberOfLines={2}
           >
-            {item.translatedTitle}
+            {secondaryTitle}
           </Text>
         ) : null}
         {meta}

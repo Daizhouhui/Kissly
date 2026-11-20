@@ -1,14 +1,17 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Tabs } from 'expo-router';
+import { Tabs, router } from 'expo-router';
+import { useEffect, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useAppStore } from '../../src/core/store';
 import { useAppTheme } from '../../src/ui/theme';
 
 const TAB_ICONS: Record<string, { active: any; inactive: any; label: string }> = {
-  index: { active: 'compass', inactive: 'compass-outline', label: '发现' },
-  learning: { active: 'bookmark', inactive: 'bookmark-outline', label: '学习' },
-  me: { active: 'person-circle', inactive: 'person-circle-outline', label: '我的' },
+  index: { active: 'play', inactive: 'play-outline', label: '视频' },
+  podcast: { active: 'radio', inactive: 'radio-outline', label: '播客' },
+  learning: { active: 'school', inactive: 'school-outline', label: '学习' },
+  me: { active: 'person', inactive: 'person-outline', label: '我的' },
 };
 
 function TabIcon({ name, focused }: { name: string; focused: boolean }) {
@@ -18,7 +21,7 @@ function TabIcon({ name, focused }: { name: string; focused: boolean }) {
     <View style={styles.iconWrap}>
       <Ionicons
         name={focused ? config.active : config.inactive}
-        size={22}
+        size={20}
         color={focused ? theme.colors.primary : theme.colors.textTertiary}
       />
     </View>
@@ -28,6 +31,19 @@ function TabIcon({ name, focused }: { name: string; focused: boolean }) {
 export default function TabLayout() {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
+  const hydrated = useAppStore((state) => state.hydrated);
+  const defaultTab = useAppStore((state) => state.settings.defaultTab);
+  const routedRef = useRef(false);
+
+  useEffect(() => {
+    if (!hydrated || routedRef.current) return;
+    routedRef.current = true;
+    if (defaultTab === 'video') return;
+    const timer = setTimeout(() => {
+      router.replace(`/(tabs)/${defaultTab}` as any);
+    }, 30);
+    return () => clearTimeout(timer);
+  }, [defaultTab, hydrated]);
 
   return (
     <Tabs
@@ -45,8 +61,8 @@ export default function TabLayout() {
           height: 58 + insets.bottom,
           borderRadius: 0,
           backgroundColor: theme.dark
-            ? 'rgba(14,11,20,0.98)'
-            : 'rgba(255,255,255,0.98)',
+            ? 'rgba(17,20,16,0.98)'
+            : 'rgba(251,249,244,0.98)',
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: theme.colors.border,
           paddingBottom: insets.bottom,
@@ -71,8 +87,15 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: '发现',
+          title: '视频',
           tabBarIcon: ({ focused }: { focused: boolean }) => <TabIcon name="index" focused={focused} />,
+        }}
+      />
+      <Tabs.Screen
+        name="podcast"
+        options={{
+          title: '播客',
+          tabBarIcon: ({ focused }: { focused: boolean }) => <TabIcon name="podcast" focused={focused} />,
         }}
       />
       <Tabs.Screen
