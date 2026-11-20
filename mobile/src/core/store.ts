@@ -29,11 +29,29 @@ function deepMerge<T>(base: T, patch: unknown): T {
 
 export type SyncState = 'idle' | 'syncing' | 'ok' | 'error';
 
+type SubscriptionTombstones = Record<string, number>;
+
+function withOrder(items: Subscription[]): Subscription[] {
+  return items.map((item, index) => ({ ...item, order: index }));
+}
+
+function sortByOrder(items: Subscription[]): Subscription[] {
+  const hasOrder = items.every((item) => typeof item.order === 'number');
+  if (hasOrder) {
+    return [...items].sort(
+      (a, b) => Number(a.order) - Number(b.order) || b.addedAt - a.addedAt
+    );
+  }
+  return [...items].sort((a, b) => b.addedAt - a.addedAt);
+}
+
 type AppState = {
   hydrated: boolean;
   settings: Settings;
   settingsUpdatedAt: number;
   subscriptions: Subscription[];
+  subscriptionTombstones: SubscriptionTombstones;
+  subscriptionOrderUpdatedAt: number;
   favorites: FavoriteItem[];
   history: FavoriteItem[];
   lastSyncAt: number;
@@ -41,12 +59,19 @@ type AppState = {
   syncMessage: string;
   setHydrated: (value: boolean) => void;
   patchSettings: (patch: DeepPartial<Settings>) => void;
-  replaceSettings: (settings: Settings) => void;
+  replaceSettings: (settings: Settings, updatedAt?: number) => void;
   addSubscription: (item: Subscription) => void;
   addSubscriptions: (items: Subscription[]) => void;
   updateSubscription: (channelId: string, patch: Partial<Subscription>) => void;
   removeSubscription: (channelId: string) => void;
+  removeSubscriptions: (channelIds: string[]) => void;
   setSubscriptions: (items: Subscription[]) => void;
+  reorderSubscriptions: (items: Subscription[]) => void;
+  replaceSubscriptionSync: (
+    items: Subscription[],
+    tombstones: SubscriptionTombstones,
+    orderUpdatedAt: number
+  ) => void;
   toggleFavorite: (item: FavoriteItem) => boolean;
   removeFavorite: (videoId: string) => void;
   recordHistory: (item: FavoriteItem) => void;
@@ -61,6 +86,8 @@ export const useAppStore = create<AppState>()(
       settings: DEFAULT_SETTINGS,
       settingsUpdatedAt: 0,
       subscriptions: [],
+      subscriptionTombstones: {},
+      subscriptionOrderUpdatedAt: 0,
       favorites: [],
       history: [],
       lastSyncAt: 0,
@@ -72,24 +99,40 @@ export const useAppStore = create<AppState>()(
           settings: deepMerge(state.settings, patch),
           settingsUpdatedAt: Date.now(),
         })),
-      replaceSettings: (settings) =>
+      replaceSettings: (settings, updatedAt) =>
         set({
           settings: deepMerge(DEFAULT_SETTINGS, settings),
-          settingsUpdatedAt: Date.now(),
+          settingsUpdatedAt: updatedAt ?? Date.now(),
         }),
       addSubscription: (item) => {
         const exists = get().subscriptions.some(
           (sub) => sub.channelId === item.channelId
         );
         if (exists) return;
-        set((state) => ({ subscriptions: [item, ...state.subscriptions] }));
+        set((state) => {
+          const tombstones = { ...state.subscriptionTombstones };
+          delete tombstones[item.channelId];
+          return {
+            subscriptions: withOrder([{ ...item, order: 0 }, ...state.subscriptions]),
+            subscriptionTombstones: tombstones,
+            subscriptionOrderUpdatedAt: Date.now(),
+          };
+        });
       },
       addSubscriptions: (items) => {
         const map = new Map(get().subscriptions.map((sub) => [sub.channelId, sub]));
         for (const item of items) {
           if (!map.has(item.channelId)) map.set(item.channelId, item);
         }
-        set({ subscriptions: Array.from(map.values()) });
+        set((state) => {
+          const tombstones = { ...state.subscriptionTombstones };
+          for (const item of items) delete tombstones[item.channelId];
+          return {
+            subscriptions: withOrder(Array.from(map.values())),
+            subscriptionTombstones: tombstones,
+            subscriptionOrderUpdatedAt: Date.now(),
+          };
+        });
       },
       updateSubscription: (channelId, patch) =>
         set((state) => ({
@@ -97,13 +140,45 @@ export const useAppStore = create<AppState>()(
             sub.channelId === channelId ? { ...sub, ...patch } : sub
           ),
         })),
-      removeSubscription: (channelId) =>
+      removeSubscription: (channelId) => {
         set((state) => ({
-          subscriptions: state.subscriptions.filter(
-            (sub) => sub.channelId !== channelId
+          subscriptions: withOrder(
+            state.subscriptions.filter((sub) => sub.channelId !== channelId)
           ),
-        })),
-      setSubscriptions: (items) => set({ subscriptions: items }),
+          subscriptionTombstones: {
+            ...state.subscriptionTombstones,
+            [channelId]: Date.now(),
+          },
+          subscriptionOrderUpdatedAt: Date.now(),
+        }));
+      },
+      removeSubscriptions: (channelIds) => {
+        const ids = new Set(channelIds);
+        set((state) => {
+          const tombstones = { ...state.subscriptionTombstones };
+          const now = Date.now();
+          for (const channelId of ids) tombstones[channelId] = now;
+          return {
+            subscriptions: withOrder(
+              state.subscriptions.filter((sub) => !ids.has(sub.channelId))
+            ),
+            subscriptionTombstones: tombstones,
+            subscriptionOrderUpdatedAt: now,
+          };
+        });
+      },
+      setSubscriptions: (items) => set({ subscriptions: withOrder(sortByOrder(items)) }),
+      reorderSubscriptions: (items) =>
+        set({
+          subscriptions: withOrder(items),
+          subscriptionOrderUpdatedAt: Date.now(),
+        }),
+      replaceSubscriptionSync: (items, tombstones, orderUpdatedAt) =>
+        set({
+          subscriptions: withOrder(sortByOrder(items)),
+          subscriptionTombstones: tombstones,
+          subscriptionOrderUpdatedAt: orderUpdatedAt,
+        }),
       toggleFavorite: (item) => {
         const exists = get().favorites.some((fav) => fav.videoId === item.videoId);
         if (exists) {
@@ -141,6 +216,8 @@ export const useAppStore = create<AppState>()(
           webdav: { ...state.settings.webdav, password: '' },
         },
         subscriptions: state.subscriptions,
+        subscriptionTombstones: state.subscriptionTombstones,
+        subscriptionOrderUpdatedAt: state.subscriptionOrderUpdatedAt,
         favorites: state.favorites,
         history: state.history,
         lastSyncAt: state.lastSyncAt,
@@ -151,7 +228,9 @@ export const useAppStore = create<AppState>()(
         return {
           ...current,
           settings: deepMerge(DEFAULT_SETTINGS, saved?.settings),
-          subscriptions: saved?.subscriptions ?? [],
+          subscriptions: withOrder(sortByOrder(saved?.subscriptions ?? [])),
+          subscriptionTombstones: saved?.subscriptionTombstones ?? {},
+          subscriptionOrderUpdatedAt: saved?.subscriptionOrderUpdatedAt ?? 0,
           favorites: saved?.favorites ?? [],
           history: saved?.history ?? [],
           lastSyncAt: saved?.lastSyncAt ?? 0,
