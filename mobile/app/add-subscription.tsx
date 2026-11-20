@@ -259,19 +259,29 @@ export default function SearchChannelsScreen() {
                   disabled={subscribed}
                   hitSlop={8}
                   style={{
-                    width: 38,
-                    height: 38,
-                    borderRadius: 19,
+                    height: 32,
+                    paddingHorizontal: 12,
+                    borderRadius: 16,
+                    flexDirection: 'row',
                     alignItems: 'center',
-                    justifyContent: 'center',
-                    backgroundColor: subscribed ? theme.colors.surfaceAlt : theme.colors.primarySoft,
+                    gap: 3,
+                    backgroundColor: subscribed ? theme.colors.surfaceAlt : theme.colors.primary,
                   }}
                 >
                   <Ionicons
                     name={subscribed ? 'checkmark' : 'add'}
-                    size={19}
-                    color={subscribed ? theme.colors.textTertiary : theme.colors.primary}
+                    size={15}
+                    color={subscribed ? theme.colors.textTertiary : '#FFFFFF'}
                   />
+                  <Text
+                    style={{
+                      color: subscribed ? theme.colors.textTertiary : '#FFFFFF',
+                      fontSize: 11.5,
+                      fontWeight: '800',
+                    }}
+                  >
+                    {subscribed ? '已关注' : '关注'}
+                  </Text>
                 </Pressable>
               </Pressable>
             );
