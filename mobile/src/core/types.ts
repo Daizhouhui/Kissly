@@ -15,6 +15,7 @@ export type SubtitlePosition = 'bottom' | 'top';
 export type ThemePreference = 'system' | 'light' | 'dark';
 
 export type ThemeAccent =
+  | 'sage'
   | 'violet'
   | 'blue'
   | 'teal'
@@ -23,6 +24,20 @@ export type ThemeAccent =
   | 'green';
 
 export type DiscoverLayout = 'list' | 'grid' | 'large';
+
+export type TitleTranslationMode = 'none' | 'bilingual' | 'translation';
+
+export type DefaultTab = 'video' | 'podcast' | 'learning' | 'me';
+
+export type SubtitleScrollMode = 'top' | 'page';
+
+export type SentenceMode = 'smart' | 'whole';
+
+export type SubtitleFont = 'default' | 'rounded' | 'serif' | 'geometric' | 'kai';
+
+export type SubtitleWeight = 'regular' | 'medium' | 'bold';
+
+export type OriginalTiming = 'always' | 'after';
 
 export type SubtitlePrefs = {
   /** Portrait transcript font size. */
@@ -34,6 +49,21 @@ export type SubtitlePrefs = {
   backgroundOpacity: number;
   showOnVideo: boolean;
   transcript: boolean;
+  scrollMode: SubtitleScrollMode;
+  sentenceMode: SentenceMode;
+  originalFont: SubtitleFont;
+  translationFont: SubtitleFont;
+  originalWeight: SubtitleWeight;
+  translationWeight: SubtitleWeight;
+  /** Blind-listening mode advances to the next sentence automatically. */
+  autoNext: boolean;
+  /** Listening mode hides the video and uses the whole screen for subtitles. */
+  hideVideo: boolean;
+  /** How many times a sentence is played in sentence-loop mode. */
+  repeatCount: number;
+  /** Pause between repeats, in seconds. */
+  repeatInterval: number;
+  originalTiming: OriginalTiming;
 };
 
 export type WebDavConfig = {
@@ -47,12 +77,21 @@ export type WebDavConfig = {
 export type Settings = {
   sourceLang: string;
   targetLang: string;
+  /** Language the learner is studying; also drives caption-track selection. */
+  learningLang: string;
+  /** Only Simplified Chinese ships today; kept for the Android-reference row. */
+  interfaceLang: string;
   provider: ProviderId;
   autoFallbackDeepSeek: boolean;
   translateTitles: boolean;
+  titleTranslationMode: TitleTranslationMode;
+  defaultTab: DefaultTab;
   discoverLayout: DiscoverLayout;
   theme: ThemePreference;
   themeAccent: ThemeAccent;
+  keepAwake: boolean;
+  speechRate: number;
+  speechPitch: number;
   /** Android-reference design migration marker. */
   designVersion: number;
   subtitle: SubtitlePrefs;
@@ -87,6 +126,7 @@ export type VideoItem = {
   published: number;
   thumbnail: string;
   duration?: number;
+  viewCount?: number;
   isShort?: boolean;
 };
 
@@ -109,6 +149,7 @@ export type VideoMeta = {
   videoId: string;
   title: string;
   author: string;
+  channelId?: string;
   lengthSeconds: number;
   thumbnail: string;
   captionTracks: CaptionTrack[];

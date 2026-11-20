@@ -152,3 +152,17 @@ export async function fetchChannelVideos(
 ): Promise<VideoItem[]> {
   return fetchChannelFeed(channelId, force);
 }
+
+export async function fetchPlaylistFeed(playlistId: string): Promise<VideoItem[]> {
+  const url = `https://www.youtube.com/feeds/videos.xml?playlist_id=${encodeURIComponent(
+    playlistId
+  )}`;
+  const response = await httpText(url, {
+    timeoutMs: 15000,
+    headers: { Accept: 'application/xml,text/xml,*/*' },
+  });
+  if (response.status !== 200) {
+    throw new Error(`播放列表 RSS 请求失败 (${response.status})`);
+  }
+  return hideShorts(parseChannelFeed(response.text, playlistId));
+}

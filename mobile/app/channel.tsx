@@ -5,25 +5,41 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../src/core/store';
 import { VideoItem } from '../src/core/types';
-import { fetchChannelVideosPage } from '../src/core/youtube/channelVideos';
-import { fetchChannelFeed } from '../src/core/youtube/rss';
+import { fetchChannelDescription } from '../src/core/youtube/channel';
+import {
+  ChannelPlaylist,
+  fetchChannelPlaylistsPage,
+  fetchChannelVideosPage,
+} from '../src/core/youtube/channelVideos';
+import { fetchChannelFeed, fetchPlaylistFeed } from '../src/core/youtube/rss';
 import { NavHeader } from '../src/ui/components';
 import { useAppTheme } from '../src/ui/theme';
 import { VideoCard } from '../src/ui/VideoCard';
 
 const PAGE = 10;
 
+function formatCount(value?: number) {
+  if (!value) return '';
+  if (value >= 100000000) return `${(value / 100000000).toFixed(1)}亿`;
+  if (value >= 10000) return `${(value / 10000).toFixed(1)}万`;
+  return String(value);
+}
+
 export default function ChannelScreen() {
   const theme = useAppTheme();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     channelId?: string;
     title?: string;
@@ -40,13 +56,24 @@ export default function ChannelScreen() {
   const videos = String(params.videos ?? '');
   const subscriptions = useAppStore((state) => state.subscriptions);
   const addSubscription = useAppStore((state) => state.addSubscription);
+  const removeSubscription = useAppStore((state) => state.removeSubscription);
   const subscribed = subscriptions.some((sub) => sub.channelId === channelId);
+
   const [items, setItems] = useState<VideoItem[]>([]);
   const [visible, setVisible] = useState(PAGE);
   const [continuation, setContinuation] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
+  const [description, setDescription] = useState('');
+  const [expandDescription, setExpandDescription] = useState(false);
+  const [tab, setTab] = useState<'latest' | 'popular' | 'playlists'>('latest');
+  const [playlists, setPlaylists] = useState<ChannelPlaylist[]>([]);
+  const [playlistLoading, setPlaylistLoading] = useState(false);
+  const [playlistError, setPlaylistError] = useState('');
+  const [selectedPlaylist, setSelectedPlaylist] = useState<ChannelPlaylist | null>(null);
+  const [playlistItems, setPlaylistItems] = useState<VideoItem[]>([]);
+  const [playlistVideosLoading, setPlaylistVideosLoading] = useState(false);
   const requestRef = useRef(0);
 
   useEffect(() => {
@@ -83,6 +110,9 @@ export default function ChannelScreen() {
       }
     };
     run();
+    fetchChannelDescription(channelId).then((text) => {
+      if (requestId === requestRef.current) setDescription(text);
+    });
     return () => {
       requestRef.current += 1;
     };
@@ -115,28 +145,82 @@ export default function ChannelScreen() {
     }
   };
 
+  const loadPlaylists = async () => {
+    if (!channelId || playlistLoading || playlists.length) return;
+    setPlaylistLoading(true);
+    setPlaylistError('');
+    try {
+      const page = await fetchChannelPlaylistsPage(channelId, { force: true });
+      setPlaylists(page.items);
+    } catch (reason) {
+      setPlaylistError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setPlaylistLoading(false);
+    }
+  };
+
+  const openPlaylist = async (playlist: ChannelPlaylist) => {
+    setSelectedPlaylist(playlist);
+    setPlaylistItems([]);
+    setPlaylistVideosLoading(true);
+    try {
+      const videos = await fetchPlaylistFeed(playlist.playlistId);
+      setPlaylistItems(videos);
+    } catch {
+      setPlaylistItems([]);
+    } finally {
+      setPlaylistVideosLoading(false);
+    }
+  };
+
+  const toggleSubscription = () => {
+    if (!channelId) return;
+    if (subscribed) {
+      removeSubscription(channelId);
+    } else {
+      addSubscription({
+        channelId,
+        title,
+        handle: handle || undefined,
+        avatar: avatar || undefined,
+        subscriberCount: subscribers || undefined,
+        videoCount: videos || undefined,
+        addedAt: Date.now(),
+      });
+    }
+  };
+
+  const latestItems = [...items].sort((a, b) => b.published - a.published);
+  const popularItems = [...items].sort(
+    (a, b) => (b.viewCount ?? 0) - (a.viewCount ?? 0) || b.published - a.published
+  );
+  const data = tab === 'latest' ? latestItems.slice(0, visible) : tab === 'popular' ? popularItems : [];
+  const averageDuration = items.length
+    ? Math.round(items.reduce((sum, item) => sum + (item.duration ?? 0), 0) / items.length / 60)
+    : 0;
+
   const header = (
     <View>
       <View style={{ alignItems: 'center', paddingTop: 4 }}>
         {avatar ? (
           <Image
             source={{ uri: avatar }}
-            style={{ width: 88, height: 88, borderRadius: 44 }}
+            style={{ width: 94, height: 94, borderRadius: 47 }}
             contentFit="cover"
             transition={180}
           />
         ) : (
           <View
             style={{
-              width: 88,
-              height: 88,
-              borderRadius: 44,
+              width: 94,
+              height: 94,
+              borderRadius: 47,
               backgroundColor: theme.colors.primarySoft,
               alignItems: 'center',
               justifyContent: 'center',
             }}
           >
-            <Text style={{ color: theme.colors.primary, fontSize: 31, fontWeight: '900' }}>
+            <Text style={{ color: theme.colors.primary, fontSize: 33, fontWeight: '900' }}>
               {title.slice(0, 1)}
             </Text>
           </View>
@@ -144,7 +228,7 @@ export default function ChannelScreen() {
         <Text
           style={{
             color: theme.colors.text,
-            fontSize: 23,
+            fontSize: 24,
             fontWeight: '900',
             marginTop: 13,
             textAlign: 'center',
@@ -153,99 +237,138 @@ export default function ChannelScreen() {
         >
           {title}
         </Text>
-        <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 6 }}>
-          {[subscribers, videos, handle].filter(Boolean).join('  ·  ') || 'YouTube 频道'}
+        <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 6, textAlign: 'center' }}>
+          {[handle, subscribers, videos].filter(Boolean).join('  ·  ') || 'YouTube 频道'}
         </Text>
-        <View style={{ flexDirection: 'row', gap: 10, marginTop: 15 }}>
+
+        {description ? (
+          <Pressable
+            onPress={() => setExpandDescription((value) => !value)}
+            style={{ marginTop: 10, paddingHorizontal: 8 }}
+          >
+            <Text
+              style={{ color: theme.colors.textSecondary, fontSize: 11.5, lineHeight: 17, textAlign: 'center' }}
+              numberOfLines={expandDescription ? undefined : 2}
+            >
+              {description}
+            </Text>
+            <Text style={{ color: theme.colors.primary, fontSize: 11, fontWeight: '700', marginTop: 3 }}>
+              {expandDescription ? '收起' : '更多'}
+            </Text>
+          </Pressable>
+        ) : null}
+
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 16 }}>
           <Pressable
             onPress={() => {
-              if (subscribed || !channelId) return;
-              addSubscription({
-                channelId,
-                title,
-                handle: handle || undefined,
-                avatar: avatar || undefined,
-                subscriberCount: subscribers || undefined,
-                videoCount: videos || undefined,
-                addedAt: Date.now(),
-              });
+              const first = latestItems[0];
+              if (!first) return;
+              router.push({
+                pathname: '/player',
+                params: { videoId: first.videoId, title: first.title, author: title },
+              } as any);
             }}
+            disabled={!latestItems[0]}
             style={{
-              height: 42,
-              paddingHorizontal: 22,
-              borderRadius: 21,
-              backgroundColor: subscribed ? theme.colors.surfaceAlt : theme.colors.primary,
+              height: 48,
+              minWidth: 176,
+              borderRadius: 24,
+              backgroundColor: theme.colors.primary,
               alignItems: 'center',
               justifyContent: 'center',
               flexDirection: 'row',
-              gap: 6,
+              gap: 8,
+              opacity: latestItems[0] ? 1 : 0.45,
+            }}
+          >
+            <Ionicons name="play" size={19} color="#FFFFFF" />
+            <Text style={{ color: '#FFFFFF', fontSize: 14, fontWeight: '800' }}>播放最新</Text>
+          </Pressable>
+          <Pressable
+            onPress={toggleSubscription}
+            style={{
+              width: 48,
+              height: 48,
+              borderRadius: 24,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: subscribed ? theme.colors.primarySoft : theme.colors.card,
+              borderWidth: subscribed ? 1 : StyleSheet.hairlineWidth,
+              borderColor: subscribed ? theme.colors.primary : theme.colors.border,
             }}
           >
             <Ionicons
               name={subscribed ? 'checkmark' : 'add'}
-              size={17}
-              color={subscribed ? theme.colors.textSecondary : '#FFFFFF'}
+              size={24}
+              color={subscribed ? theme.colors.primary : theme.colors.text}
             />
-            <Text
-              style={{
-                color: subscribed ? theme.colors.textSecondary : '#FFFFFF',
-                fontSize: 12.5,
-                fontWeight: '800',
-              }}
-            >
-              {subscribed ? '已订阅' : '订阅频道'}
-            </Text>
           </Pressable>
-          {items[0] ? (
-            <Pressable
-              onPress={() =>
-                router.push({
-                  pathname: '/player',
-                  params: {
-                    videoId: items[0].videoId,
-                    title: items[0].title,
-                    author: title,
-                  },
-                } as any)
-              }
-              style={{
-                height: 42,
-                paddingHorizontal: 18,
-                borderRadius: 21,
-                backgroundColor: theme.colors.card,
-                borderWidth: StyleSheet.hairlineWidth,
-                borderColor: theme.colors.border,
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexDirection: 'row',
-                gap: 6,
-              }}
-            >
-              <Ionicons name="play" size={15} color={theme.colors.text} />
-              <Text style={{ color: theme.colors.text, fontSize: 12.5, fontWeight: '700' }}>
-                播放最新
-              </Text>
-            </Pressable>
-          ) : null}
         </View>
+
+        {items.length ? (
+          <View style={styles.statsRow}>
+            <View style={styles.statItem}>
+              <Text style={[styles.statValue, { color: theme.colors.text }]}>{items.length}+</Text>
+              <Text style={[styles.statLabel, { color: theme.colors.textTertiary }]}>已读取视频</Text>
+            </View>
+            <View style={[styles.statDivider, { backgroundColor: theme.colors.border }]} />
+            <View style={styles.statItem}>
+              <Text style={[styles.statValue, { color: theme.colors.text }]}>
+                {averageDuration || '-'}
+              </Text>
+              <Text style={[styles.statLabel, { color: theme.colors.textTertiary }]}>平均分钟</Text>
+            </View>
+            <View style={[styles.statDivider, { backgroundColor: theme.colors.border }]} />
+            <View style={styles.statItem}>
+              <Text style={[styles.statValue, { color: theme.colors.text }]}>
+                {items[0] ? new Date(items[0].published).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) : '-'}
+              </Text>
+              <Text style={[styles.statLabel, { color: theme.colors.textTertiary }]}>最近更新</Text>
+            </View>
+          </View>
+        ) : null}
       </View>
 
-      <View
-        style={{
-          marginTop: 24,
-          marginBottom: 6,
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 8,
-        }}
-      >
-        <Text style={{ color: theme.colors.text, fontSize: 17, fontWeight: '800' }}>最新视频</Text>
-        {loading ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
-        {!loading && items.length ? (
-          <Text style={{ color: theme.colors.textTertiary, fontSize: 11 }}>
-            {Math.min(visible, items.length)} / {items.length}
-          </Text>
-        ) : null}
+      <View style={[styles.tabs, { borderBottomColor: theme.colors.border }]}>
+        {(
+          [
+            ['latest', '最新', items.length],
+            ['popular', '热门', items.length],
+            ['playlists', '播放列表', playlists.length],
+          ] as const
+        ).map(([id, label, count]) => {
+          const active = tab === id;
+          return (
+            <Pressable
+              key={id}
+              onPress={() => {
+                setTab(id);
+                if (id === 'playlists') loadPlaylists();
+              }}
+              style={styles.tab}
+            >
+              <Text
+                style={{
+                  color: active ? theme.colors.text : theme.colors.textTertiary,
+                  fontSize: 14.5,
+                  fontWeight: active ? '800' : '600',
+                }}
+              >
+                {label}
+                {count ? ` ${count}` : ''}
+              </Text>
+              <View
+                style={{
+                  height: 2.5,
+                  borderRadius: 2,
+                  marginTop: 6,
+                  backgroundColor: active ? theme.colors.text : 'transparent',
+                  alignSelf: 'stretch',
+                }}
+              />
+            </Pressable>
+          );
+        })}
       </View>
 
       {error ? (
@@ -258,9 +381,9 @@ export default function ChannelScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
-      <NavHeader title="频道详情" subtitle={handle || channelId} />
+      <NavHeader title="频道" subtitle={handle || channelId} />
       <FlatList
-        data={items.slice(0, visible)}
+        data={data}
         keyExtractor={(item) => item.videoId}
         contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 40 }}
         ListHeaderComponent={header}
@@ -275,17 +398,29 @@ export default function ChannelScreen() {
             }
           />
         )}
-        onEndReached={loadMore}
+        onEndReached={tab === 'latest' ? loadMore : undefined}
         onEndReachedThreshold={0.5}
         ListEmptyComponent={
-          !loading && !error ? (
+          tab === 'playlists' ? (
+            playlistLoading ? (
+              <ActivityIndicator color={theme.colors.primary} style={{ marginTop: 26 }} />
+            ) : playlistError ? (
+              <Text style={{ color: theme.colors.danger, fontSize: 12, marginTop: 16 }}>
+                {playlistError}
+              </Text>
+            ) : (
+              <Text style={{ color: theme.colors.textTertiary, fontSize: 12, marginTop: 16 }}>
+                这个频道暂时没有公开播放列表。
+              </Text>
+            )
+          ) : !loading && !error ? (
             <Text style={{ color: theme.colors.textTertiary, fontSize: 12, marginTop: 16 }}>
               这个频道暂时没有可读取的视频。
             </Text>
           ) : undefined
         }
         ListFooterComponent={
-          items.length ? (
+          tab === 'latest' && items.length ? (
             <View style={{ paddingVertical: 14, alignItems: 'center', gap: 6 }}>
               {loadingMore ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
               <Text style={{ color: theme.colors.textTertiary, fontSize: 11 }}>
@@ -298,6 +433,96 @@ export default function ChannelScreen() {
         }
         showsVerticalScrollIndicator={false}
       />
+
+      <Modal
+        visible={!!selectedPlaylist}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSelectedPlaylist(null)}
+      >
+        <View style={styles.modalMask}>
+          <View
+            style={[
+              styles.modalCard,
+              {
+                backgroundColor: theme.colors.bg,
+                paddingBottom: Math.max(16, insets.bottom),
+              },
+            ]}
+          >
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: theme.colors.text, fontSize: 19, fontWeight: '900' }} numberOfLines={2}>
+                  {selectedPlaylist?.title ?? '播放列表'}
+                </Text>
+                <Text style={{ color: theme.colors.textTertiary, fontSize: 11, marginTop: 4 }}>
+                  {selectedPlaylist?.videoCount ? `${selectedPlaylist.videoCount} 个视频` : '播放列表'}
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => setSelectedPlaylist(null)}
+                style={[styles.closeButton, { backgroundColor: theme.colors.surfaceAlt }]}
+              >
+                <Ionicons name="close" size={21} color={theme.colors.text} />
+              </Pressable>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {playlistVideosLoading ? (
+                <ActivityIndicator color={theme.colors.primary} style={{ marginTop: 26 }} />
+              ) : playlistItems.length ? (
+                playlistItems.map((item) => (
+                  <VideoCard
+                    key={item.videoId}
+                    item={{ ...item, channelAvatar: avatar || item.channelAvatar }}
+                    onPress={() => {
+                      setSelectedPlaylist(null);
+                      router.push({
+                        pathname: '/player',
+                        params: { videoId: item.videoId, title: item.title, author: title },
+                      } as any);
+                    }}
+                  />
+                ))
+              ) : (
+                <Text style={{ color: theme.colors.textTertiary, fontSize: 12, marginTop: 20 }}>
+                  这个播放列表没有可读取的视频。
+                </Text>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  statsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 18,
+    marginBottom: 4,
+    alignSelf: 'stretch',
+    paddingHorizontal: 12,
+  },
+  statItem: { flex: 1, alignItems: 'center' },
+  statValue: { fontSize: 16, fontWeight: '800' },
+  statLabel: { fontSize: 9.5, marginTop: 3 },
+  statDivider: { width: StyleSheet.hairlineWidth, height: 26 },
+  tabs: {
+    flexDirection: 'row',
+    marginTop: 22,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  tab: { flex: 1, alignItems: 'center', paddingTop: 8 },
+  modalMask: { flex: 1, backgroundColor: 'rgba(0,0,0,0.32)', justifyContent: 'flex-end' },
+  modalCard: {
+    height: '86%',
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 12 },
+  closeButton: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
+});

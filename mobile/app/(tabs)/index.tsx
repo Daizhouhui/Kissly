@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -15,19 +16,28 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../../src/core/store';
-import { DiscoverLayout } from '../../src/core/types';
+import { DiscoverLayout, VideoItem } from '../../src/core/types';
 import { relativeTime } from '../../src/core/utils';
 import { useFeed } from '../../src/hooks/useFeed';
 import { useAppTheme } from '../../src/ui/theme';
 import { VideoCard } from '../../src/ui/VideoCard';
 
-type Filter = 'all' | 'unwatched';
+type Filter = 'all' | 'watching' | 'ai';
+
+const FILTERS: Array<{ id: Filter; label: string }> = [
+  { id: 'all', label: '全部' },
+  { id: 'watching', label: '观看中' },
+  { id: 'ai', label: 'AI' },
+];
 
 const LAYOUTS: Array<{ id: DiscoverLayout; icon: any; label: string }> = [
   { id: 'list', icon: 'list-outline', label: '列表' },
   { id: 'grid', icon: 'grid-outline', label: '网格' },
   { id: 'large', icon: 'image-outline', label: '大图' },
 ];
+
+const AI_PATTERN =
+  /(^|\s|\b)(ai|a\.i\.|artificial intelligence|chatgpt|gpt|llm|machine learning|copilot|deepseek|openai|人工智能|大模型|机器学习)(\b|\s|$)/i;
 
 export default function HomeScreen() {
   const theme = useAppTheme();
@@ -39,112 +49,72 @@ export default function HomeScreen() {
   const patchSettings = useAppStore((state) => state.patchSettings);
   const [filter, setFilter] = useState<Filter>('all');
   const [channelFilter, setChannelFilter] = useState('');
+  const [layoutMenu, setLayoutMenu] = useState(false);
   const { items, loading, refreshing, loadingMore, hasMore, total, updatedAt, refresh, loadMore } =
     useFeed(channelFilter);
 
-  const watched = useMemo(
-    () =>
-      new Set(
-        history
-          .filter((item) => (item.progress ?? 1) >= 0.92)
-          .map((item) => item.videoId)
-      ),
+  const progressMap = useMemo(
+    () => new Map(history.map((item) => [item.videoId, item.progress ?? 0])),
     [history]
   );
 
+  const watching = useMemo(
+    () => history.filter((item) => (item.progress ?? 0) > 0.02 && (item.progress ?? 0) < 0.92),
+    [history]
+  );
+
+  const continueItem = watching[0];
+
   const visible = useMemo(() => {
     return items.filter((item) => {
-      if (filter === 'unwatched' && watched.has(item.videoId)) return false;
+      if (filter === 'watching') {
+        const p = progressMap.get(item.videoId) ?? 0;
+        return p > 0.02 && p < 0.92;
+      }
+      if (filter === 'ai') {
+        return AI_PATTERN.test(`${item.title} ${item.translatedTitle ?? ''} ${item.channelTitle}`);
+      }
       return true;
     });
-  }, [filter, items, watched]);
+  }, [filter, items, progressMap]);
 
   const openSearch = () => router.push('/add-subscription' as any);
-
-  const chips = (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ gap: 8, paddingRight: 18 }}
-      style={{ marginTop: 12, marginBottom: 4 }}
-    >
-      {(['all', 'unwatched'] as Filter[]).map((value) => {
-        const active = filter === value;
-        return (
-          <Pressable
-            key={value}
-            onPress={() => setFilter(value)}
-            style={{
-              paddingHorizontal: 16,
-              height: 34,
-              borderRadius: 17,
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: active ? theme.colors.primary : 'transparent',
-              borderWidth: active ? 0 : StyleSheet.hairlineWidth,
-              borderColor: theme.colors.borderStrong,
-            }}
-          >
-            <Text
-              style={{
-                color: active ? '#FFFFFF' : theme.colors.textSecondary,
-                fontSize: 12.5,
-                fontWeight: active ? '800' : '600',
-              }}
-            >
-              {value === 'all' ? '全部' : '未看完'}
-            </Text>
-          </Pressable>
-        );
-      })}
-      {LAYOUTS.map((option) => {
-        const active = layout === option.id;
-        return (
-          <Pressable
-            key={option.id}
-            onPress={() => patchSettings({ discoverLayout: option.id })}
-            style={{
-              width: 34,
-              height: 34,
-              borderRadius: 17,
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: active ? theme.colors.primarySoft : 'transparent',
-              borderWidth: active ? 0 : StyleSheet.hairlineWidth,
-              borderColor: theme.colors.borderStrong,
-            }}
-          >
-            <Ionicons
-              name={option.icon}
-              size={17}
-              color={active ? theme.colors.primary : theme.colors.textTertiary}
-            />
-          </Pressable>
-        );
-      })}
-    </ScrollView>
-  );
+  const activeLayout = LAYOUTS.find((item) => item.id === layout) ?? LAYOUTS[0];
 
   const header = (
     <View>
       <View style={styles.titleRow}>
         <View style={{ flex: 1 }}>
-          <Text style={{ color: theme.colors.text, fontSize: 25, fontWeight: '900', letterSpacing: -0.7 }}>
-            发现
-          </Text>
-          <Text style={{ color: theme.colors.textSecondary, fontSize: 11.5, marginTop: 3 }}>
-            订阅更新 · 点开就能看双语字幕
+          <Text style={{ color: theme.colors.text, fontSize: 34, fontWeight: '300', letterSpacing: -1.1 }}>
+            YouTube
           </Text>
         </View>
         <Pressable
-          onPress={() => router.push('/subscriptions' as any)}
+          onPress={() => router.push('/learning' as any)}
           hitSlop={8}
-          style={({ pressed }) => [styles.headerIcon, pressed && { opacity: 0.6 }]}
+          style={({ pressed }) => [styles.roundHeader, { opacity: pressed ? 0.65 : 1 }]}
         >
-          <Ionicons name="albums-outline" size={21} color={theme.colors.text} />
+          <View
+            style={{
+              position: 'absolute',
+              inset: 0,
+              borderRadius: 22,
+              borderWidth: 2,
+              borderColor: theme.colors.primary,
+              opacity: 0.8,
+            }}
+          />
+          <Ionicons name="flame" size={20} color={theme.colors.text} />
         </Pressable>
-        <Pressable onPress={openSearch} hitSlop={8} style={({ pressed }) => [styles.headerIcon, pressed && { opacity: 0.6 }]}>
-          <Ionicons name="add" size={24} color={theme.colors.text} />
+        <Pressable
+          onPress={() => setLayoutMenu(true)}
+          hitSlop={8}
+          style={({ pressed }) => [
+            styles.roundHeader,
+            { backgroundColor: theme.colors.surfaceAlt, opacity: pressed ? 0.65 : 1 },
+          ]}
+        >
+          <Ionicons name={activeLayout.icon} size={20} color={theme.colors.textSecondary} />
         </Pressable>
       </View>
 
@@ -154,112 +124,220 @@ export default function HomeScreen() {
           flexDirection: 'row',
           alignItems: 'center',
           gap: 9,
-          backgroundColor: theme.colors.card,
-          borderRadius: 24,
+          backgroundColor: theme.colors.surfaceAlt,
+          borderRadius: 25,
           paddingHorizontal: 16,
-          height: 46,
+          height: 50,
           marginTop: 16,
-          borderWidth: StyleSheet.hairlineWidth,
-          borderColor: theme.colors.border,
         }}
       >
-        <Ionicons name="search" size={19} color={theme.colors.textTertiary} />
-        <Text style={{ flex: 1, color: theme.colors.textTertiary, fontSize: 14 }}>
-          搜索 YouTube 频道
+        <Ionicons name="search" size={20} color={theme.colors.textTertiary} />
+        <Text style={{ flex: 1, color: theme.colors.textTertiary, fontSize: 14.5 }}>
+          搜索 YouTube
         </Text>
       </Pressable>
 
-      {subscriptions.length > 0 ? (
-        <View style={{ marginTop: 16 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 9 }}>
-            <Text style={{ color: theme.colors.text, fontSize: 14, fontWeight: '800' }}>我的频道</Text>
-            <Pressable onPress={() => router.push('/subscriptions' as any)} hitSlop={8}>
-              <Text style={{ color: theme.colors.primary, fontSize: 11.5, fontWeight: '700' }}>
-                全部频道
-              </Text>
-            </Pressable>
-          </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: 13, paddingRight: 4, paddingBottom: 4 }}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ gap: 14, paddingRight: 8, paddingTop: 18, paddingBottom: 8 }}
+      >
+        <Pressable onPress={() => setChannelFilter('')} style={{ alignItems: 'center', width: 58 }}>
+          <View
+            style={[
+              styles.channelAvatar,
+              {
+                backgroundColor: channelFilter ? theme.colors.surfaceAlt : theme.colors.primarySoft,
+                borderColor: channelFilter ? 'transparent' : theme.colors.borderStrong,
+              },
+            ]}
           >
-            <Pressable onPress={() => setChannelFilter('')} style={{ alignItems: 'center', width: 54 }}>
+            <Ionicons
+              name="apps-outline"
+              size={22}
+              color={channelFilter ? theme.colors.textTertiary : theme.colors.primary}
+            />
+          </View>
+          <Text
+            style={{
+              color: channelFilter ? theme.colors.textSecondary : theme.colors.primary,
+              fontSize: 10,
+              marginTop: 5,
+            }}
+            numberOfLines={1}
+          >
+            全部
+          </Text>
+        </Pressable>
+        {subscriptions.map((sub) => {
+          const active = channelFilter === sub.channelId;
+          return (
+            <Pressable
+              key={sub.channelId}
+              onPress={() => setChannelFilter(active ? '' : sub.channelId)}
+              style={{ alignItems: 'center', width: 58 }}
+            >
               <View
                 style={[
                   styles.channelAvatar,
                   {
-                    backgroundColor: channelFilter ? theme.colors.surfaceAlt : theme.colors.primarySoft,
-                    borderColor: channelFilter ? 'transparent' : theme.colors.primary,
+                    borderColor: active ? theme.colors.primary : 'transparent',
+                    backgroundColor: theme.colors.surfaceAlt,
                   },
                 ]}
               >
-                <Ionicons
-                  name="grid-outline"
-                  size={19}
-                  color={channelFilter ? theme.colors.textTertiary : theme.colors.primary}
-                />
+                {sub.avatar ? (
+                  <Image
+                    source={{ uri: sub.avatar }}
+                    style={{ width: 54, height: 54, borderRadius: 27 }}
+                    contentFit="cover"
+                    transition={140}
+                  />
+                ) : (
+                  <Text style={{ color: theme.colors.primary, fontSize: 17, fontWeight: '900' }}>
+                    {(sub.title || '?').slice(0, 1).toUpperCase()}
+                  </Text>
+                )}
               </View>
               <Text
                 style={{
-                  color: channelFilter ? theme.colors.textSecondary : theme.colors.primary,
-                  fontSize: 10,
+                  color: active ? theme.colors.primary : theme.colors.textSecondary,
+                  fontSize: 9.5,
                   marginTop: 5,
                 }}
                 numberOfLines={1}
               >
-                全部
+                {sub.title}
               </Text>
             </Pressable>
-            {subscriptions.map((sub) => {
-              const active = channelFilter === sub.channelId;
-              return (
-                <Pressable
-                  key={sub.channelId}
-                  onPress={() => setChannelFilter(active ? '' : sub.channelId)}
-                  style={{ alignItems: 'center', width: 54 }}
+          );
+        })}
+        {!subscriptions.length ? (
+          <Pressable
+            onPress={openSearch}
+            style={{
+              height: 58,
+              paddingHorizontal: 16,
+              borderRadius: 29,
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: theme.colors.borderStrong,
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexDirection: 'row',
+              gap: 7,
+            }}
+          >
+            <Ionicons name="add" size={17} color={theme.colors.primary} />
+            <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>添加频道</Text>
+          </Pressable>
+        ) : null}
+      </ScrollView>
+
+      {continueItem ? (
+        <Pressable
+          onPress={() =>
+            router.push({
+              pathname: '/player',
+              params: { videoId: continueItem.videoId, title: continueItem.title, author: continueItem.author },
+            } as any)
+          }
+          style={({ pressed }) => [
+            styles.continueCard,
+            {
+              backgroundColor: theme.colors.card,
+              borderColor: theme.colors.border,
+              opacity: pressed ? 0.88 : 1,
+            },
+          ]}
+        >
+          <Image
+            source={{ uri: continueItem.thumbnail || `https://i.ytimg.com/vi/${continueItem.videoId}/hqdefault.jpg` }}
+            style={styles.continueThumb}
+            contentFit="cover"
+            transition={140}
+          />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={{ color: theme.colors.text, fontSize: 13.5, fontWeight: '800', lineHeight: 18 }} numberOfLines={2}>
+              {continueItem.title}
+            </Text>
+            <View
+              style={{
+                alignSelf: 'flex-start',
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+                backgroundColor: theme.colors.surfaceAlt,
+                borderRadius: 999,
+                height: 27,
+                paddingHorizontal: 9,
+                marginTop: 8,
+              }}
+            >
+              <Ionicons name="play" size={11} color={theme.colors.textSecondary} />
+              <View style={{ width: 48, height: 3, borderRadius: 2, backgroundColor: theme.colors.borderStrong }}>
+                <View
+                  style={{
+                    width: `${Math.max(6, Math.round((continueItem.progress ?? 0) * 100))}%` as any,
+                    height: 3,
+                    borderRadius: 2,
+                    backgroundColor: theme.colors.primary,
+                  }}
+                />
+              </View>
+              <Text style={{ color: theme.colors.textSecondary, fontSize: 9.5 }}>
+                剩 {Math.max(1, Math.round(((1 - (continueItem.progress ?? 0)) * (continueItem.duration ?? 0)) / 60))} 分钟
+              </Text>
+            </View>
+          </View>
+        </Pressable>
+      ) : null}
+
+      <View style={styles.filterRow}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+          {FILTERS.map((item) => {
+            const active = filter === item.id;
+            return (
+              <Pressable
+                key={item.id}
+                onPress={() => setFilter(item.id)}
+                style={{
+                  paddingHorizontal: 18,
+                  height: 36,
+                  borderRadius: 18,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: active ? theme.colors.primary : 'transparent',
+                  borderWidth: active ? 0 : StyleSheet.hairlineWidth,
+                  borderColor: theme.colors.borderStrong,
+                }}
+              >
+                <Text
+                  style={{
+                    color: active ? '#FFFFFF' : theme.colors.textSecondary,
+                    fontSize: 12.5,
+                    fontWeight: active ? '800' : '600',
+                  }}
                 >
-                  <View
-                    style={[
-                      styles.channelAvatar,
-                      {
-                        borderColor: active ? theme.colors.primary : 'transparent',
-                        backgroundColor: theme.colors.surfaceAlt,
-                      },
-                    ]}
-                  >
-                    {sub.avatar ? (
-                      <Image
-                        source={{ uri: sub.avatar }}
-                        style={{ width: 50, height: 50, borderRadius: 25 }}
-                        contentFit="cover"
-                        transition={160}
-                      />
-                    ) : (
-                      <Text style={{ color: theme.colors.primary, fontSize: 17, fontWeight: '900' }}>
-                        {(sub.title || '?').slice(0, 1).toUpperCase()}
-                      </Text>
-                    )}
-                  </View>
-                  <Text
-                    style={{
-                      color: active ? theme.colors.primary : theme.colors.textSecondary,
-                      fontSize: 10,
-                      marginTop: 5,
-                    }}
-                    numberOfLines={1}
-                  >
-                    {sub.title}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-          {chips}
-        </View>
-      ) : (
-        <View>{chips}</View>
-      )}
+                  {item.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+        <Pressable
+          onPress={() => setLayoutMenu(true)}
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            backgroundColor: theme.colors.surfaceAlt,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Ionicons name={activeLayout.icon} size={18} color={theme.colors.textSecondary} />
+        </Pressable>
+      </View>
     </View>
   );
 
@@ -278,10 +356,10 @@ export default function HomeScreen() {
           flexGrow: 1,
         }}
         ListHeaderComponent={header}
-        renderItem={({ item }) => (
+        renderItem={({ item }: { item: VideoItem }) => (
           <View style={{ flex: layout === 'grid' ? 1 : undefined, marginBottom: 2 }}>
             <VideoCard
-              item={item}
+              item={{ ...item, channelAvatar: item.channelAvatar }}
               variant={layout === 'grid' ? 'grid' : layout === 'large' ? 'large' : 'list'}
               onPress={() =>
                 router.push({
@@ -359,7 +437,11 @@ export default function HomeScreen() {
             <View style={{ alignItems: 'center', paddingTop: 46 }}>
               <Ionicons name="search-outline" size={32} color={theme.colors.textTertiary} />
               <Text style={{ color: theme.colors.textSecondary, fontSize: 13, marginTop: 12 }}>
-                {filter === 'unwatched' ? '上滑继续加载，找没看完的视频' : '没有找到匹配的视频'}
+                {filter === 'watching'
+                  ? '已加载的视频里还没有看到一半的内容'
+                  : filter === 'ai'
+                    ? '已加载的视频里暂时没有 AI 相关选题'
+                    : '没有找到匹配的视频'}
               </Text>
             </View>
           )
@@ -382,6 +464,52 @@ export default function HomeScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       />
+
+      <Modal visible={layoutMenu} transparent animationType="fade" onRequestClose={() => setLayoutMenu(false)}>
+        <View style={styles.modalMask}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setLayoutMenu(false)} />
+          <View style={[styles.layoutSheet, { backgroundColor: theme.colors.card }]}>
+            <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '800', marginBottom: 12 }}>
+              视频布局
+            </Text>
+            {LAYOUTS.map((option) => {
+              const active = layout === option.id;
+              return (
+                <Pressable
+                  key={option.id}
+                  onPress={() => {
+                    patchSettings({ discoverLayout: option.id });
+                    setLayoutMenu(false);
+                  }}
+                  style={{
+                    height: 48,
+                    borderRadius: 12,
+                    paddingHorizontal: 12,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 10,
+                    backgroundColor: active ? theme.colors.primarySoft : theme.colors.surfaceAlt,
+                    marginBottom: 8,
+                  }}
+                >
+                  <Ionicons name={option.icon} size={19} color={active ? theme.colors.primary : theme.colors.textSecondary} />
+                  <Text
+                    style={{
+                      flex: 1,
+                      color: active ? theme.colors.primary : theme.colors.text,
+                      fontSize: 13.5,
+                      fontWeight: active ? '800' : '600',
+                    }}
+                  >
+                    {option.label}
+                  </Text>
+                  {active ? <Ionicons name="checkmark" size={18} color={theme.colors.primary} /> : null}
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -391,22 +519,54 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingTop: 2,
-    gap: 2,
+    gap: 9,
   },
-  headerIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  roundHeader: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
   },
   channelAvatar: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    borderWidth: 2,
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    borderWidth: 2.5,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
+  },
+  continueCard: {
+    flexDirection: 'row',
+    gap: 12,
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 10,
+    marginTop: 10,
+  },
+  continueThumb: {
+    width: 112,
+    aspectRatio: 16 / 9,
+    borderRadius: 12,
+    backgroundColor: '#1B1B19',
+  },
+  filterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 18,
+    marginBottom: 8,
+  },
+  modalMask: {
+    flex: 1,
+    backgroundColor: 'rgba(16,18,14,0.45)',
+    justifyContent: 'flex-end',
+    padding: 16,
+    paddingBottom: 90,
+  },
+  layoutSheet: {
+    borderRadius: 20,
+    padding: 16,
   },
 });
