@@ -1796,7 +1796,6 @@ export default function PlayerScreen() {
           </View>
 
           <View style={styles.landCenter}>
-            <View style={styles.landSideSlot} pointerEvents="none" />
             <Pressable onPress={() => jumpCue(-1)} style={styles.landTransportButton}>
               <Ionicons name="play-back" size={28} color="#FFFFFF" />
             </Pressable>
@@ -1805,17 +1804,6 @@ export default function PlayerScreen() {
             </Pressable>
             <Pressable onPress={() => jumpCue(1)} style={styles.landTransportButton}>
               <Ionicons name="play-forward" size={28} color="#FFFFFF" />
-            </Pressable>
-            <Pressable
-              onPress={() => setLoopSentence((value) => !value)}
-              accessibilityLabel={loopSentence ? '关闭单句循环' : '开启单句循环'}
-              style={[styles.landRatePill, loopSentence && styles.landLoopActive]}
-            >
-              <Ionicons
-                name={loopSentence ? 'repeat' : 'repeat-outline'}
-                size={21}
-                color={loopSentence ? '#FFFFFF' : 'rgba(255,255,255,0.66)'}
-              />
             </Pressable>
           </View>
         </>
@@ -3944,7 +3932,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  landSideSlot: { width: 46, height: 30 },
   landCc: { color: '#FFFFFF', fontSize: 14, fontWeight: '900', letterSpacing: 0.5 },
   landCenter: {
     position: 'absolute',
@@ -3983,7 +3970,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   landRateText: { color: '#FFFFFF', fontSize: 11.5, fontWeight: '800' },
-  landLoopActive: { backgroundColor: 'rgba(68,107,91,0.86)' },
   landSubWrap: {
     position: 'absolute',
     left: 0,
