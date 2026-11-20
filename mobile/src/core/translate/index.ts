@@ -102,10 +102,9 @@ export async function translateTexts(
 
   const chain: ProviderId[] =
     requested === 'auto'
-      ? // Auto deliberately stays on the three free, predictable providers.
-        // Google2 is a shared public preset and must only run when the user
-        // explicitly selects it; otherwise it kept "winning" the fallback chain.
-        ['microsoft', 'google', 'system']
+      ? // Auto stays on free providers in a predictable order. Google2 is the
+        // last-resort built-in preset; DeepSeek is appended separately when enabled.
+        ['microsoft', 'google', 'google2']
       : [requested];
 
   if (
@@ -245,7 +244,7 @@ export function providerDisplayName(provider: ProviderId): string {
     case 'google':
       return '谷歌翻译';
     case 'google2':
-      return 'Google2 备用';
+      return 'Google 备用';
     case 'deepseek':
       return 'DeepSeek';
     case 'siliconflow':

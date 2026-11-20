@@ -4,7 +4,7 @@ import { Image } from 'expo-image';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -23,6 +23,24 @@ import { EmptyState, PrimaryButton } from '../src/ui/components';
 import { useAppTheme } from '../src/ui/theme';
 
 const ROW_HEIGHT = 74;
+const DragIndexContext = createContext<number | null>(null);
+
+function DragCell({ children, index, style, ...props }: any) {
+  const dragIndex = useContext(DragIndexContext);
+  return (
+    <View
+      {...props}
+      style={[
+        style,
+        dragIndex === index
+          ? { position: 'relative', zIndex: 100, elevation: 24 }
+          : null,
+      ]}
+    >
+      {children}
+    </View>
+  );
+}
 
 function csvEscape(value: string) {
   return `"${value.replace(/"/g, '""')}"`;
@@ -57,6 +75,8 @@ function SortableRow({
   onToggle,
   onMove,
   onOpen,
+  onDragStart,
+  onDragEnd,
 }: {
   item: Subscription;
   index: number;
@@ -66,12 +86,18 @@ function SortableRow({
   onToggle: () => void;
   onMove: (from: number, to: number) => void;
   onOpen: () => void;
+  onDragStart: () => void;
+  onDragEnd: () => void;
 }) {
   const theme = useAppTheme();
   const [dragY, setDragY] = useState(0);
   const [dragging, setDragging] = useState(false);
   const onMoveRef = useRef(onMove);
   onMoveRef.current = onMove;
+  const onDragStartRef = useRef(onDragStart);
+  onDragStartRef.current = onDragStart;
+  const onDragEndRef = useRef(onDragEnd);
+  onDragEndRef.current = onDragEnd;
   const indexRef = useRef(index);
   indexRef.current = index;
 
@@ -81,7 +107,10 @@ function SortableRow({
         onStartShouldSetPanResponder: () => manageMode,
         onMoveShouldSetPanResponder: (_, gesture) =>
           manageMode && Math.abs(gesture.dy) > 4,
-        onPanResponderGrant: () => setDragging(true),
+        onPanResponderGrant: () => {
+          setDragging(true);
+          onDragStartRef.current();
+        },
         onPanResponderMove: (_, gesture) => setDragY(gesture.dy),
         onPanResponderRelease: (_, gesture) => {
           const target = Math.max(
@@ -91,10 +120,12 @@ function SortableRow({
           if (target !== indexRef.current) onMoveRef.current(indexRef.current, target);
           setDragY(0);
           setDragging(false);
+          onDragEndRef.current();
         },
         onPanResponderTerminate: () => {
           setDragY(0);
           setDragging(false);
+          onDragEndRef.current();
         },
       }),
     [count, manageMode]
@@ -109,7 +140,9 @@ function SortableRow({
     <View
       style={{
         height: ROW_HEIGHT,
-        zIndex: dragging ? 20 : 1,
+        zIndex: dragging ? 100 : 0,
+        elevation: dragging ? 20 : 0,
+        position: 'relative',
         transform: [{ translateY: dragY }],
       }}
     >
@@ -122,13 +155,17 @@ function SortableRow({
           gap: 12,
           backgroundColor: dragging ? theme.colors.bgElevated : theme.colors.card,
           paddingHorizontal: 14,
+          borderTopLeftRadius: index === 0 ? 16 : 0,
+          borderTopRightRadius: index === 0 ? 16 : 0,
+          borderBottomLeftRadius: index === count - 1 ? 16 : 0,
+          borderBottomRightRadius: index === count - 1 ? 16 : 0,
           borderBottomWidth: index === count - 1 ? 0 : StyleSheet.hairlineWidth,
           borderBottomColor: theme.colors.border,
           shadowColor: '#000',
-          shadowOpacity: dragging ? 0.2 : 0,
-          shadowRadius: 12,
-          shadowOffset: { width: 0, height: 6 },
-          elevation: dragging ? 6 : 0,
+          shadowOpacity: dragging ? 0.28 : 0,
+          shadowRadius: 16,
+          shadowOffset: { width: 0, height: 8 },
+          elevation: dragging ? 24 : 0,
         }}
       >
         {manageMode ? (
@@ -209,9 +246,13 @@ export default function SubscriptionsScreen() {
   const [busy, setBusy] = useState(false);
   const [manageMode, setManageMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!manageMode) setSelected(new Set());
+    if (!manageMode) {
+      setSelected(new Set());
+      setDragIndex(null);
+    }
   }, [manageMode]);
 
   const importCsv = async () => {
@@ -386,70 +427,43 @@ export default function SubscriptionsScreen() {
         ) : null}
       </View>
 
-      <FlatList
-        data={subscriptions}
-        keyExtractor={(item) => item.channelId}
+      <DragIndexContext.Provider value={dragIndex}>
+        <FlatList
+          data={subscriptions}
+          keyExtractor={(item) => item.channelId}
+          scrollEnabled={dragIndex === null}
+          extraData={dragIndex}
+          CellRendererComponent={DragCell}
         contentContainerStyle={{
           paddingHorizontal: 16,
           paddingBottom: manageMode ? 110 : 36,
           flexGrow: 1,
         }}
-        ListHeaderComponent={
-          subscriptions.length ? (
-            <View
-              style={{
-                borderRadius: 16,
-                overflow: 'hidden',
-                borderWidth: StyleSheet.hairlineWidth,
-                borderColor: theme.colors.border,
-                backgroundColor: theme.colors.card,
-              }}
-            />
-          ) : undefined
-        }
         renderItem={({ item, index }) => (
-          <View
-            style={
-              index === 0
-                ? {
-                    backgroundColor: theme.colors.card,
-                    borderTopLeftRadius: 16,
-                    borderTopRightRadius: 16,
-                    overflow: 'hidden',
-                  }
-                : index === subscriptions.length - 1
-                  ? {
-                      backgroundColor: theme.colors.card,
-                      borderBottomLeftRadius: 16,
-                      borderBottomRightRadius: 16,
-                      overflow: 'hidden',
-                    }
-                  : { backgroundColor: theme.colors.card }
+          <SortableRow
+            item={item}
+            index={index}
+            count={subscriptions.length}
+            manageMode={manageMode}
+            selected={selected.has(item.channelId)}
+            onToggle={() => toggleSelected(item.channelId)}
+            onMove={move}
+            onDragStart={() => setDragIndex(index)}
+            onDragEnd={() => setDragIndex(null)}
+            onOpen={() =>
+              router.push({
+                pathname: '/channel',
+                params: {
+                  channelId: item.channelId,
+                  title: item.title,
+                  avatar: item.avatar ?? '',
+                  handle: item.handle ?? '',
+                  subscribers: item.subscriberCount ?? '',
+                  videos: item.videoCount ?? '',
+                },
+              } as any)
             }
-          >
-            <SortableRow
-              item={item}
-              index={index}
-              count={subscriptions.length}
-              manageMode={manageMode}
-              selected={selected.has(item.channelId)}
-              onToggle={() => toggleSelected(item.channelId)}
-              onMove={move}
-              onOpen={() =>
-                router.push({
-                  pathname: '/channel',
-                  params: {
-                    channelId: item.channelId,
-                    title: item.title,
-                    avatar: item.avatar ?? '',
-                    handle: item.handle ?? '',
-                    subscribers: item.subscriberCount ?? '',
-                    videos: item.videoCount ?? '',
-                  },
-                } as any)
-              }
-            />
-          </View>
+          />
         )}
         ListEmptyComponent={
           <EmptyState
@@ -483,7 +497,9 @@ export default function SubscriptionsScreen() {
           ) : undefined
         }
         showsVerticalScrollIndicator={false}
-      />
+        removeClippedSubviews={false}
+        />
+      </DragIndexContext.Provider>
 
       {manageMode && selected.size ? (
         <View

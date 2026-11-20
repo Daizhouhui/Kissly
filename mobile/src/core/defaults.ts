@@ -36,9 +36,12 @@ export const DEFAULT_SETTINGS: Settings = {
     translationWeight: 'regular',
     autoNext: true,
     hideVideo: false,
+    hideTitle: true,
     repeatCount: 2,
     repeatInterval: 1,
     originalTiming: 'always',
+    listeningOriginalMode: 'after',
+    listeningTranslationMode: 'together',
   },
   webdav: {
     url: KOOFIR_WEBDAV_URL,
@@ -82,20 +85,20 @@ export const PROVIDER_LABELS: Record<string, string> = {
   system: '系统内置（离线语言包）',
   microsoft: '微软翻译（免费）',
   google: '谷歌翻译（免费）',
-  google2: 'Google2 备用（公共预设）',
+  google2: 'Google 备用（公共预设）',
   deepseek: 'DeepSeek',
   siliconflow: 'SiliconFlow',
   openai: 'OpenAI 兼容',
 };
 
 export const PROVIDER_HINTS: Record<string, string> = {
-  auto: '先走系统内置离线翻译，失败后切谷歌/微软免费接口；不会再自动落到 Google2。',
+  auto: '依次尝试微软、谷歌和 Google 备用免费接口；全部失败后，再按设置决定是否切到 DeepSeek。',
   system:
-    '调用手机系统自带的离线翻译。首次使用需下载语言包（每种约 30 MB），下载后不联网也能翻译。',
+    '调用手机系统自带的离线翻译。Android 需要 Google Play 服务，首次使用需下载语言包（每种约 30 MB），下载后不联网也能翻译。',
   microsoft: 'Edge 的内部免费接口，无需 Key，适合批量字幕，偶发限流。',
   google: '谷歌免费网页接口，无需 Key，国内需要代理。',
   google2:
-    'Kiss Translator 内置的公共 Google2 预设，仅手动选择时使用；共享 key 可能限流或失效。',
+    'Kiss Translator 内置的公共 Google 备用预设，自动链的最后备用，也可手动选择；共享 key 可能限流或失效。',
   deepseek: '按 token 计费，质量最好，需要 API Key。',
   siliconflow: '需要 API Key，可选免费模型，适合国内网络。',
   openai: '任意 OpenAI 兼容服务，自填 Base URL、模型和 Key。',

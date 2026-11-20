@@ -2,7 +2,7 @@ import { googleTarget } from '../defaults';
 import { httpText } from '../http';
 import { mapLimit } from '../utils';
 
-// Google2 is the translate-pa endpoint used by the upstream Kiss Translator
+// Google backup uses the translate-pa endpoint from the upstream Kiss Translator
 // preset. The key is a bundled public preset, not a personal Google account
 // credential. It can be rate-limited or revoked, so it is only a fallback.
 const GOOGLE2_URL = 'https://translate-pa.googleapis.com/v1/translateHtml';
@@ -49,17 +49,17 @@ async function translateBatch(
     },
   });
   if (response.status < 200 || response.status >= 300) {
-    throw new Error(`Google2 ${response.status}`);
+    throw new Error(`Google 备用 ${response.status}`);
   }
   let data: any;
   try {
     data = JSON.parse(response.text);
   } catch {
-    throw new Error('Google2 返回格式异常');
+    throw new Error('Google 备用返回格式异常');
   }
   const translated = Array.isArray(data?.[0]) ? data[0] : [];
   if (translated.length < texts.length) {
-    throw new Error('Google2 返回条数不完整');
+    throw new Error('Google 备用返回条数不完整');
   }
   return texts.map((_, index) => decodeText(String(translated[index] ?? '')));
 }

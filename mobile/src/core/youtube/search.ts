@@ -27,7 +27,9 @@ function textOf(value: any): string {
 function avatarOf(value: any): string {
   const thumbnails = value?.thumbnail?.thumbnails;
   if (!Array.isArray(thumbnails) || !thumbnails.length) return '';
-  return String(thumbnails[thumbnails.length - 1]?.url ?? '');
+  const url = String(thumbnails[thumbnails.length - 1]?.url ?? '');
+  if (!url) return '';
+  return url.startsWith('//') ? `https:${url}` : url;
 }
 
 function handleOf(node: any): string {

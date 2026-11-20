@@ -1,3 +1,19 @@
+import { Platform } from 'react-native';
+
+const DEV_PROXY_URL = process.env.EXPO_PUBLIC_DEV_PROXY_URL ?? '';
+
+function resolveFetchUrl(url: string): string {
+  if (
+    Platform.OS === 'web' &&
+    DEV_PROXY_URL &&
+    /^https?:/.test(url) &&
+    !url.startsWith(DEV_PROXY_URL)
+  ) {
+    return `${DEV_PROXY_URL}?url=${encodeURIComponent(url)}`;
+  }
+  return url;
+}
+
 const DESKTOP_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
@@ -23,7 +39,7 @@ export async function httpText(
     options.timeoutMs ?? 20000
   );
   try {
-    const response = await fetch(url, {
+    const response = await fetch(resolveFetchUrl(url), {
       method: options.method ?? 'GET',
       headers: { ...BROWSER_HEADERS, ...(options.headers ?? {}) },
       body:

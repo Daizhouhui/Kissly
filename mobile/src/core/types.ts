@@ -39,6 +39,10 @@ export type SubtitleWeight = 'regular' | 'medium' | 'bold';
 
 export type OriginalTiming = 'always' | 'after';
 
+export type ListeningOriginalMode = 'after' | 'always' | 'tap';
+
+export type ListeningTranslationMode = 'always' | 'together' | 'tap';
+
 export type SubtitlePrefs = {
   /** Portrait transcript font size. */
   fontSize: number;
@@ -59,11 +63,17 @@ export type SubtitlePrefs = {
   autoNext: boolean;
   /** Listening mode hides the video and uses the whole screen for subtitles. */
   hideVideo: boolean;
+  /** Player header hides the video title and channel name. */
+  hideTitle: boolean;
   /** How many times a sentence is played in sentence-loop mode. */
   repeatCount: number;
   /** Pause between repeats, in seconds. */
   repeatInterval: number;
   originalTiming: OriginalTiming;
+  /** When the original text appears during precision listening. */
+  listeningOriginalMode: ListeningOriginalMode;
+  /** When the translation appears during precision listening. */
+  listeningTranslationMode: ListeningTranslationMode;
 };
 
 export type WebDavConfig = {
@@ -173,6 +183,20 @@ export type FavoriteItem = {
   savedAt: number;
   progress?: number;
   duration?: number;
+};
+
+export type SentenceFavorite = {
+  /** Stable per video + cue start time. */
+  id: string;
+  videoId: string;
+  videoTitle: string;
+  videoAuthor: string;
+  thumbnail?: string;
+  start: number;
+  end: number;
+  text: string;
+  translation?: string;
+  savedAt: number;
 };
 
 export type ProviderResult = {

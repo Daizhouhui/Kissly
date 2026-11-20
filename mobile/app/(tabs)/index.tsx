@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { Link, useRouter } from 'expo-router';
+import { useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Dimensions,
   FlatList,
   Modal,
   Pressable,
@@ -22,22 +23,57 @@ import { useFeed } from '../../src/hooks/useFeed';
 import { useAppTheme } from '../../src/ui/theme';
 import { VideoCard } from '../../src/ui/VideoCard';
 
-type Filter = 'all' | 'watching' | 'ai';
+type Filter = 'all' | 'watching';
 
 const FILTERS: Array<{ id: Filter; label: string }> = [
   { id: 'all', label: '全部' },
   { id: 'watching', label: '观看中' },
-  { id: 'ai', label: 'AI' },
 ];
 
-const LAYOUTS: Array<{ id: DiscoverLayout; icon: any; label: string }> = [
-  { id: 'list', icon: 'list-outline', label: '列表' },
-  { id: 'grid', icon: 'grid-outline', label: '网格' },
-  { id: 'large', icon: 'image-outline', label: '大图' },
+const LAYOUTS: Array<{ id: DiscoverLayout; label: string }> = [
+  { id: 'list', label: '列表' },
+  { id: 'grid', label: '网格' },
+  { id: 'large', label: '大图' },
 ];
 
-const AI_PATTERN =
-  /(^|\s|\b)(ai|a\.i\.|artificial intelligence|chatgpt|gpt|llm|machine learning|copilot|deepseek|openai|人工智能|大模型|机器学习)(\b|\s|$)/i;
+function LayoutGlyph({
+  id,
+  size = 20,
+  color,
+}: {
+  id: DiscoverLayout;
+  size?: number;
+  color: string;
+}) {
+  if (id === 'grid') {
+    return <Ionicons name="grid-outline" size={size} color={color} />;
+  }
+  if (id === 'list') {
+    return <Ionicons name="list-outline" size={size + 2} color={color} />;
+  }
+  const barHeight = Math.max(4, Math.round(size * 0.32));
+  return (
+    <View
+      style={{
+        width: size,
+        height: size,
+        justifyContent: 'center',
+        gap: Math.max(3, Math.round(size * 0.18)),
+      }}
+    >
+      {[0, 1].map((bar) => (
+        <View
+          key={bar}
+          style={{
+            height: barHeight,
+            borderRadius: barHeight / 2,
+            backgroundColor: color,
+          }}
+        />
+      ))}
+    </View>
+  );
+}
 
 export default function HomeScreen() {
   const theme = useAppTheme();
@@ -50,6 +86,8 @@ export default function HomeScreen() {
   const [filter, setFilter] = useState<Filter>('all');
   const [channelFilter, setChannelFilter] = useState('');
   const [layoutMenu, setLayoutMenu] = useState(false);
+  const [layoutAnchor, setLayoutAnchor] = useState({ top: 0, right: 16 });
+  const layoutButtonRef = useRef<any>(null);
   const { items, loading, refreshing, loadingMore, hasMore, total, updatedAt, refresh, loadMore } =
     useFeed(channelFilter);
 
@@ -71,15 +109,27 @@ export default function HomeScreen() {
         const p = progressMap.get(item.videoId) ?? 0;
         return p > 0.02 && p < 0.92;
       }
-      if (filter === 'ai') {
-        return AI_PATTERN.test(`${item.title} ${item.translatedTitle ?? ''} ${item.channelTitle}`);
-      }
       return true;
     });
   }, [filter, items, progressMap]);
 
   const openSearch = () => router.push('/add-subscription' as any);
-  const activeLayout = LAYOUTS.find((item) => item.id === layout) ?? LAYOUTS[0];
+
+  const openLayoutMenu = () => {
+    const button = layoutButtonRef.current;
+    if (!button) {
+      setLayoutMenu(true);
+      return;
+    }
+    button.measureInWindow((x: number, y: number, width: number, height: number) => {
+      const screenWidth = Dimensions.get('window').width;
+      setLayoutAnchor({
+        top: y + height + 8,
+        right: Math.max(12, screenWidth - x - width),
+      });
+      setLayoutMenu(true);
+    });
+  };
 
   const header = (
     <View>
@@ -90,31 +140,18 @@ export default function HomeScreen() {
           </Text>
         </View>
         <Pressable
-          onPress={() => router.push('/learning' as any)}
-          hitSlop={8}
-          style={({ pressed }) => [styles.roundHeader, { opacity: pressed ? 0.65 : 1 }]}
-        >
-          <View
-            style={{
-              position: 'absolute',
-              inset: 0,
-              borderRadius: 22,
-              borderWidth: 2,
-              borderColor: theme.colors.primary,
-              opacity: 0.8,
-            }}
-          />
-          <Ionicons name="flame" size={20} color={theme.colors.text} />
-        </Pressable>
-        <Pressable
-          onPress={() => setLayoutMenu(true)}
+          onPress={() => router.push('/subscriptions' as any)}
           hitSlop={8}
           style={({ pressed }) => [
-            styles.roundHeader,
-            { backgroundColor: theme.colors.surfaceAlt, opacity: pressed ? 0.65 : 1 },
+            styles.allChannelsButton,
+            {
+              backgroundColor: theme.colors.surfaceAlt,
+              borderColor: theme.colors.border,
+              opacity: pressed ? 0.65 : 1,
+            },
           ]}
         >
-          <Ionicons name={activeLayout.icon} size={20} color={theme.colors.textSecondary} />
+          <Ionicons name="albums-outline" size={24} color={theme.colors.textSecondary} />
         </Pressable>
       </View>
 
@@ -212,25 +249,32 @@ export default function HomeScreen() {
             </Pressable>
           );
         })}
-        {!subscriptions.length ? (
-          <Pressable
-            onPress={openSearch}
-            style={{
-              height: 58,
-              paddingHorizontal: 16,
-              borderRadius: 29,
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: theme.colors.borderStrong,
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexDirection: 'row',
-              gap: 7,
-            }}
-          >
-            <Ionicons name="add" size={17} color={theme.colors.primary} />
-            <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>添加频道</Text>
+        <Link href="/add-subscription" asChild>
+          <Pressable style={{ alignItems: 'center', width: 58 }}>
+            <View
+              style={[
+                styles.channelAvatar,
+                {
+                  borderColor: theme.colors.borderStrong,
+                  borderStyle: 'dashed',
+                  backgroundColor: 'transparent',
+                },
+              ]}
+            >
+              <Ionicons name="add" size={24} color={theme.colors.primary} />
+            </View>
+            <Text
+              style={{
+                color: theme.colors.textSecondary,
+                fontSize: 9.5,
+                marginTop: 5,
+              }}
+              numberOfLines={1}
+            >
+              添加
+            </Text>
           </Pressable>
-        ) : null}
+        </Link>
       </ScrollView>
 
       {continueItem ? (
@@ -324,19 +368,22 @@ export default function HomeScreen() {
             );
           })}
         </ScrollView>
-        <Pressable
-          onPress={() => setLayoutMenu(true)}
-          style={{
-            width: 36,
-            height: 36,
-            borderRadius: 18,
-            backgroundColor: theme.colors.surfaceAlt,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <Ionicons name={activeLayout.icon} size={18} color={theme.colors.textSecondary} />
-        </Pressable>
+        <View ref={layoutButtonRef} collapsable={false}>
+          <Pressable
+            onPress={openLayoutMenu}
+            hitSlop={6}
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 18,
+              backgroundColor: theme.colors.surfaceAlt,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <LayoutGlyph id={layout} size={18} color={theme.colors.textSecondary} />
+          </Pressable>
+        </View>
       </View>
     </View>
   );
@@ -439,9 +486,7 @@ export default function HomeScreen() {
               <Text style={{ color: theme.colors.textSecondary, fontSize: 13, marginTop: 12 }}>
                 {filter === 'watching'
                   ? '已加载的视频里还没有看到一半的内容'
-                  : filter === 'ai'
-                    ? '已加载的视频里暂时没有 AI 相关选题'
-                    : '没有找到匹配的视频'}
+                  : '没有找到匹配的视频'}
               </Text>
             </View>
           )
@@ -466,12 +511,19 @@ export default function HomeScreen() {
       />
 
       <Modal visible={layoutMenu} transparent animationType="fade" onRequestClose={() => setLayoutMenu(false)}>
-        <View style={styles.modalMask}>
+        <View style={{ flex: 1 }}>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setLayoutMenu(false)} />
-          <View style={[styles.layoutSheet, { backgroundColor: theme.colors.card }]}>
-            <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '800', marginBottom: 12 }}>
-              视频布局
-            </Text>
+          <View
+            style={[
+              styles.layoutPopover,
+              {
+                top: layoutAnchor.top,
+                right: layoutAnchor.right,
+                backgroundColor: theme.colors.card,
+                borderColor: theme.colors.border,
+              },
+            ]}
+          >
             {LAYOUTS.map((option) => {
               const active = layout === option.id;
               return (
@@ -482,17 +534,20 @@ export default function HomeScreen() {
                     setLayoutMenu(false);
                   }}
                   style={{
-                    height: 48,
+                    height: 42,
                     borderRadius: 12,
-                    paddingHorizontal: 12,
+                    paddingHorizontal: 10,
                     flexDirection: 'row',
                     alignItems: 'center',
                     gap: 10,
-                    backgroundColor: active ? theme.colors.primarySoft : theme.colors.surfaceAlt,
-                    marginBottom: 8,
+                    backgroundColor: active ? theme.colors.primarySoft : 'transparent',
                   }}
                 >
-                  <Ionicons name={option.icon} size={19} color={active ? theme.colors.primary : theme.colors.textSecondary} />
+                  <LayoutGlyph
+                    id={option.id}
+                    size={18}
+                    color={active ? theme.colors.primary : theme.colors.textSecondary}
+                  />
                   <Text
                     style={{
                       flex: 1,
@@ -503,7 +558,9 @@ export default function HomeScreen() {
                   >
                     {option.label}
                   </Text>
-                  {active ? <Ionicons name="checkmark" size={18} color={theme.colors.primary} /> : null}
+                  {active ? (
+                    <Ionicons name="checkmark" size={18} color={theme.colors.primary} />
+                  ) : null}
                 </Pressable>
               );
             })}
@@ -521,10 +578,11 @@ const styles = StyleSheet.create({
     paddingTop: 2,
     gap: 9,
   },
-  roundHeader: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+  allChannelsButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -558,15 +616,16 @@ const styles = StyleSheet.create({
     marginTop: 18,
     marginBottom: 8,
   },
-  modalMask: {
-    flex: 1,
-    backgroundColor: 'rgba(16,18,14,0.45)',
-    justifyContent: 'flex-end',
-    padding: 16,
-    paddingBottom: 90,
-  },
-  layoutSheet: {
-    borderRadius: 20,
-    padding: 16,
+  layoutPopover: {
+    position: 'absolute',
+    width: 152,
+    borderRadius: 16,
+    padding: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 14,
   },
 });

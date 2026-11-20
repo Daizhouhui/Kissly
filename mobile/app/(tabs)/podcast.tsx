@@ -98,7 +98,7 @@ export default function PodcastScreen() {
             >
               <Ionicons name="information-circle-outline" size={17} color={theme.colors.primary} />
               <Text style={{ color: theme.colors.textSecondary, fontSize: 11.5, lineHeight: 17, flex: 1 }}>
-                这里汇总 12 分钟以上的节目；点开仍然是完整视频播放器，字幕、盲听和精听设置都可直接用。
+                这里汇总 12 分钟以上的节目；点开仍然是完整视频播放器，字幕、精听和句子收藏都可直接用。
               </Text>
             </View>
 

@@ -55,6 +55,8 @@ public class SystemTranslateModule: Module {
   public func definition() -> ModuleDefinition {
     Name("KisslySystemTranslate")
 
+    AsyncFunction("isAvailable") { true }
+
     AsyncFunction("prepare") { (from: String, to: String, promise: Promise) in
       let translator = self.makeTranslator(from: from, to: to)
       translator.downloadModelIfNeeded { error in

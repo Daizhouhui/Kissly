@@ -6,7 +6,7 @@
 - **播放**：App 内加载 YouTube 观看页，绕过 embed 的 Error 153；竖屏圆角视频 + 逐句双语稿，横屏沉浸字幕
 - **学习**：收藏聚合、最近观看、历史记录
 - **订阅**：频道 RSS 汇总，支持 `@handle`、频道链接、UC ID、Takeout CSV 导入 / 导出
-- **翻译**：微软 / 谷歌免费接口优先，失败自动切 DeepSeek；也支持 SiliconFlow、任意 OpenAI 兼容接口
+- **翻译**：微软 → 谷歌 → Google 备用免费接口，全部失败后按设置切 DeepSeek；也支持 SiliconFlow、任意 OpenAI 兼容接口
 - **同步**：WebDAV（默认 Koofr），订阅与设置跨设备合并
 - **登录**：内置 YouTube 登录入口，登录态尽量与播放器共享；Google 可能拦截 WebView 登录，CSV 导入是兜底
 - **两端**：一套 Expo / React Native 代码，Android 与 iOS
