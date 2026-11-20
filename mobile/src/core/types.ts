@@ -52,6 +52,8 @@ export type Subscription = {
   avatar?: string;
   group?: string;
   addedAt: number;
+  /** Display order. Lower values come first; kept in sync across devices. */
+  order?: number;
 };
 
 export type VideoItem = {
