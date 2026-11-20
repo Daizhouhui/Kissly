@@ -1,0 +1,57 @@
+{
+  "expo": {
+    "name": "Kissly",
+    "slug": "kissly",
+    "version": "1.1.1",
+    "orientation": "default",
+    "icon": "./assets/images/icon.png",
+    "scheme": "kissly",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.knny.kisssubtitle",
+      "buildNumber": "3",
+      "infoPlist": {
+        "UIViewControllerBasedStatusBarAppearance": true,
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false
+        }
+      }
+    },
+    "android": {
+      "package": "com.knny.kisssubtitle",
+      "versionCode": 3,
+      "adaptiveIcon": {
+        "backgroundColor": "#171126",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundImage": "./assets/images/android-icon-background.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "softwareKeyboardLayoutMode": "pan"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#0B0812"
+        }
+      ],
+      "expo-secure-store",
+      "expo-image",
+      "expo-asset",
+      "expo-sharing"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

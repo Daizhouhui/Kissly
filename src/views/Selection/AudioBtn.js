@@ -1,0 +1,290 @@
+import IconButton from "@mui/material/IconButton";
+import VolumeUpIcon from "@mui/icons-material/VolumeUp";
+import StopIcon from "@mui/icons-material/Stop";
+import PauseIcon from "@mui/icons-material/Pause";
+import { useEffect, useRef, useState } from "react";
+import { useAudio } from "../../hooks/Audio";
+import { canSpeak, speak, stopSpeech } from "../../libs/speech";
+import queryString from "query-string";
+
+/**
+ * Basic audio playback button.
+ *
+ * @param {Object} props
+ * @param {string} props.src - Audio source URL.
+ */
+export function AudioBtn({ src, title = "Speak", pauseTitle = "Pause" }) {
+  // Track audio loading and playback with useAudio.
+  const { error, ready, playing, onPlay, onPause } = useAudio(src);
+
+  // Disable playback while loading or after an audio error.
+  if (error || !ready) {
+    return (
+      <IconButton
+        disabled
+        size="small"
+        title={title}
+        aria-label={title}
+        aria-busy={!error && !ready}
+      >
+        <VolumeUpIcon fontSize="inherit" />
+      </IconButton>
+    );
+  }
+
+  // Highlight the icon with the primary color during playback.
+  if (playing) {
+    return (
+      <IconButton
+        color="primary"
+        size="small"
+        onClick={onPause}
+        title={pauseTitle}
+        aria-label={pauseTitle}
+        aria-pressed="true"
+      >
+        <PauseIcon fontSize="inherit" />
+      </IconButton>
+    );
+  }
+
+  // Start playback when the ready button is clicked.
+  return (
+    <IconButton
+      onClick={onPlay}
+      size="small"
+      title={title}
+      aria-label={title}
+      aria-pressed="false"
+    >
+      <VolumeUpIcon fontSize="inherit" />
+    </IconButton>
+  );
+}
+
+/**
+ * Baidu Translate TTS button.
+ *
+ * @param {Object} props
+ * @param {string} props.text - Text to speak.
+ * @param {string} [props.lan="uk"] - Accent: British "uk" or American "en".
+ * @param {number} [props.spd=3] - Speech rate, defaulting to 3.
+ */
+export function BaiduAudioBtn({ text, lan = "uk", spd = 3 }) {
+  if (!text) return null;
+
+  // Build the public Baidu Translate TTS URL.
+  const src = `https://fanyi.baidu.com/gettts?${queryString.stringify({ lan, text, spd })}`;
+  return <AudioBtn src={src} />;
+}
+
+export function BrowserTtsBtn({
+  text,
+  lang = "en-US",
+  title = "Speak",
+  stopTitle = "Stop",
+  serviceId = "",
+}) {
+  if (serviceId)
+    return (
+      <CloudTtsBtn
+        text={text}
+        lang={lang}
+        title={title}
+        stopTitle={stopTitle}
+        serviceId={serviceId}
+      />
+    );
+  return (
+    <NativeTtsBtn text={text} lang={lang} title={title} stopTitle={stopTitle} />
+  );
+}
+
+function CloudTtsBtn({ text, lang, title, stopTitle = "Stop", serviceId }) {
+  const active = useRef(null);
+  const [playing, setPlaying] = useState(false);
+  const [error, setError] = useState("");
+  const stop = () => {
+    const current = active.current;
+    active.current = null;
+    current?.call?.cancel();
+    if (current?.audio) {
+      current.audio.onended = null;
+      current.audio.onerror = null;
+    }
+    current?.audio?.pause();
+    current?.call?.assets.clear();
+    if (current?.url) URL.revokeObjectURL(current.url);
+    setPlaying(false);
+  };
+  useEffect(
+    () => () => {
+      const current = active.current;
+      active.current = null;
+      if (current?.audio) {
+        current.audio.onended = null;
+        current.audio.onerror = null;
+      }
+      current?.call?.cancel();
+      current?.audio?.pause();
+      current?.call?.assets.clear();
+      if (current?.url) URL.revokeObjectURL(current.url);
+    },
+    [serviceId, text, lang]
+  );
+  useEffect(() => {
+    setPlaying(false);
+    setError("");
+  }, [serviceId, text, lang]);
+  const play = async () => {
+    if (active.current) {
+      stop();
+      return;
+    }
+    const job = {};
+    active.current = job;
+    setPlaying(true);
+    setError("");
+    try {
+      const { invokeSavedService } = await import(
+        "../../providers/savedService"
+      );
+      const { getSettingWithDefault } = await import("../../libs/storage");
+      const { supportsApiCapability } = await import(
+        "../../config/serviceSelection"
+      );
+      const instance = (await getSettingWithDefault()).transApis.find(
+        (api) => api.apiSlug === serviceId
+      );
+      const capability =
+        supportsApiCapability(instance, "speak") &&
+        !supportsApiCapability(instance, "synthesizeSpeech")
+          ? "speak"
+          : "synthesizeSpeech";
+      if (active.current !== job) return;
+      job.call = invokeSavedService(serviceId, capability, {
+        text,
+        language: lang,
+      });
+      const result = await job.call.result;
+      if (active.current !== job) return;
+      if (capability === "speak") {
+        stop();
+        return;
+      }
+      job.url = URL.createObjectURL(job.call.assets.get(result.audio));
+      job.audio = new Audio(job.url);
+      job.audio.onended = () => {
+        if (active.current === job) stop();
+      };
+      job.audio.onerror = () => {
+        if (active.current === job) {
+          setError("音频播放失败");
+          stop();
+        }
+      };
+      await job.audio.play();
+    } catch (err) {
+      if (active.current === job) {
+        setError(err.message);
+        stop();
+      }
+    }
+  };
+  if (!text?.trim()) return null;
+  return (
+    <IconButton
+      size="small"
+      title={playing ? stopTitle : error || title}
+      aria-label={playing ? stopTitle : title}
+      aria-pressed={playing}
+      color={playing ? "primary" : "default"}
+      onClick={play}
+    >
+      {playing ? (
+        <StopIcon fontSize="inherit" />
+      ) : (
+        <VolumeUpIcon fontSize="inherit" />
+      )}
+    </IconButton>
+  );
+}
+
+function NativeTtsBtn({
+  text,
+  lang = "en-US",
+  title = "Speak",
+  stopTitle = "Stop",
+}) {
+  const [speaking, setSpeaking] = useState(false);
+  const speakingRef = useRef(false);
+  // 会话令牌：每次启动/停止都递增，旧会话迟到的 onEnd 不得复位新会话。
+  const sessionRef = useRef(0);
+
+  // 清空即停：文本/语言变化或组件卸载时，若本实例仍持有活动朗读则立即停止。
+  // 护栏：不持有活动朗读（speakingRef 为假）时绝不调用全局 stopSpeech()，
+  // 防止空闲字段（如译文朗读中用户编辑原文）误杀其他字段的朗读；
+  // 停止入口随文本一起消失，无需全局朗读注册表。
+  useEffect(
+    () => () => {
+      if (!speakingRef.current) return;
+      sessionRef.current += 1;
+      speakingRef.current = false;
+      setSpeaking(false);
+      stopSpeech();
+    },
+    [text, lang]
+  );
+
+  if (!text?.trim() || !canSpeak()) return null;
+
+  const handleSpeak = () => {
+    if (speakingRef.current) {
+      // 停止语义：朗读期间再次点击立即停止，不依赖终态事件。
+      sessionRef.current += 1;
+      speakingRef.current = false;
+      setSpeaking(false);
+      stopSpeech();
+      return;
+    }
+
+    // Browser TTS has no audio element, so the button tracks playback itself.
+    const session = sessionRef.current + 1;
+    sessionRef.current = session;
+    speakingRef.current = true;
+    setSpeaking(true);
+    const onEnd = () => {
+      if (sessionRef.current !== session) return;
+      speakingRef.current = false;
+      setSpeaking(false);
+    };
+    const started = speak(text, lang, { onEnd });
+
+    if (!started) onEnd();
+  };
+
+  return (
+    <IconButton
+      color={speaking ? "primary" : "default"}
+      // 停止语义下朗读期间恒可交互；禁用会让键盘焦点在启动瞬间丢失。
+      aria-disabled={false}
+      onClick={handleSpeak}
+      size="small"
+      title={speaking ? stopTitle : title}
+      aria-label={speaking ? stopTitle : title}
+      aria-busy={speaking}
+      aria-pressed={speaking}
+      sx={{
+        ml: 0.5,
+        verticalAlign: "middle",
+        cursor: speaking ? "pointer" : undefined,
+      }}
+    >
+      {speaking ? (
+        <StopIcon fontSize="inherit" />
+      ) : (
+        <VolumeUpIcon fontSize="inherit" />
+      )}
+    </IconButton>
+  );
+}

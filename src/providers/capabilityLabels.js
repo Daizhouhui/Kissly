@@ -1,0 +1,21 @@
+export const capabilityLabelKeys = {
+  translate: "capability_translate",
+  chat: "capability_chat",
+  summarize: "capability_summarize",
+  detectLanguage: "capability_detectLanguage",
+  dictionary: "capability_dictionary",
+  suggest: "capability_suggest",
+  segmentSubtitle: "capability_segmentSubtitle",
+  transcribe: "capability_transcribe",
+  recognizeText: "capability_recognizeText",
+  parseImage: "capability_parseImage",
+  analyzeLayout: "capability_analyzeLayout",
+  evaluate: "capability_evaluate",
+  synthesizeSpeech: "capability_synthesizeSpeech",
+  speak: "capability_speak",
+};
+
+export const imageParsingFeatureLabelKeys = {
+  includesTranslation: "plugin_image_includes_translation",
+  includesLayout: "plugin_image_includes_layout",
+};

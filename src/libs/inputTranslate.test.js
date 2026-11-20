@@ -1,0 +1,389 @@
+const mockUnregisterShortcut = jest.fn();
+
+jest.mock("../config", () => ({
+  DEFAULT_INPUT_RULE: {
+    transOpen: true,
+    triggerShortcut: ["AltLeft", "KeyI"],
+    triggerCount: 1,
+    triggerTime: 200,
+    showDot: "always",
+  },
+  DEFAULT_INPUT_SHORTCUT: ["AltLeft", "KeyI"],
+  OPT_LANGS_LIST: [],
+  DEFAULT_API_SETTING: {},
+  OPT_INPUT_DOT_DISABLE: "-",
+  OPT_INPUT_DOT_MOBILE: "mobile",
+}));
+
+jest.mock("../config/prompt", () => ({
+  resolveApiPromptSettings: jest.fn(),
+}));
+
+jest.mock("./mobile", () => ({ isMobile: false }));
+
+jest.mock("./utils", () => ({
+  genEventName: jest.fn(() => "event"),
+  removeEndchar: jest.fn((text) => text),
+  matchInputStr: jest.fn(),
+  sleep: jest.fn(() => Promise.resolve()),
+}));
+
+jest.mock("./shortcut", () => ({
+  stepShortcutRegister: jest.fn(() => mockUnregisterShortcut),
+}));
+
+jest.mock("../apis", () => ({ apiTranslate: jest.fn() }));
+jest.mock("./svg", () => ({ createLoadingSVG: jest.fn() }));
+jest.mock("./log", () =>
+  jest.requireActual("../testUtils/scopedLogMock").withScopedLogMock(
+    (() => ({
+      logger: {
+        debug: jest.fn(),
+        info: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+      },
+    }))()
+  )
+);
+
+const { InputTranslator } = require("./inputTranslate");
+const { stepShortcutRegister } = require("./shortcut");
+const { resolveApiPromptSettings } = require("../config/prompt");
+const { apiTranslate } = require("../apis");
+const { createLoadingSVG } = require("./svg");
+
+function makeRect({ top = 100, right = 200, width = 100, height = 30 } = {}) {
+  return {
+    top,
+    right,
+    bottom: top + height,
+    left: right - width,
+    width,
+    height,
+    x: right - width,
+    y: top,
+    toJSON: () => {},
+  };
+}
+
+function focusTarget(translator, target, rect = makeRect()) {
+  target.getBoundingClientRect = jest.fn(() => rect);
+  document.body.appendChild(target);
+  target.focus();
+  translator.handleFocusIn();
+}
+
+function getFloatButton(target) {
+  return Array.from(document.body.children).find(
+    (node) => node !== target && node.style.position === "fixed"
+  );
+}
+
+describe("InputTranslator input button", () => {
+  let originalResizeObserver;
+  let translator;
+
+  beforeAll(() => {
+    originalResizeObserver = window.ResizeObserver;
+    window.ResizeObserver = class {
+      observe() {}
+      disconnect() {}
+    };
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 800,
+    });
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 600,
+    });
+  });
+
+  afterAll(() => {
+    window.ResizeObserver = originalResizeObserver;
+  });
+
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    mockUnregisterShortcut.mockClear();
+    stepShortcutRegister.mockReturnValue(mockUnregisterShortcut);
+    translator = new InputTranslator({
+      inputRule: {
+        transOpen: true,
+        triggerShortcut: ["AltLeft", "KeyI"],
+        triggerCount: 1,
+        triggerTime: 200,
+        showDot: "always",
+      },
+    });
+  });
+
+  afterEach(() => {
+    translator.disable();
+    document.body.innerHTML = "";
+  });
+
+  test.each([
+    ["input without an explicit type", () => document.createElement("input")],
+    [
+      "search input",
+      () => Object.assign(document.createElement("input"), { type: "search" }),
+    ],
+    ["textarea", () => document.createElement("textarea")],
+    [
+      "contenteditable",
+      () => {
+        const node = document.createElement("div");
+        node.tabIndex = 0;
+        node.setAttribute("contenteditable", "true");
+        return node;
+      },
+    ],
+  ])("shows the button for %s", (_label, createTarget) => {
+    const target = createTarget();
+    focusTarget(translator, target);
+
+    expect(getFloatButton(target)).toBeTruthy();
+    expect(getFloatButton(target).hasAttribute("data-kiss-ui")).toBe(true);
+  });
+
+  test.each([false, true])(
+    "excludes own UI across shadow roots (nested: %s)",
+    async (nested) => {
+      const pageInput = document.createElement("input");
+      focusTarget(translator, pageInput);
+      const button = getFloatButton(pageInput);
+      const host = document.createElement("div");
+      host.setAttribute("data-kiss-ui", "");
+      document.body.appendChild(host);
+      let root = host.attachShadow({ mode: "open" });
+      if (nested) {
+        const innerHost = document.createElement("div");
+        root.appendChild(innerHost);
+        root = innerHost.attachShadow({ mode: "open" });
+      }
+      const ownInput = document.createElement("textarea");
+      ownInput.value = "Do not translate extension UI";
+      root.appendChild(ownInput);
+      ownInput.focus();
+      translator.handleFocusIn();
+      expect(button.style.display).toBe("none");
+      apiTranslate.mockClear();
+      await translator.handleTranslate();
+      expect(apiTranslate).not.toHaveBeenCalled();
+      expect(ownInput.value).toBe("Do not translate extension UI");
+      translator.enable();
+      expect(button.style.display).toBe("none");
+    }
+  );
+
+  test("allows inputs inside third-party shadow roots", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = host.attachShadow({ mode: "open" });
+    const target = document.createElement("textarea");
+    root.appendChild(target);
+    target.getBoundingClientRect = jest.fn(() => makeRect());
+    target.focus();
+    translator.handleFocusIn();
+    expect(getFloatButton(host)).toBeTruthy();
+  });
+
+  test.each([
+    "checkbox",
+    "radio",
+    "submit",
+    "button",
+    "image",
+    "file",
+    "password",
+  ])("does not show the button for %s input", (type) => {
+    const target = document.createElement("input");
+    target.type = type;
+    focusTarget(translator, target);
+
+    expect(getFloatButton(target)).toBeUndefined();
+  });
+
+  test.each([
+    [
+      "disabled",
+      (target) => {
+        target.disabled = true;
+      },
+    ],
+    [
+      "read-only",
+      (target) => {
+        target.readOnly = true;
+      },
+    ],
+  ])("does not show the button for a %s text input", (_label, configure) => {
+    const target = document.createElement("input");
+    configure(target);
+    focusTarget(translator, target);
+
+    expect(getFloatButton(target)).toBeUndefined();
+  });
+
+  test("places a short input button above when space is available", () => {
+    const target = document.createElement("input");
+    focusTarget(translator, target, makeRect({ top: 100, height: 30 }));
+
+    expect(getFloatButton(target).style.top).toBe("68px");
+  });
+
+  test("places a short input button below when the top edge has no room", () => {
+    const target = document.createElement("input");
+    focusTarget(translator, target, makeRect({ top: 10, height: 30 }));
+
+    expect(getFloatButton(target).style.top).toBe("42px");
+  });
+
+  test("keeps the button above an input near the bottom edge", () => {
+    const target = document.createElement("input");
+    focusTarget(translator, target, makeRect({ top: 560, height: 30 }));
+
+    expect(getFloatButton(target).style.top).toBe("528px");
+  });
+
+  test("keeps a tall input button inside its bottom-right corner", () => {
+    const target = document.createElement("textarea");
+    focusTarget(translator, target, makeRect({ top: 100, height: 100 }));
+
+    expect(getFloatButton(target).style.top).toBe("165px");
+  });
+
+  test.each([
+    [20, "0px"],
+    [900, "768px"],
+  ])("clamps horizontal position for right edge %i", (right, expectedLeft) => {
+    const target = document.createElement("input");
+    focusTarget(translator, target, makeRect({ top: 100, right }));
+
+    expect(getFloatButton(target).style.left).toBe(expectedLeft);
+  });
+
+  test("removes the button and shortcut when disabled", () => {
+    const target = document.createElement("input");
+    focusTarget(translator, target);
+
+    translator.disable();
+
+    expect(getFloatButton(target)).toBeUndefined();
+    expect(mockUnregisterShortcut).toHaveBeenCalledTimes(1);
+  });
+
+  test("requests editable content as plain text", async () => {
+    translator.disable();
+    const apiSetting = {
+      apiSlug: "google-cloud",
+      apiType: "GoogleCloud",
+    };
+    translator = new InputTranslator({
+      inputRule: {
+        transOpen: true,
+        triggerShortcut: ["AltLeft", "KeyI"],
+        triggerCount: 1,
+        triggerTime: 200,
+        showDot: "always",
+        apiSlug: "google-cloud",
+        fromLang: "auto",
+        toLang: "en",
+      },
+      transApis: [apiSetting],
+    });
+    resolveApiPromptSettings.mockReturnValue(apiSetting);
+    createLoadingSVG.mockReturnValue(
+      document.createElementNS("http://www.w3.org/2000/svg", "svg")
+    );
+    apiTranslate.mockResolvedValueOnce({
+      trText: "First isn't & simple\n\nSecond",
+      isSame: false,
+    });
+    const target = document.createElement("textarea");
+    target.value = "First & simple\n\nSecond";
+    focusTarget(translator, target);
+
+    await translator.handleTranslate({ isBtnTrigger: true });
+
+    expect(apiTranslate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "First & simple\n\nSecond",
+        textFormat: "text",
+      })
+    );
+    expect(target.value).toBe("First isn't & simple\n\nSecond");
+  });
+  test.each(["textarea", "shadow textarea"])(
+    "a delayed translation does not refocus a %s after focus moves",
+    async (kind) => {
+      translator.disable();
+      const primary = { apiSlug: "primary", apiType: "Microsoft" };
+      translator = new InputTranslator({
+        inputRule: { transOpen: false, apiSlug: "primary" },
+        transApis: [primary],
+      });
+      resolveApiPromptSettings.mockReturnValue(primary);
+      createLoadingSVG.mockReturnValue(
+        document.createElementNS("http://www.w3.org/2000/svg", "svg")
+      );
+      let finish;
+      apiTranslate.mockReset().mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          })
+      );
+      const target = document.createElement("textarea");
+      target.value = "original";
+      if (kind === "shadow textarea") {
+        const host = document.createElement("div");
+        document.body.appendChild(host);
+        host.attachShadow({ mode: "open" }).appendChild(target);
+      } else {
+        document.body.appendChild(target);
+      }
+      target.focus();
+      const pending = translator.handleTranslate({ isBtnTrigger: true });
+      const other = document.createElement("input");
+      other.value = "typing elsewhere";
+      document.body.appendChild(other);
+      other.focus();
+      finish({ trText: "translated", isSame: false });
+      await pending;
+
+      expect(document.activeElement).toBe(other);
+      expect(target.value).toBe("original");
+      expect(other.value).toBe("typing elsewhere");
+    }
+  );
+  test("selected failure does not use a leftover fallback list", async () => {
+    translator.disable();
+    const primary = { apiSlug: "primary", apiType: "Microsoft" };
+    translator = new InputTranslator({
+      inputRule: {
+        transOpen: true,
+        showDot: "always",
+        apiSlug: "primary",
+        apiSlugs: ["backup"],
+        fromLang: "en",
+        toLang: "zh-CN",
+      },
+      transApis: [primary, { ...primary, apiSlug: "backup" }],
+    });
+    resolveApiPromptSettings.mockReturnValue(primary);
+    createLoadingSVG.mockReturnValue(
+      document.createElementNS("http://www.w3.org/2000/svg", "svg")
+    );
+    apiTranslate.mockReset().mockRejectedValue(new Error("selected failed"));
+    const target = document.createElement("textarea");
+    target.value = "original";
+    focusTarget(translator, target);
+    await translator.handleTranslate({ isBtnTrigger: true });
+    expect(apiTranslate).toHaveBeenCalledTimes(1);
+    expect(apiTranslate.mock.calls[0][0].apiSetting.apiSlug).toBe("primary");
+    expect(target.value).toBe("original");
+  });
+});
