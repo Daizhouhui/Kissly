@@ -47,7 +47,8 @@ ytm-clarification-renderer,ytm-merch-shelf-renderer,ytm-donation-shelf-renderer,
 #player-control-container,#player-endscreen-container,#player-shorts-container,#player-thumbnail-overlay,#player-cinematics-container,
 .app-promo,ytm-app-promo,#app-promo,.ytp-chrome-bottom,.ytp-gradient-bottom,.ytp-caption-window-container,
 .ytp-pause-overlay,.ytp-ce-element,.ytp-ad-overlay-container,.ytp-paid-content-overlay,.ytp-share-button,
-.ytp-watch-later-button,.ytp-title,.ytp-watermark,.ytp-large-play-button,.ytm-player-controls,.player-controls{display:none!important;}
+.ytp-watch-later-button,.ytp-title,.ytp-watermark,.ytp-large-play-button,.ytm-player-controls,.player-controls,
+ytm-pivot-bar-renderer,ytm-pivot-bar,ytm-topbar,[class*="pivot-bar"],[class*="topbar"],[id*="watch-next"],[class*="watch-next"]{display:none!important;}
 #player-base,#player-container,#player-container-id,#player-container-outer,#player-container-inner,#player,
 ytm-player,.html5-video-player{position:fixed!important;left:0!important;top:0!important;width:100vw!important;height:100vh!important;
 max-width:none!important;max-height:none!important;min-height:0!important;padding:0!important;margin:0!important;z-index:2!important;}
