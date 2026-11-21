@@ -72,9 +72,24 @@ function playerBridgeScript() {
   return `
 (function(){
   try {
-    if (window.__kissBridge && window.__kissBridge.timer) clearInterval(window.__kissBridge.timer);
-    if (window.__kissBridge && window.__kissBridge.cssTimer) clearInterval(window.__kissBridge.cssTimer);
-    var bridge = window.__kissBridge = { mode: 'mobile-watch', wantPlay: false, recoverAt: 0, recoverAttempts: 0 };
+    var previous = window.__kissBridge;
+    if (previous) previous.alive = false;
+    if (previous && previous.timer) clearInterval(previous.timer);
+    if (previous && previous.cssTimer) clearInterval(previous.cssTimer);
+    if (previous && previous.qualityTimer) clearInterval(previous.qualityTimer);
+    if (previous && previous.startTimer) clearTimeout(previous.startTimer);
+    var bridge = window.__kissBridge = {
+      mode: 'mobile-watch',
+      alive: true,
+      wantPlay: previous ? previous.wantPlay : true,
+      userPaused: previous ? previous.userPaused : false,
+      frameReady: false,
+      timer: null,
+      cssTimer: null,
+      qualityTimer: null,
+      startTimer: null,
+      videoRef: null
+    };
     function injectCss(){
       try {
         var old = document.getElementById('kiss-watch-css');
@@ -94,13 +109,30 @@ function playerBridgeScript() {
       return document.getElementById('movie_player') || document.querySelector('.html5-video-player');
     }
     function getVideo(){
-      // Scope to the real watch player first. YouTube can keep preview/mini
-      // player <video> elements in the DOM; the first document-level video is
-      // not necessarily the one the user is watching.
+      // Scope to the real watch player and prefer YouTube's main video element.
+      // The page can keep preview/ad/mini-player <video> elements around; using
+      // the first document-level video makes pause/play target the wrong one.
       try {
         var p = getPlayer();
-        var scoped = p && p.querySelector ? p.querySelector('video') : null;
-        if (scoped) return scoped;
+        if (p && p.querySelector) {
+          var main = p.querySelector('video.html5-main-video');
+          if (main) return main;
+          var videos = p.querySelectorAll('video');
+          var best = null;
+          var bestArea = 0;
+          for (var i = 0; i < videos.length; i++) {
+            var candidate = videos[i];
+            var rect = candidate.getBoundingClientRect
+              ? candidate.getBoundingClientRect()
+              : { width: 0, height: 0 };
+            var area = Math.max(0, rect.width) * Math.max(0, rect.height);
+            if (area > bestArea) {
+              bestArea = area;
+              best = candidate;
+            }
+          }
+          if (best) return best;
+        }
       } catch(e) {}
       return document.querySelector('#movie_player video') || document.querySelector('video');
     }
@@ -162,31 +194,58 @@ function playerBridgeScript() {
         }
       } catch(e) {}
     }
+    function isFrameReady(v){
+      return !!(v && v.readyState >= 2 && v.videoWidth > 0);
+    }
+    function announceReady(v){
+      if (!isFrameReady(v) || bridge.frameReady) return;
+      bridge.frameReady = true;
+      send({ type: 'ready' });
+    }
+    function maybeStart(v){
+      // Never let YouTube autoplay before the first video frame is available.
+      // Audio and subtitles must not run ahead of the visible picture.
+      if (!bridge.alive || !v || bridge.userPaused || !bridge.wantPlay) return;
+      announceReady(v);
+      if (!isFrameReady(v)) {
+        // If a slow network never reaches loadeddata, avoid a permanently
+        // stuck play button. This is a fallback only; normal playback waits
+        // for the first frame.
+        if (!bridge.startTimer) {
+          bridge.startTimer = setTimeout(function(){
+            bridge.startTimer = null;
+            var current = getVideo();
+            if (
+              current &&
+              !bridge.userPaused &&
+              bridge.wantPlay &&
+              (current.paused || current.ended)
+            ) {
+              try {
+                var fallback = current.play();
+                if (fallback && fallback.catch) fallback.catch(function(){});
+              } catch(e) {}
+            }
+          }, 4500);
+        }
+        return;
+      }
+      if (bridge.startTimer) {
+        clearTimeout(bridge.startTimer);
+        bridge.startTimer = null;
+      }
+      if (v.paused || v.ended) {
+        try {
+          var result = v.play();
+          if (result && result.catch) result.catch(function(){});
+        } catch(e) {}
+      }
+      scheduleAudio(250);
+    }
     function report(){
       var v = getVideo();
       var p = getPlayer();
       if (!v) return;
-      // Keep playback intent independent from React state. If the page or an
-      // ad transition pauses the video without an explicit user pause, retry
-      // playback instead of leaving the player stuck on a paused frame.
-      if (bridge.wantPlay && v.paused && !v.ended && v.readyState >= 2) {
-        var now = Date.now();
-        if (
-          (!bridge.recoverAt || now - bridge.recoverAt > 1500) &&
-          bridge.recoverAttempts < 12
-        ) {
-          bridge.recoverAt = now;
-          bridge.recoverAttempts++;
-          try {
-            var recovery = v.play();
-            if (recovery && recovery.catch) recovery.catch(function(){});
-          } catch(e) {}
-          scheduleAudio(200);
-        }
-      } else if (!v.paused) {
-        bridge.recoverAt = 0;
-        bridge.recoverAttempts = 0;
-      }
       var quality = '';
       try { quality = p && p.getPlaybackQuality ? p.getPlaybackQuality() : ''; } catch(e) {}
       send({
@@ -194,7 +253,7 @@ function playerBridgeScript() {
         current: Number(v.currentTime) || 0,
         duration: Number(v.duration) || 0,
         playing: !v.paused && !v.ended,
-        ready: v.readyState >= 2,
+        ready: isFrameReady(v),
         rate: v.playbackRate,
         quality: quality,
         ad: isAdShowing()
@@ -202,11 +261,25 @@ function playerBridgeScript() {
     }
     var bindTries = 0;
     function bind(){
+      if (!bridge.alive) return;
       var v = getVideo();
       if (!v) {
         bindTries++;
         if (bindTries < 14) setTimeout(bind, 700);
         return;
+      }
+      if (bridge.videoRef !== v) {
+        bridge.videoRef = v;
+        bridge.frameReady = false;
+        if (bridge.startTimer) {
+          clearTimeout(bridge.startTimer);
+          bridge.startTimer = null;
+        }
+      }
+      if (!isFrameReady(v) && !v.paused) {
+        // Some YouTube builds autoplay before the first frame is decoded.
+        // Hold the picture until loadeddata so audio cannot lead the video.
+        try { v.pause(); } catch(e) {}
       }
       if (!v.__kissBound) {
         v.__kissBound = true;
@@ -216,6 +289,15 @@ function playerBridgeScript() {
         v.addEventListener('playing', function(){
           scheduleAudio(180);
           setTimeout(ensureAudio, 900);
+          // Keep the first frame on auto quality so it appears quickly, then
+          // upgrade to 1080p only after playback has started.
+          if (!v.__kissQualityStarted) {
+            v.__kissQualityStarted = true;
+            setTimeout(setQuality, 1800);
+          }
+          if (!bridge.qualityTimer) {
+            bridge.qualityTimer = setInterval(setQuality, 5000);
+          }
         });
         v.addEventListener('loadedmetadata', function(){
           scheduleAudio(180);
@@ -233,62 +315,74 @@ function playerBridgeScript() {
           send({ type:'problem', reason:'video-error', code: v.error ? v.error.code : 0 });
         });
         try { v.playsInline = true; } catch(e) {}
-        send({ type:'ready' });
-        setQuality();
-        bridge.wantPlay = true;
-        bridge.recoverAt = 0;
-        bridge.recoverAttempts = 0;
-        var playPromise = null;
-        try { playPromise = v.play(); } catch(e) {}
-        if (playPromise && playPromise.catch) playPromise.catch(function(){ send({type:'blocked'}); });
-        scheduleAudio(300);
-        setTimeout(ensureAudio, 1200);
-        setTimeout(ensureAudio, 2600);
+        try { v.preload = 'auto'; } catch(e) {}
         report();
+      }
+      bridge.userPaused = bridge.userPaused || !!v.__kissUserPaused;
+      if (v.__kissReadyBridge !== bridge) {
+        v.__kissReadyBridge = bridge;
+        var markReady = function(){
+          if (v.__kissReadyBridge !== bridge) return;
+          announceReady(v);
+          maybeStart(v);
+        };
+        v.addEventListener('loadeddata', markReady);
+        v.addEventListener('canplay', markReady);
+      }
+      if (isFrameReady(v)) {
+        announceReady(v);
+        maybeStart(v);
+      }
+      if (!bridge.qualityTimer && !v.paused) {
+        bridge.qualityTimer = setInterval(setQuality, 5000);
       }
       if (!bridge.timer) {
         bridge.timer = setInterval(report, 900);
-        bridge.qualityTimer = setInterval(setQuality, 5000);
       }
-      setQuality();
     }
     window.__kiss = {
-      play: function(){ bridge.wantPlay = true; bridge.recoverAt = 0; bridge.recoverAttempts = 0; var v=getVideo(); try{ var r=v&&v.play(); if(r&&r.catch)r.catch(function(){}); }catch(e){}; scheduleAudio(260); setTimeout(ensureAudio, 1000); return true; },
-      pause: function(){ bridge.wantPlay = false; bridge.recoverAt = 0; bridge.recoverAttempts = 0; var v=getVideo(); try{ v&&v.pause(); }catch(e){}; return true; },
-      resume: function(){
+      play: function(){
+        bridge.userPaused = false;
         bridge.wantPlay = true;
-        bridge.recoverAttempts = 0;
-        var v=getVideo();
+        var v = getVideo();
+        if (v) v.__kissUserPaused = false;
+        maybeStart(v);
+        scheduleAudio(260);
+        setTimeout(ensureAudio, 1000);
+        return true;
+      },
+      pause: function(){
+        bridge.userPaused = true;
+        bridge.wantPlay = false;
+        if (bridge.startTimer) {
+          clearTimeout(bridge.startTimer);
+          bridge.startTimer = null;
+        }
+        var v = getVideo();
+        if (v) {
+          v.__kissUserPaused = true;
+          try { v.pause(); } catch(e) {}
+        }
+        return true;
+      },
+      resume: function(){
+        if (bridge.userPaused) return true;
+        bridge.wantPlay = true;
+        var v = getVideo();
         if (!v) return true;
-        try {
-          if (v.paused || v.ended) {
-            var r=v.play();
-            if (r && r.catch) r.catch(function(){});
-          }
-        } catch(e) {}
+        maybeStart(v);
         scheduleAudio(180);
         setTimeout(report, 80);
         return true;
       },
       toggle: function(){
-        var v=getVideo();
+        var v = getVideo();
         if (!v) return true;
-        try {
-          if (v.paused || v.ended) {
-            bridge.wantPlay = true;
-            bridge.recoverAt = 0;
-            bridge.recoverAttempts = 0;
-            var r=v.play();
-            if (r && r.catch) r.catch(function(){});
-            scheduleAudio(180);
-            setTimeout(ensureAudio, 900);
-          } else {
-            bridge.wantPlay = false;
-            bridge.recoverAt = 0;
-            bridge.recoverAttempts = 0;
-            v.pause();
-          }
-        } catch(e) {}
+        if (v.paused || v.ended) {
+          window.__kiss.play();
+        } else {
+          window.__kiss.pause();
+        }
         setTimeout(report, 80);
         return true;
       },
@@ -299,10 +393,21 @@ function playerBridgeScript() {
       quality: function(){ setQuality(); return true; }
     };
     bind();
+    var lastHref = location.href;
     document.addEventListener('yt-navigate-finish', function(){
-      bridge.wantPlay = true;
-      bridge.recoverAt = 0;
-      bridge.recoverAttempts = 0;
+      if (!bridge.alive) return;
+      if (location.href !== lastHref) {
+        lastHref = location.href;
+        bridge.userPaused = false;
+        bridge.wantPlay = true;
+        bridge.frameReady = false;
+        bridge.videoRef = null;
+        var nextVideo = getVideo();
+        if (nextVideo) {
+          nextVideo.__kissUserPaused = false;
+          nextVideo.__kissQualityStarted = false;
+        }
+      }
       bindTries = 0;
       setTimeout(bind, 400);
     }, true);
@@ -1440,7 +1545,7 @@ export default function PlayerScreen() {
   const displayAuthor = metaAuthor || initialAuthor;
   const rateLabel = Number.isInteger(rate) ? `${rate}x` : `${rate.toFixed(1)}x`;
   const nativeVideo = Platform.OS !== 'web';
-  const webUrl = `https://m.youtube.com/watch?v=${videoId}&hl=zh-CN&autoplay=1`;
+  const webUrl = `https://m.youtube.com/watch?v=${videoId}&hl=zh-CN&autoplay=0`;
 
   if (!videoId) {
     return (
@@ -1498,7 +1603,6 @@ export default function PlayerScreen() {
           }}
           onLoadEnd={() => {
             send(playerBridgeScript());
-            setTimeout(() => send('window.__kiss && window.__kiss.play(); window.__kiss && window.__kiss.audio(); true;'), 1200);
             armVideoLoadingFallback();
           }}
           onError={() => {
