@@ -142,13 +142,13 @@ jobs:
             echo ""
             echo "- \`kissly-android.apk\`：\`$APK_SHA\`"
             echo "- \`Kissly-unsigned.ipa\`：\`$IPA_SHA\`"
-          } >> .github/release-notes/v1.2.7.md
+          } >> .github/release-notes/${{ github.ref_name }}.md
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           name: Kissly ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
-          body_path: .github/release-notes/v1.2.7.md
+          body_path: .github/release-notes/${{ github.ref_name }}.md
           files: |
             release-assets/kissly-android.apk
             release-assets/Kissly-unsigned.ipa
