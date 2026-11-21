@@ -8,7 +8,6 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -22,9 +21,13 @@ import { useAppStore } from '../src/core/store';
 import { Subscription } from '../src/core/types';
 import { resolveChannelInput } from '../src/core/youtube/channel';
 import { ChannelSearchResult, searchChannels } from '../src/core/youtube/search';
+import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
 import { appAlert as Alert } from '../src/ui/app-alert';
+import { AppPressable } from '../src/ui/app-pressable';
 import { GhostButton } from '../src/ui/components';
 import { useAppTheme } from '../src/ui/theme';
+
+const Pressable = AppPressable;
 
 type Category = {
   id: string;
@@ -92,7 +95,7 @@ function ChannelAvatar({
         style={{
           width: size,
           height: size,
-          borderRadius: size / 2,
+          borderRadius: RADIUS.pill,
           backgroundColor: theme.colors.primarySoft,
           alignItems: 'center',
           justifyContent: 'center',
@@ -108,7 +111,7 @@ function ChannelAvatar({
   return (
     <Image
       source={{ uri: src }}
-      style={{ width: size, height: size, borderRadius: size / 2 }}
+      style={{ width: size, height: size, borderRadius: RADIUS.pill }}
       contentFit="cover"
       transition={140}
       onError={() => setFailed(true)}
@@ -337,7 +340,7 @@ export default function SearchChannelsScreen() {
                 alignItems: 'center',
                 gap: 9,
                 backgroundColor: theme.colors.surfaceAlt,
-                borderRadius: 24,
+                borderRadius: RADIUS.control,
                 paddingHorizontal: 15,
                 height: 48,
               }}
@@ -378,7 +381,7 @@ export default function SearchChannelsScreen() {
                 height: 48,
                 alignItems: 'center',
                 justifyContent: 'center',
-                borderRadius: 12,
+                borderRadius: RADIUS.control,
                 backgroundColor: historyOpen ? theme.colors.primarySoft : 'transparent',
               }}
             >
@@ -395,7 +398,8 @@ export default function SearchChannelsScreen() {
               style={{
                 marginTop: 14,
                 backgroundColor: theme.colors.card,
-                borderRadius: 16,
+                borderRadius: RADIUS.card,
+                ...CONTINUOUS_CORNER,
                 borderWidth: StyleSheet.hairlineWidth,
                 borderColor: theme.colors.border,
                 overflow: 'hidden',
@@ -415,7 +419,7 @@ export default function SearchChannelsScreen() {
                   搜索历史
                 </Text>
                 {history.length ? (
-                  <Pressable onPress={clearHistory} hitSlop={8}>
+                  <Pressable onPress={clearHistory} hitSlop={8} feedback="opacity">
                     <Text style={{ color: theme.colors.textTertiary, fontSize: 12 }}>清空</Text>
                   </Pressable>
                 ) : null}
@@ -425,16 +429,16 @@ export default function SearchChannelsScreen() {
                   <Pressable
                     key={`${item}-${index}`}
                     onPress={() => selectHistoryItem(item)}
-                    style={({ pressed }) => ({
+                    radius={0}
+                    style={{
                       flexDirection: 'row',
                       alignItems: 'center',
                       gap: 9,
                       paddingHorizontal: 14,
                       paddingVertical: 11,
-                      opacity: pressed ? 0.7 : 1,
                       borderTopWidth: StyleSheet.hairlineWidth,
                       borderTopColor: theme.colors.border,
-                    })}
+                    }}
                   >
                     <Ionicons name="time-outline" size={17} color={theme.colors.textTertiary} />
                     <Text
@@ -473,10 +477,11 @@ export default function SearchChannelsScreen() {
                 <Pressable
                   key={item.id}
                   onPress={() => chooseCategory(item.id)}
+                  feedback="opacity"
                   style={{
                     height: 38,
                     paddingHorizontal: 18,
-                    borderRadius: 19,
+                    borderRadius: RADIUS.control,
                     alignItems: 'center',
                     justifyContent: 'center',
                     borderWidth: active ? 0 : StyleSheet.hairlineWidth,
@@ -533,7 +538,8 @@ export default function SearchChannelsScreen() {
           <View
             style={{
               backgroundColor: theme.colors.card,
-              borderRadius: 18,
+              borderRadius: RADIUS.card,
+              ...CONTINUOUS_CORNER,
               overflow: 'hidden',
               borderWidth: StyleSheet.hairlineWidth,
               borderColor: theme.colors.border,
@@ -544,6 +550,7 @@ export default function SearchChannelsScreen() {
               return (
                 <Pressable
                   key={channel.channelId}
+                  radius={0}
                   onPress={() =>
                     router.push({
                       pathname: '/channel',
@@ -557,17 +564,16 @@ export default function SearchChannelsScreen() {
                       },
                     } as any)
                   }
-                  style={({ pressed }) => ({
+                  style={{
                     flexDirection: 'row',
                     alignItems: 'center',
                     gap: 12,
                     paddingVertical: 13,
                     paddingHorizontal: 13,
-                    opacity: pressed ? 0.75 : 1,
                     borderBottomWidth:
                       index === list.length - 1 ? 0 : StyleSheet.hairlineWidth,
                     borderBottomColor: theme.colors.border,
-                  })}
+                  }}
                 >
                   <ChannelAvatar uri={channel.avatar} title={channel.title} size={56} />
                   <View style={{ flex: 1, minWidth: 0 }}>
@@ -598,7 +604,7 @@ export default function SearchChannelsScreen() {
                     style={{
                       width: 34,
                       height: 34,
-                      borderRadius: 17,
+                      borderRadius: RADIUS.pill,
                       alignItems: 'center',
                       justifyContent: 'center',
                       backgroundColor: subscribed
@@ -624,6 +630,7 @@ export default function SearchChannelsScreen() {
 
           <Pressable
             onPress={() => setShowImport((value) => !value)}
+            feedback="opacity"
             style={{ marginTop: 22, alignSelf: 'center', paddingVertical: 8 }}
           >
             <Text style={{ color: theme.colors.textTertiary, fontSize: 12 }}>
@@ -646,7 +653,7 @@ export default function SearchChannelsScreen() {
                 autoCorrect={false}
                 style={{
                   minHeight: 48,
-                  borderRadius: 14,
+                  borderRadius: RADIUS.control,
                   backgroundColor: theme.colors.surfaceAlt,
                   paddingHorizontal: 14,
                   color: theme.colors.text,
@@ -661,7 +668,7 @@ export default function SearchChannelsScreen() {
                   style={{
                     flex: 1,
                     height: 44,
-                    borderRadius: 12,
+                    borderRadius: RADIUS.control,
                     backgroundColor: theme.colors.primarySoft,
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -689,7 +696,8 @@ export default function SearchChannelsScreen() {
                     alignItems: 'center',
                     gap: 10,
                     backgroundColor: theme.colors.card,
-                    borderRadius: 14,
+                    borderRadius: RADIUS.card,
+                    ...CONTINUOUS_CORNER,
                     padding: 12,
                     borderWidth: StyleSheet.hairlineWidth,
                     borderColor: theme.colors.border,

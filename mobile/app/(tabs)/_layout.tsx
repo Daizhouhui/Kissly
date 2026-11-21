@@ -5,6 +5,8 @@ import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../../src/core/store';
+import { RADIUS } from '../../src/tokens';
+import { AppPressable } from '../../src/ui/app-pressable';
 import { useAppTheme } from '../../src/ui/theme';
 
 const TAB_ICONS: Record<string, { active: any; inactive: any; label: string }> = {
@@ -80,6 +82,20 @@ export default function TabLayout() {
         tabBarIconStyle: {
           marginTop: 2,
         },
+        tabBarButton: (props) => {
+          const { children, style, ...rest } = props;
+          return (
+            <AppPressable
+              {...rest}
+              feedback="ripple"
+              radius={RADIUS.control}
+              accessibilityRole="tab"
+              style={[style, styles.tabButton]}
+            >
+              {children}
+            </AppPressable>
+          );
+        },
       }}
     >
       <Tabs.Screen
@@ -115,6 +131,11 @@ export default function TabLayout() {
 }
 
 const styles = StyleSheet.create({
+  tabButton: {
+    flex: 1,
+    borderRadius: RADIUS.control,
+    justifyContent: 'center',
+  },
   iconWrap: {
     width: 34,
     height: 28,

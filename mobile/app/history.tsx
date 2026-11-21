@@ -2,14 +2,18 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../src/core/store';
 import { relativeTime } from '../src/core/utils';
+import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
 import { appAlert as Alert } from '../src/ui/app-alert';
+import { AppPressable } from '../src/ui/app-pressable';
 import { ManageBar, NavHeader, SelectionCircle } from '../src/ui/components';
 import { useAppTheme } from '../src/ui/theme';
+
+const Pressable = AppPressable;
 
 export default function HistoryScreen() {
   const theme = useAppTheme();
@@ -78,7 +82,7 @@ export default function HistoryScreen() {
             <Pressable
               hitSlop={8}
               onPress={toggleManage}
-              style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+              feedback="opacity"
             >
               <Text
                 style={{
@@ -117,6 +121,8 @@ export default function HistoryScreen() {
               <Pressable
                 key={item.videoId}
                 accessibilityState={manage ? { selected } : undefined}
+                feedback={manage ? 'opacity' : 'ripple'}
+                radius={0}
                 onPress={() => {
                   if (manage) {
                     toggleSelection(item.videoId);
@@ -127,11 +133,11 @@ export default function HistoryScreen() {
                     params: { videoId: item.videoId, title: item.title, author: item.author },
                   } as any);
                 }}
-                style={({ pressed }) => [styles.row, pressed && { opacity: 0.8 }]}
+                style={styles.row}
               >
                 <Image
                   source={{ uri: item.thumbnail || `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg` }}
-                  style={styles.thumb}
+                  style={styles.thumb as any}
                   contentFit="cover"
                   transition={160}
                 />
@@ -175,7 +181,7 @@ export default function HistoryScreen() {
 }
 
 const styles = StyleSheet.create({
-  thumb: { width: 132, aspectRatio: 16 / 9, borderRadius: 11, backgroundColor: '#241C33' },
+  thumb: { width: 132, aspectRatio: 16 / 9, borderRadius: RADIUS.control, ...CONTINUOUS_CORNER, backgroundColor: '#241C33' },
   row: { flexDirection: 'row', gap: 12, paddingVertical: 10 },
   empty: { alignItems: 'center', paddingTop: 80, paddingHorizontal: 30 },
 });

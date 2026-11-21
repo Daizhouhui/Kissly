@@ -16,7 +16,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Theme } from '../theme';
+import { CONTINUOUS_CORNER, RADIUS } from '../tokens';
+import { AppPressable } from './app-pressable';
 import { useAppTheme } from './theme';
 
 export function Screen({
@@ -100,20 +101,16 @@ export function NavHeader({
         gap: 6,
       }}
     >
-      <Pressable
+      <AppPressable
         onPress={() => router.back()}
         hitSlop={8}
-        style={({ pressed }) => ({
-          width: 40,
-          height: 40,
-          borderRadius: 20,
-          alignItems: 'center',
-          justifyContent: 'center',
-          opacity: pressed ? 0.6 : 1,
-        })}
+        feedback="ripple"
+        radius={RADIUS.pill}
+        accessibilityLabel="返回"
+        style={styles.navBack}
       >
         <Ionicons name="chevron-back" size={23} color={theme.colors.text} />
-      </Pressable>
+      </AppPressable>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={{ color: theme.colors.text, fontSize: 19, fontWeight: '800', letterSpacing: -0.3 }} numberOfLines={1}>
           {title}
@@ -146,20 +143,21 @@ export function IconButton({
 }) {
   const theme = useAppTheme();
   return (
-    <Pressable
+    <AppPressable
       onPress={onPress}
       hitSlop={8}
-      style={({ pressed }) => [
+      feedback="ripple"
+      radius={RADIUS.pill}
+      style={[
         styles.iconButton,
         {
           backgroundColor: bg ?? 'transparent',
-          opacity: pressed ? 0.72 : 1,
         },
         style,
       ]}
     >
       <Ionicons name={name} size={size} color={color ?? theme.colors.textSecondary} />
-    </Pressable>
+    </AppPressable>
   );
 }
 
@@ -173,31 +171,54 @@ export function Card({
   onPress?: () => void;
 }) {
   const theme = useAppTheme();
-  const content = (
+  const surface = (
     <View
       style={[
+        styles.cardSurface,
         {
           backgroundColor: theme.colors.card,
-          borderRadius: theme.radius.lg,
-          borderWidth: StyleSheet.hairlineWidth,
           borderColor: theme.colors.border,
-          padding: 16,
+          ...CONTINUOUS_CORNER,
         },
-        theme.shadow.card,
         style,
       ]}
     >
       {children}
     </View>
   );
-  if (!onPress) return content;
+  if (!onPress) {
+    return (
+      <View
+        style={[
+          styles.cardShadow,
+          { backgroundColor: theme.colors.card, ...CONTINUOUS_CORNER },
+          theme.shadow.card,
+        ]}
+      >
+        {surface}
+      </View>
+    );
+  }
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => ({ opacity: pressed ? 0.86 : 1, transform: [{ scale: pressed ? 0.995 : 1 }] })}
+    <View
+      style={[
+        styles.cardShadow,
+        {
+          backgroundColor: theme.colors.card,
+          ...CONTINUOUS_CORNER,
+        },
+        theme.shadow.card,
+      ]}
     >
-      {content}
-    </Pressable>
+      <AppPressable
+        onPress={onPress}
+        feedback="ripple"
+        radius={RADIUS.card}
+        accessibilityRole="button"
+      >
+        {surface}
+      </AppPressable>
+    </View>
   );
 }
 
@@ -263,9 +284,14 @@ export function Row({
   );
   if (!onPress) return inner;
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}>
+    <AppPressable
+      onPress={onPress}
+      feedback="ripple"
+      radius={0}
+      accessibilityRole="button"
+    >
       {inner}
-    </Pressable>
+    </AppPressable>
   );
 }
 
@@ -286,16 +312,16 @@ export function PrimaryButton({
 }) {
   const theme = useAppTheme();
   return (
-    <Pressable
+    <AppPressable
       onPress={onPress}
       disabled={disabled || loading}
-      style={({ pressed }) => [
-        {
-          borderRadius: 16,
-          overflow: 'hidden',
-          opacity: disabled ? 0.45 : pressed ? 0.9 : 1,
-          transform: [{ scale: pressed ? 0.99 : 1 }],
-        },
+      feedback="ripple"
+      tone="onColor"
+      radius={RADIUS.control}
+      accessibilityRole="button"
+      style={[
+        styles.primaryButton,
+        { opacity: disabled ? 0.45 : 1 },
         style,
       ]}
     >
@@ -315,7 +341,7 @@ export function PrimaryButton({
         {loading ? <ActivityIndicator color="#fff" /> : icon ? <Ionicons name={icon} size={18} color="#fff" /> : null}
         <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>{label}</Text>
       </LinearGradient>
-    </Pressable>
+    </AppPressable>
   );
 }
 
@@ -330,25 +356,19 @@ export function GhostButton({
 }) {
   const theme = useAppTheme();
   return (
-    <Pressable
+    <AppPressable
       onPress={onPress}
-      style={({ pressed }) => [
-        {
-          height: 44,
-          borderRadius: 14,
-          paddingHorizontal: 16,
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexDirection: 'row',
-          gap: 6,
-          backgroundColor: theme.colors.surfaceAlt,
-          opacity: pressed ? 0.8 : 1,
-        },
+      feedback="ripple"
+      radius={RADIUS.control}
+      accessibilityRole="button"
+      style={[
+        styles.ghostButton,
+        { backgroundColor: theme.colors.surfaceAlt },
       ]}
     >
       {icon ? <Ionicons name={icon} size={16} color={theme.colors.text} /> : null}
       <Text style={{ color: theme.colors.text, fontSize: 13, fontWeight: '600' }}>{label}</Text>
-    </Pressable>
+    </AppPressable>
   );
 }
 
@@ -363,24 +383,22 @@ export function Chip({
 }) {
   const theme = useAppTheme();
   return (
-    <Pressable
+    <AppPressable
       onPress={onPress}
-      style={({ pressed }) => [
+      feedback="ripple"
+      radius={RADIUS.control}
+      accessibilityRole="button"
+      style={[
+        styles.chip,
         {
-          paddingHorizontal: 14,
-          height: 34,
-          borderRadius: 17,
-          alignItems: 'center',
-          justifyContent: 'center',
           backgroundColor: active ? theme.colors.text : theme.colors.surfaceAlt,
-          opacity: pressed ? 0.8 : 1,
         },
       ]}
     >
       <Text style={{ color: active ? (theme.dark ? '#0F0D14' : '#fff') : theme.colors.textSecondary, fontSize: 12, fontWeight: '600' }}>
         {label}
       </Text>
-    </Pressable>
+    </AppPressable>
   );
 }
 
@@ -414,7 +432,7 @@ export function EmptyState({
         style={{
           width: 72,
           height: 72,
-          borderRadius: 36,
+          borderRadius: RADIUS.pill,
           backgroundColor: theme.colors.primarySoft,
           alignItems: 'center',
           justifyContent: 'center',
@@ -475,8 +493,9 @@ export function Sheet({
           <Pressable
             style={{
               backgroundColor: theme.colors.surface,
-              borderTopLeftRadius: 26,
-              borderTopRightRadius: 26,
+              borderTopLeftRadius: RADIUS.modal,
+              borderTopRightRadius: RADIUS.modal,
+              ...CONTINUOUS_CORNER,
               paddingTop: 10,
               paddingHorizontal: 20,
               paddingBottom: 20 + insets.bottom,
@@ -484,7 +503,7 @@ export function Sheet({
             }}
             onPress={() => {}}
           >
-            <View style={{ alignSelf: 'center', width: 38, height: 4, borderRadius: 2, backgroundColor: theme.colors.border, marginBottom: 14 }} />
+            <View style={{ alignSelf: 'center', width: 38, height: 4, borderRadius: RADIUS.pill, backgroundColor: theme.colors.border, marginBottom: 14 }} />
             <Text style={{ color: theme.colors.text, fontSize: 19, fontWeight: '800', marginBottom: 4 }}>{title}</Text>
             {desc ? (
               <Text style={{ color: theme.colors.textTertiary, fontSize: 12, lineHeight: 18, marginBottom: 14 }}>{desc}</Text>
@@ -513,12 +532,15 @@ export function SettingSwitch({
 }) {
   const theme = useAppTheme();
   return (
-    <Pressable
+    <AppPressable
       onPress={() => onValueChange(!value)}
+      feedback="opacity"
+      accessibilityRole="switch"
+      accessibilityState={{ checked: value }}
       style={{
         width: 46,
         height: 28,
-        borderRadius: 14,
+        borderRadius: RADIUS.pill,
         backgroundColor: value ? theme.colors.primary : theme.colors.border,
         justifyContent: 'center',
         paddingHorizontal: 3,
@@ -528,7 +550,7 @@ export function SettingSwitch({
         style={{
           width: 22,
           height: 22,
-          borderRadius: 11,
+          borderRadius: RADIUS.pill,
           backgroundColor: '#fff',
           alignSelf: value ? 'flex-end' : 'flex-start',
           shadowColor: '#000',
@@ -537,7 +559,7 @@ export function SettingSwitch({
           shadowOffset: { width: 0, height: 2 },
         }}
       />
-    </Pressable>
+    </AppPressable>
   );
 }
 
@@ -583,7 +605,14 @@ export function ManageBar({
         },
       ]}
     >
-      <Pressable onPress={onToggleAll} hitSlop={8} style={styles.manageSelectAll}>
+      <AppPressable
+        onPress={onToggleAll}
+        hitSlop={8}
+        feedback="opacity"
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: allSelected }}
+        style={styles.manageSelectAll}
+      >
         <Ionicons
           name={allSelected ? 'checkmark-circle' : 'ellipse-outline'}
           size={20}
@@ -598,20 +627,22 @@ export function ManageBar({
         >
           {allSelected ? '取消全选' : '全选'}
         </Text>
-      </Pressable>
+      </AppPressable>
       <View style={{ flex: 1 }} />
       <Text style={{ color: theme.colors.textTertiary, fontSize: 11.5 }}>
         已选 {selectedCount} 项
       </Text>
-      <Pressable
+      <AppPressable
         onPress={onDelete}
         disabled={disabled}
-        style={({ pressed }) => [
+        feedback="ripple"
+        tone="onColor"
+        radius={RADIUS.control}
+        accessibilityRole="button"
+        accessibilityLabel={`删除已选 ${selectedCount} 项`}
+        style={[
           styles.manageDelete,
-          {
-            backgroundColor: disabled ? theme.colors.surfaceAlt : theme.colors.danger,
-            opacity: pressed && !disabled ? 0.78 : 1,
-          },
+          { backgroundColor: disabled ? theme.colors.surfaceAlt : theme.colors.danger },
         ]}
       >
         <Ionicons
@@ -628,7 +659,7 @@ export function ManageBar({
         >
           删除{selectedCount ? ` (${selectedCount})` : ''}
         </Text>
-      </Pressable>
+      </AppPressable>
     </View>
   );
 }
@@ -642,10 +673,48 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+  navBack: {
+    width: 40,
+    height: 40,
+    borderRadius: RADIUS.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   iconButton: {
     width: 42,
     height: 42,
-    borderRadius: 21,
+    borderRadius: RADIUS.pill,
+    ...CONTINUOUS_CORNER,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardShadow: {
+    borderRadius: RADIUS.card,
+  },
+  cardSurface: {
+    borderRadius: RADIUS.card,
+    ...CONTINUOUS_CORNER,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 16,
+  },
+  primaryButton: {
+    borderRadius: RADIUS.control,
+  },
+  ghostButton: {
+    height: 44,
+    borderRadius: RADIUS.control,
+    ...CONTINUOUS_CORNER,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  chip: {
+    paddingHorizontal: 14,
+    height: 34,
+    borderRadius: RADIUS.control,
+    ...CONTINUOUS_CORNER,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -658,14 +727,15 @@ const styles = StyleSheet.create({
   rowIcon: {
     width: 34,
     height: 34,
-    borderRadius: 12,
+    borderRadius: RADIUS.control,
+    ...CONTINUOUS_CORNER,
     alignItems: 'center',
     justifyContent: 'center',
   },
   selectionCircle: {
     width: 22,
     height: 22,
-    borderRadius: 11,
+    borderRadius: RADIUS.pill,
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
@@ -693,7 +763,8 @@ const styles = StyleSheet.create({
   },
   manageDelete: {
     height: 42,
-    borderRadius: 13,
+    borderRadius: RADIUS.control,
+    ...CONTINUOUS_CORNER,
     paddingHorizontal: 15,
     flexDirection: 'row',
     alignItems: 'center',

@@ -1,11 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Speech from 'expo-speech';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAppStore } from '../../src/core/store';
+import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
 import { appAlert as Alert } from '../../src/ui/app-alert';
+import { AppPressable } from '../../src/ui/app-pressable';
 import { NavHeader } from '../../src/ui/components';
 import { useAppTheme } from '../../src/ui/theme';
+
+const Pressable = AppPressable;
 
 function Stepper({
   value,
@@ -143,11 +147,11 @@ export default function VoiceSettingsScreen() {
         </View>
 
         <Pressable
+          tone="onColor"
           onPress={preview}
-          style={({ pressed }) => [
+          style={[
             styles.previewButton,
             { backgroundColor: theme.colors.primary },
-            pressed && { opacity: 0.82 },
           ]}
         >
           <Ionicons name="play" size={17} color="#FFFFFF" />
@@ -164,7 +168,8 @@ export default function VoiceSettingsScreen() {
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 16,
+    borderRadius: RADIUS.card,
+    ...CONTINUOUS_CORNER,
     borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
   },
@@ -179,7 +184,7 @@ const styles = StyleSheet.create({
   iconBox: {
     width: 36,
     height: 36,
-    borderRadius: 10,
+    borderRadius: RADIUS.control,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
@@ -188,7 +193,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     height: 34,
-    borderRadius: 17,
+    borderRadius: RADIUS.pill,
     paddingHorizontal: 2,
   },
   stepButton: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
@@ -196,7 +201,8 @@ const styles = StyleSheet.create({
   previewButton: {
     marginTop: 18,
     height: 46,
-    borderRadius: 23,
+    borderRadius: RADIUS.control,
+    ...CONTINUOUS_CORNER,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',

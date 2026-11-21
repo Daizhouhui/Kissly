@@ -1,12 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAppStore } from '../../src/core/store';
 import { ThemePreference } from '../../src/core/types';
+import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
+import { AppPressable } from '../../src/ui/app-pressable';
 import { NavHeader, SectionTitle } from '../../src/ui/components';
 import { useAppTheme } from '../../src/ui/theme';
 import { getTheme, THEME_ACCENTS } from '../../src/theme';
+
+const Pressable = AppPressable;
 
 const MODES: Array<{ id: ThemePreference; label: string; icon: any }> = [
   { id: 'system', label: '跟随系统', icon: 'phone-portrait-outline' },
@@ -29,6 +33,7 @@ function ModeChip({
   return (
     <Pressable
       onPress={onPress}
+      tone={active ? 'onColor' : 'surface'}
       style={[
         styles.modeChip,
         {
@@ -92,6 +97,7 @@ export default function AppearanceSettingsScreen() {
             return (
               <Pressable
                 key={accent.id}
+                radius={RADIUS.card}
                 onPress={() => patchSettings({ themeAccent: accent.id })}
                 style={[
                   styles.accentCard,
@@ -146,6 +152,7 @@ export default function AppearanceSettingsScreen() {
         </View>
 
         <Pressable
+          radius={0}
           onPress={() => router.push('/settings/subtitle' as any)}
           style={[styles.linkRow, { borderColor: theme.colors.border }]}
         >
@@ -168,7 +175,7 @@ const styles = StyleSheet.create({
   modeChip: {
     flex: 1,
     height: 44,
-    borderRadius: 13,
+    borderRadius: RADIUS.control,
     borderWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
     alignItems: 'center',
@@ -179,7 +186,8 @@ const styles = StyleSheet.create({
   accentCard: {
     width: '31%',
     minWidth: 92,
-    borderRadius: 16,
+    borderRadius: RADIUS.card,
+    ...CONTINUOUS_CORNER,
     borderWidth: 1,
     paddingVertical: 14,
     alignItems: 'center',
@@ -188,12 +196,13 @@ const styles = StyleSheet.create({
   accentDot: {
     width: 30,
     height: 30,
-    borderRadius: 15,
+    borderRadius: RADIUS.pill,
     alignItems: 'center',
     justifyContent: 'center',
   },
   previewCard: {
-    borderRadius: 18,
+    borderRadius: RADIUS.card,
+    ...CONTINUOUS_CORNER,
     borderWidth: StyleSheet.hairlineWidth,
     padding: 16,
     gap: 14,
@@ -201,13 +210,13 @@ const styles = StyleSheet.create({
   previewIcon: {
     width: 40,
     height: 40,
-    borderRadius: 13,
+    borderRadius: RADIUS.control,
     alignItems: 'center',
     justifyContent: 'center',
   },
   previewButton: {
     alignSelf: 'flex-start',
-    borderRadius: 10,
+    borderRadius: RADIUS.control,
     paddingHorizontal: 16,
     paddingVertical: 9,
   },

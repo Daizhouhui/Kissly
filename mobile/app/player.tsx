@@ -6,12 +6,11 @@ import * as Sharing from 'expo-sharing';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { StatusBar } from 'expo-status-bar';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { ReactNode, forwardRef, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
   Platform,
-  Pressable,
   ScrollView,
   Share,
   StyleSheet,
@@ -42,10 +41,22 @@ import {
 import { parseCaptionText } from '@/src/core/youtube/parse';
 import { fontWeightFor, fontFamilyFor, sentenceCues } from '@/src/ui/subtitleStyle';
 import { appAlert as Alert } from '@/src/ui/app-alert';
+import { AppPressable, AppPressableProps } from '@/src/ui/app-pressable';
 import { RipplePressable } from '@/src/ui/ripple-pressable';
 import { LoopIcon, SpeedIcon } from '@/src/ui/player-icons';
-import { Squircle } from '@/src/ui/squircle';
+import { CONTINUOUS_CORNER, RADIUS } from '@/src/tokens';
 import { useAppTheme } from '@/src/ui/theme';
+
+const PlayerPressable = forwardRef<any, AppPressableProps>((props, ref) => (
+  <AppPressable {...props} pressableRef={ref} tone="onColor" />
+));
+PlayerPressable.displayName = 'PlayerPressable';
+const Pressable = PlayerPressable;
+
+const radiusStyle = (radius: number) => ({
+  borderRadius: radius,
+  ...CONTINUOUS_CORNER,
+});
 
 const AnyWebView: any = WebView;
 
@@ -2432,6 +2443,7 @@ export default function PlayerScreen() {
       )}
       {!landscape && videoTappable ? (
         <Pressable
+          feedback="none"
           style={[StyleSheet.absoluteFill, { zIndex: 2 }]}
           onPress={(event) =>
             handleVideoStageTap(event, videoStageSize.width, videoStageSize.height)
@@ -2698,7 +2710,7 @@ export default function PlayerScreen() {
       ) : (
         <View style={styles.bottomActions}>
           <Pressable
-            ref={subtitleButtonRef}
+            pressableRef={subtitleButtonRef}
             collapsable={false}
             style={styles.action}
             onPress={openSubtitleModeMenu}
@@ -2747,6 +2759,7 @@ export default function PlayerScreen() {
   const landscapeOverlay = landscape ? (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
       <Pressable
+        feedback="none"
         style={StyleSheet.absoluteFill}
         onPress={(event) =>
           handleVideoStageTap(event, windowSize.width, windowSize.height)
@@ -2755,10 +2768,11 @@ export default function PlayerScreen() {
       {controlsVisible ? (
         <>
           <View style={[styles.landTop, { paddingTop: Math.max(8, insets.top) }]}>
-            <Squircle
-              fill="rgba(18,15,23,0.55)"
-              exponent={4}
-              style={styles.landProgressPill}
+            <View
+              style={[
+                styles.landProgressPill,
+                { backgroundColor: 'rgba(18,15,23,0.55)' },
+              ]}
             >
               <Text style={styles.landTime}>{formatTime(seekPreview ?? current)}</Text>
               <View
@@ -2796,7 +2810,7 @@ export default function PlayerScreen() {
                 </View>
               </View>
               <Text style={styles.landTime}>{formatTime(duration)}</Text>
-            </Squircle>
+            </View>
             <RipplePressable
               pressableRef={landscapeCcButtonRef}
               collapsable={false}
@@ -2875,14 +2889,15 @@ export default function PlayerScreen() {
           ]}
           pointerEvents="none"
         >
-          <Squircle
-            fill={
-              controlsVisible
-                ? 'rgba(16,13,24,0.6)'
-                : 'rgba(0,0,0,0.28)'
-            }
-            exponent={4}
-            style={styles.landSubBox}
+          <View
+            style={[
+              styles.landSubBox,
+              {
+                backgroundColor: controlsVisible
+                  ? 'rgba(16,13,24,0.6)'
+                  : 'rgba(0,0,0,0.28)',
+              },
+            ]}
           >
             {showOriginal ? (
               <Text
@@ -2914,7 +2929,7 @@ export default function PlayerScreen() {
                 {activeCue.translation}
               </Text>
             ) : null}
-          </Squircle>
+          </View>
         </View>
       ) : null}
     </View>
@@ -3092,7 +3107,7 @@ export default function PlayerScreen() {
         style={{
           flex: 1,
           backgroundColor: theme.colors.card,
-          borderRadius: 22,
+          ...radiusStyle(RADIUS.card),
           borderWidth: StyleSheet.hairlineWidth,
           borderColor: theme.colors.border,
           paddingHorizontal: 20,
@@ -3109,7 +3124,7 @@ export default function PlayerScreen() {
           <View
             style={{
               backgroundColor: theme.colors.primary,
-              borderRadius: 999,
+              ...radiusStyle(RADIUS.pill),
               paddingHorizontal: 11,
               paddingVertical: 4,
             }}
@@ -3150,7 +3165,7 @@ export default function PlayerScreen() {
                     style={{
                       height: 18,
                       width: Math.max(18, Math.min(74, word.replace(/[^\w'-]/g, '').length * 7.2)),
-                      borderRadius: 9,
+                      ...radiusStyle(RADIUS.badge),
                       backgroundColor: theme.colors.border,
                     }}
                   />
@@ -3207,7 +3222,7 @@ export default function PlayerScreen() {
 
   const rateSheetOverlay = () => (
     <View style={[styles.rateSheetMask, landscape && styles.rateSheetMaskLandscape]}>
-      <Pressable style={StyleSheet.absoluteFill} onPress={() => setRateSheet(false)} />
+      <Pressable feedback="none" style={StyleSheet.absoluteFill} onPress={() => setRateSheet(false)} />
       <View
         style={[
           styles.rateSheetCard,
@@ -3353,7 +3368,7 @@ export default function PlayerScreen() {
               <View
                 style={{
                   backgroundColor: theme.colors.surfaceAlt,
-                  borderRadius: 999,
+                  ...radiusStyle(RADIUS.pill),
                   paddingHorizontal: 16,
                   paddingVertical: 7,
                 }}
@@ -3495,7 +3510,7 @@ export default function PlayerScreen() {
     const menuWidth = 168;
     return (
       <View style={styles.modeMask}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={() => setModeMenu(false)} />
+        <Pressable feedback="none" style={StyleSheet.absoluteFill} onPress={() => setModeMenu(false)} />
         <View
           style={[
             styles.modePopover,
@@ -3582,7 +3597,7 @@ export default function PlayerScreen() {
         ]}
         pointerEvents="box-none"
       >
-        <Pressable style={StyleSheet.absoluteFill} onPress={() => setSheet(false)} />
+        <Pressable feedback="none" style={StyleSheet.absoluteFill} onPress={() => setSheet(false)} />
         <View
           style={[
             styles.sheetCard,
@@ -3592,9 +3607,7 @@ export default function PlayerScreen() {
                   alignSelf: 'center',
                   width: Math.min(720, Math.round(windowSize.width * 0.66)),
                   height: Math.min(640, Math.round(windowSize.height * 0.88)),
-                  borderRadius: 26,
-                  borderBottomLeftRadius: 26,
-                  borderBottomRightRadius: 26,
+                  ...radiusStyle(RADIUS.modal),
                   paddingTop: 14,
                   paddingBottom: Math.max(14, insets.bottom),
                 }
@@ -4101,7 +4114,7 @@ export default function PlayerScreen() {
                             style={{
                               flex: 1,
                               height: 42,
-                              borderRadius: 12,
+                              ...radiusStyle(RADIUS.control),
                               alignItems: 'center',
                               justifyContent: 'center',
                               backgroundColor: active ? theme.colors.primarySoft : theme.colors.surfaceAlt,
@@ -4576,7 +4589,7 @@ export default function PlayerScreen() {
               style={{
                 flex: 1,
                 height: 40,
-                borderRadius: 20,
+                ...radiusStyle(RADIUS.pill),
                 alignItems: 'center',
                 justifyContent: 'center',
                 backgroundColor: active ? theme.colors.primary : theme.colors.surfaceAlt,
@@ -4741,6 +4754,7 @@ function SwitchPill({ value, onPress }: { value: boolean; onPress: () => void })
   return (
     <Pressable
       onPress={onPress}
+      feedback="opacity"
       style={[
         styles.switchPill,
         { backgroundColor: value ? theme.colors.primary : theme.colors.surfaceAlt },
@@ -4774,7 +4788,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 14,
     backgroundColor: '#000000',
     overflow: 'hidden',
-    borderRadius: 18,
+    ...radiusStyle(RADIUS.card),
   },
   videoFrameHidden: {
     height: 0,
@@ -4799,7 +4813,7 @@ const styles = StyleSheet.create({
   webVideoFallbackIcon: {
     width: 44,
     height: 44,
-    borderRadius: 22,
+    ...radiusStyle(RADIUS.pill),
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 9,
@@ -4828,7 +4842,7 @@ const styles = StyleSheet.create({
     marginTop: -34,
     width: 68,
     height: 68,
-    borderRadius: 34,
+    ...radiusStyle(RADIUS.pill),
     backgroundColor: 'rgba(10,8,16,0.72)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -4845,7 +4859,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.12)',
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 8,
+    ...radiusStyle(RADIUS.badge),
   },
   qualityChipText: { color: '#CFE2D7', fontSize: 10, fontWeight: '700' },
   videoFullscreen: {
@@ -4854,7 +4868,7 @@ const styles = StyleSheet.create({
     bottom: 10,
     width: 34,
     height: 34,
-    borderRadius: 17,
+    ...radiusStyle(RADIUS.pill),
     backgroundColor: 'rgba(10,8,16,0.7)',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(255,255,255,0.2)',
@@ -4877,7 +4891,7 @@ const styles = StyleSheet.create({
   problemText: { color: '#9A90AB', fontSize: 12, textAlign: 'center', lineHeight: 18, marginTop: 6 },
   problemButton: {
     backgroundColor: '#446B5B',
-    borderRadius: 12,
+    ...radiusStyle(RADIUS.control),
     paddingHorizontal: 14,
     paddingVertical: 9,
   },
@@ -4894,7 +4908,7 @@ const styles = StyleSheet.create({
   },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 5, maxWidth: '70%' },
   statusText: { color: '#8D849D', fontSize: 11, flexShrink: 1 },
-  cue: { paddingVertical: 9, paddingHorizontal: 8, borderRadius: 12 },
+  cue: { paddingVertical: 9, paddingHorizontal: 8, ...radiusStyle(RADIUS.control) },
   transcriptWrap: { flex: 1 },
   followCurrentButton: {
     position: 'absolute',
@@ -4902,7 +4916,7 @@ const styles = StyleSheet.create({
     bottom: 12,
     height: 30,
     paddingHorizontal: 10,
-    borderRadius: 15,
+    ...radiusStyle(RADIUS.pill),
     borderWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
     alignItems: 'center',
@@ -4930,7 +4944,7 @@ const styles = StyleSheet.create({
   cueHeart: {
     width: 32,
     height: 32,
-    borderRadius: 16,
+    ...radiusStyle(RADIUS.pill),
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -4946,13 +4960,13 @@ const styles = StyleSheet.create({
   emptyTranscriptText: { color: '#8D849D', fontSize: 12, textAlign: 'center', lineHeight: 18, paddingHorizontal: 20 },
   controls: { backgroundColor: '#120E1B', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#241C33', paddingHorizontal: 18, paddingTop: 6 },
   progressTouch: { height: 22, justifyContent: 'center' },
-  progressRail: { height: 4, borderRadius: 2, backgroundColor: '#2B2340', overflow: 'hidden' },
-  progressFill: { height: '100%', borderRadius: 2, backgroundColor: '#446B5B' },
+  progressRail: { height: 4, ...radiusStyle(RADIUS.pill), backgroundColor: '#2B2340', overflow: 'hidden' },
+  progressFill: { height: '100%', ...radiusStyle(RADIUS.pill), backgroundColor: '#446B5B' },
   progressThumb: {
     position: 'absolute',
     width: 12,
     height: 12,
-    borderRadius: 6,
+    ...radiusStyle(RADIUS.pill),
     backgroundColor: '#C4B5FD',
     marginLeft: -6,
   },
@@ -4979,7 +4993,7 @@ const styles = StyleSheet.create({
     minWidth: 25,
     height: 15,
     paddingHorizontal: 4,
-    borderRadius: 8,
+    ...radiusStyle(RADIUS.badge),
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -4992,14 +5006,14 @@ const styles = StyleSheet.create({
   loopButton: {
     width: 38,
     height: 34,
-    borderRadius: 17,
+    ...radiusStyle(RADIUS.pill),
     alignItems: 'center',
     justifyContent: 'center',
   },
   playButton: {
     width: 56,
     height: 56,
-    borderRadius: 28,
+    ...radiusStyle(RADIUS.pill),
     backgroundColor: '#446B5B',
     alignItems: 'center',
     justifyContent: 'center',
@@ -5031,7 +5045,7 @@ const styles = StyleSheet.create({
   precisionActionActive: {
     width: 46,
     height: 46,
-    borderRadius: 23,
+    ...radiusStyle(RADIUS.pill),
   },
   landscapeRoot: { flex: 1, backgroundColor: '#000000' },
   landscapeBack: {
@@ -5039,7 +5053,7 @@ const styles = StyleSheet.create({
     left: 16,
     width: 42,
     height: 42,
-    borderRadius: 21,
+    ...radiusStyle(RADIUS.pill),
     backgroundColor: 'rgba(0,0,0,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -5057,7 +5071,7 @@ const styles = StyleSheet.create({
     right: 16,
     width: 42,
     height: 42,
-    borderRadius: 21,
+    ...radiusStyle(RADIUS.pill),
     backgroundColor: 'rgba(0,0,0,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -5089,14 +5103,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     paddingHorizontal: 11,
+    ...radiusStyle(RADIUS.pill),
+    overflow: 'hidden',
   },
   landProgressTouch: { flex: 1, height: 28, justifyContent: 'center', minWidth: 80 },
-  landProgressRail: { height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.28)', overflow: 'hidden' },
+  landProgressRail: { height: 4, ...radiusStyle(RADIUS.pill), backgroundColor: 'rgba(255,255,255,0.28)', overflow: 'hidden' },
   landProgressFill: { height: '100%', backgroundColor: '#FFFFFF' },
   landIconButton: {
     width: 40,
     height: 40,
-    borderRadius: 20,
+    ...radiusStyle(RADIUS.pill),
     backgroundColor: 'rgba(18,15,23,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -5105,7 +5121,7 @@ const styles = StyleSheet.create({
   landTopRatePill: {
     width: 40,
     height: 40,
-    borderRadius: 20,
+    ...radiusStyle(RADIUS.pill),
     backgroundColor: 'rgba(18,15,23,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -5125,7 +5141,7 @@ const styles = StyleSheet.create({
   landTransportButton: {
     width: 46,
     height: 46,
-    borderRadius: 23,
+    ...radiusStyle(RADIUS.pill),
     backgroundColor: 'rgba(18,15,23,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -5133,7 +5149,7 @@ const styles = StyleSheet.create({
   landPlay: {
     width: 62,
     height: 62,
-    borderRadius: 31,
+    ...radiusStyle(RADIUS.pill),
     backgroundColor: 'rgba(18,15,23,0.62)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -5142,7 +5158,7 @@ const styles = StyleSheet.create({
     minWidth: 46,
     height: 30,
     paddingHorizontal: 8,
-    borderRadius: 15,
+    ...radiusStyle(RADIUS.pill),
     backgroundColor: 'rgba(0,0,0,0.48)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -5160,6 +5176,8 @@ const styles = StyleSheet.create({
     maxWidth: '88%',
     paddingHorizontal: 18,
     paddingVertical: 10,
+    ...radiusStyle(RADIUS.card),
+    overflow: 'hidden',
   },
   landSubOriginal: {
     color: '#FFFFFF',
@@ -5188,7 +5206,7 @@ const styles = StyleSheet.create({
   },
   modePopover: {
     position: 'absolute',
-    borderRadius: 16,
+    ...radiusStyle(RADIUS.card),
     borderWidth: StyleSheet.hairlineWidth,
     padding: 6,
     shadowColor: '#000000',
@@ -5199,7 +5217,7 @@ const styles = StyleSheet.create({
   },
   modeRow: {
     height: 44,
-    borderRadius: 11,
+    ...radiusStyle(RADIUS.control),
     paddingHorizontal: 10,
     flexDirection: 'row',
     alignItems: 'center',
@@ -5211,7 +5229,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     bottom: 120,
     backgroundColor: 'rgba(30,22,46,0.94)',
-    borderRadius: 999,
+    ...radiusStyle(RADIUS.pill),
     paddingHorizontal: 16,
     paddingVertical: 9,
   },
@@ -5227,8 +5245,9 @@ const styles = StyleSheet.create({
     zIndex: 100,
   },
   sheetCard: {
-    borderTopLeftRadius: 26,
-    borderTopRightRadius: 26,
+    borderTopLeftRadius: RADIUS.modal,
+    borderTopRightRadius: RADIUS.modal,
+    ...CONTINUOUS_CORNER,
     paddingHorizontal: 16,
     paddingTop: 10,
   },
@@ -5248,8 +5267,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   rateSheetCard: {
-    borderTopLeftRadius: 26,
-    borderTopRightRadius: 26,
+    borderTopLeftRadius: RADIUS.modal,
+    borderTopRightRadius: RADIUS.modal,
+    ...CONTINUOUS_CORNER,
     borderWidth: StyleSheet.hairlineWidth,
     borderBottomWidth: 0,
     paddingHorizontal: 20,
@@ -5258,7 +5278,7 @@ const styles = StyleSheet.create({
   rateSheetCardLandscape: {
     width: '72%',
     maxWidth: 620,
-    borderRadius: 24,
+    ...radiusStyle(RADIUS.modal),
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   rateSheetTitle: {
@@ -5275,7 +5295,7 @@ const styles = StyleSheet.create({
   ratePreset: {
     flex: 1,
     height: 40,
-    borderRadius: 12,
+    ...radiusStyle(RADIUS.control),
     borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
@@ -5302,14 +5322,14 @@ const styles = StyleSheet.create({
     right: 0,
     top: 13,
     height: 8,
-    borderRadius: 4,
+    ...radiusStyle(RADIUS.pill),
   },
   rateSliderFill: {
     position: 'absolute',
     left: 0,
     top: 13,
     height: 8,
-    borderRadius: 4,
+    ...radiusStyle(RADIUS.pill),
   },
   rateSliderDot: {
     position: 'absolute',
@@ -5317,7 +5337,7 @@ const styles = StyleSheet.create({
     width: 4,
     height: 4,
     marginLeft: -2,
-    borderRadius: 2,
+    ...radiusStyle(RADIUS.pill),
   },
   rateSliderThumb: {
     position: 'absolute',
@@ -5325,7 +5345,7 @@ const styles = StyleSheet.create({
     width: 2.5,
     height: 20,
     marginLeft: -1.25,
-    borderRadius: 2,
+    ...radiusStyle(RADIUS.pill),
   },
   rateValueLabel: {
     alignSelf: 'center',
@@ -5342,7 +5362,7 @@ const styles = StyleSheet.create({
   sheetHeaderButton: {
     width: 40,
     height: 40,
-    borderRadius: 20,
+    ...radiusStyle(RADIUS.pill),
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -5355,7 +5375,7 @@ const styles = StyleSheet.create({
   },
   optionList: { gap: 10, paddingBottom: 8 },
   optionCard: {
-    borderRadius: 16,
+    ...radiusStyle(RADIUS.card),
     paddingHorizontal: 16,
     paddingVertical: 15,
     minHeight: 72,
@@ -5373,7 +5393,7 @@ const styles = StyleSheet.create({
   },
   fontOption: {
     minHeight: 58,
-    borderRadius: 14,
+    ...radiusStyle(RADIUS.control),
     paddingHorizontal: 15,
     paddingVertical: 10,
     marginBottom: 8,
@@ -5386,21 +5406,21 @@ const styles = StyleSheet.create({
     height: 34,
     justifyContent: 'center',
   },
-  fontTrack: { height: 7, borderRadius: 4, overflow: 'hidden' },
-  fontTrackFill: { height: 7, borderRadius: 4 },
+  fontTrack: { height: 7, ...radiusStyle(RADIUS.pill), overflow: 'hidden' },
+  fontTrackFill: { height: 7, ...radiusStyle(RADIUS.pill) },
   fontDot: {
     position: 'absolute',
     width: 5,
     height: 5,
-    borderRadius: 3,
+    ...radiusStyle(RADIUS.pill),
     marginLeft: -2,
   },
   panelHint: { fontSize: 11, lineHeight: 18, marginTop: 2, paddingHorizontal: 4 },
-  sheetHandle: { alignSelf: 'center', width: 42, height: 4, borderRadius: 2, backgroundColor: '#4A4058', marginBottom: 12 },
+  sheetHandle: { alignSelf: 'center', width: 42, height: 4, ...radiusStyle(RADIUS.pill), backgroundColor: '#4A4058', marginBottom: 12 },
   sheetTitle: { color: '#F5F2FF', fontSize: 18, fontWeight: '800', marginBottom: 12 },
   sheetGroup: {
     backgroundColor: '#1C1628',
-    borderRadius: 16,
+    ...radiusStyle(RADIUS.card),
     paddingHorizontal: 12,
     marginBottom: 12,
     overflow: 'hidden',
@@ -5414,15 +5434,15 @@ const styles = StyleSheet.create({
     borderBottomColor: '#2A2138',
     paddingVertical: 6,
   },
-  sheetIcon: { width: 30, height: 30, borderRadius: 9, backgroundColor: '#271E3A', alignItems: 'center', justifyContent: 'center' },
+  sheetIcon: { width: 30, height: 30, ...radiusStyle(RADIUS.control), backgroundColor: '#271E3A', alignItems: 'center', justifyContent: 'center' },
   sheetRowTitle: { color: '#EFE9FA', fontSize: 14.5, fontWeight: '600' },
   sheetRowSubtitle: { color: '#817791', fontSize: 11, marginTop: 2 },
   sheetRowValue: { color: '#A99FBA', fontSize: 12 },
-  switchPill: { width: 46, height: 27, borderRadius: 14, backgroundColor: '#332A44', padding: 3 },
+  switchPill: { width: 46, height: 27, ...radiusStyle(RADIUS.pill), backgroundColor: '#332A44', padding: 3 },
   switchPillOn: { backgroundColor: '#446B5B' },
-  switchKnob: { width: 21, height: 21, borderRadius: 11, backgroundColor: '#FFFFFF' },
+  switchKnob: { width: 21, height: 21, ...radiusStyle(RADIUS.pill), backgroundColor: '#FFFFFF' },
   switchKnobOn: { alignSelf: 'flex-end' },
-  fontStepper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#2A2238', borderRadius: 10, height: 32 },
+  fontStepper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#2A2238', ...radiusStyle(RADIUS.control), height: 32 },
   stepButton: { width: 34, height: 32, alignItems: 'center', justifyContent: 'center' },
   fontStepValue: { color: '#D9D0EB', fontSize: 11, width: 36, textAlign: 'center' },
   errorTitle: { color: '#fff', fontSize: 18, fontWeight: '700' },

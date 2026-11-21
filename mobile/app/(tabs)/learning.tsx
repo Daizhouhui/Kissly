@@ -2,12 +2,16 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../../src/core/store';
 import { relativeTime } from '../../src/core/utils';
+import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
+import { AppPressable } from '../../src/ui/app-pressable';
 import { useAppTheme } from '../../src/ui/theme';
+
+const Pressable = AppPressable;
 
 export default function LearningScreen() {
   const theme = useAppTheme();
@@ -45,7 +49,7 @@ export default function LearningScreen() {
             style={{
               width: 42,
               height: 42,
-              borderRadius: 21,
+              borderRadius: RADIUS.pill,
               borderWidth: 1,
               borderColor: theme.colors.border,
               backgroundColor: theme.colors.card,
@@ -70,7 +74,8 @@ export default function LearningScreen() {
           <Pressable
             onPress={() => router.push('/favorites' as any)}
             accessibilityLabel="查看全部收藏视频"
-            style={({ pressed }) => [styles.statsHalf, pressed && { opacity: 0.72 }]}
+            radius={0}
+            style={styles.statsHalf}
           >
             <View style={styles.statsCopy}>
               <Text style={{ color: theme.colors.textSecondary, fontSize: 11, fontWeight: '600' }}>收藏视频</Text>
@@ -90,7 +95,8 @@ export default function LearningScreen() {
           <Pressable
             onPress={() => router.push('/history' as any)}
             accessibilityLabel="查看全部观看记录"
-            style={({ pressed }) => [styles.statsHalf, pressed && { opacity: 0.72 }]}
+            radius={0}
+            style={styles.statsHalf}
           >
             <View style={styles.statsCopy}>
               <Text style={{ color: theme.colors.textSecondary, fontSize: 11, fontWeight: '600' }}>最近观看</Text>
@@ -114,6 +120,7 @@ export default function LearningScreen() {
             <Pressable
               onPress={() => router.push('/favorites' as any)}
               hitSlop={8}
+              feedback="opacity"
               accessibilityLabel="查看全部收藏视频"
             >
               <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>全部</Text>
@@ -126,7 +133,8 @@ export default function LearningScreen() {
             style={{
               alignItems: 'center',
               backgroundColor: theme.colors.card,
-              borderRadius: 22,
+              borderRadius: RADIUS.card,
+              ...CONTINUOUS_CORNER,
               borderWidth: StyleSheet.hairlineWidth,
               borderColor: theme.colors.border,
               padding: 28,
@@ -137,7 +145,7 @@ export default function LearningScreen() {
               style={{
                 width: 70,
                 height: 70,
-                borderRadius: 22,
+                borderRadius: RADIUS.control,
                 backgroundColor: theme.colors.primarySoft,
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -160,13 +168,14 @@ export default function LearningScreen() {
               在播放器里点“收藏”，视频会出现在这里；不用再翻订阅流去找。
             </Text>
             <Pressable
+              tone="onColor"
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
                 gap: 7,
                 height: 44,
                 paddingHorizontal: 18,
-                borderRadius: 14,
+                borderRadius: RADIUS.control,
                 backgroundColor: theme.colors.primary,
               }}
               onPress={() => router.push('/' as any)}
@@ -185,12 +194,12 @@ export default function LearningScreen() {
                   params: { videoId: item.videoId, title: item.title, author: item.author },
                 } as any)
               }
-              style={({ pressed }) => [
+              radius={RADIUS.card}
+              style={[
                 styles.card,
                 {
                   backgroundColor: theme.colors.card,
                   borderColor: theme.colors.border,
-                  opacity: pressed ? 0.9 : 1,
                 },
               ]}
             >
@@ -227,13 +236,14 @@ export default function LearningScreen() {
           <>
             <View style={styles.sectionRow}>
               <Text style={{ color: theme.colors.text, fontSize: 17, fontWeight: '800' }}>最近观看</Text>
-              <Pressable onPress={() => router.push('/history' as any)}>
+              <Pressable onPress={() => router.push('/history' as any)} feedback="opacity">
                 <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>全部</Text>
               </Pressable>
             </View>
             {history.slice(0, 10).map((item) => (
               <Pressable
                 key={`history-${item.videoId}`}
+                radius={0}
                 onPress={() =>
                   router.push({
                     pathname: '/player',
@@ -251,7 +261,7 @@ export default function LearningScreen() {
               >
                 <Image
                   source={{ uri: item.thumbnail || `https://i.ytimg.com/vi/${item.videoId}/hqdefault.jpg` }}
-                  style={[styles.historyThumb, { backgroundColor: theme.colors.surfaceAlt }]}
+                  style={[styles.historyThumb as any, { backgroundColor: theme.colors.surfaceAlt }]}
                   contentFit="cover"
                 />
                 <View style={{ flex: 1 }}>
@@ -276,7 +286,8 @@ const styles = StyleSheet.create({
   titleRow: { flexDirection: 'row', alignItems: 'center' },
   statsCard: {
     marginTop: 20,
-    borderRadius: 22,
+    borderRadius: RADIUS.card,
+    ...CONTINUOUS_CORNER,
     borderWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
     alignItems: 'stretch',
@@ -295,7 +306,7 @@ const styles = StyleSheet.create({
   statsAction: {
     width: 38,
     height: 38,
-    borderRadius: 12,
+    borderRadius: RADIUS.control,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -316,23 +327,24 @@ const styles = StyleSheet.create({
     gap: 12,
     padding: 9,
     paddingRight: 12,
-    borderRadius: 18,
+    borderRadius: RADIUS.card,
+    ...CONTINUOUS_CORNER,
     borderWidth: StyleSheet.hairlineWidth,
     marginBottom: 10,
   },
-  thumbWrap: { width: 132, aspectRatio: 16 / 9, borderRadius: 12, overflow: 'hidden' },
+  thumbWrap: { width: 132, aspectRatio: 16 / 9, borderRadius: RADIUS.control, ...CONTINUOUS_CORNER, overflow: 'hidden' },
   playBadge: {
     position: 'absolute',
     left: 8,
     bottom: 8,
     width: 26,
     height: 26,
-    borderRadius: 13,
+    borderRadius: RADIUS.pill,
     backgroundColor: 'rgba(0,0,0,0.66)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   cardBody: { flex: 1, minWidth: 0 },
   removeButton: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center' },
-  historyThumb: { width: 100, aspectRatio: 16 / 9, borderRadius: 9 },
+  historyThumb: { width: 100, aspectRatio: 16 / 9, borderRadius: RADIUS.control, ...CONTINUOUS_CORNER },
 });

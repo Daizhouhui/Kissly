@@ -2,13 +2,17 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../src/core/store';
+import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
 import { appAlert as Alert } from '../src/ui/app-alert';
+import { AppPressable } from '../src/ui/app-pressable';
 import { EmptyState, ManageBar, NavHeader, SelectionCircle } from '../src/ui/components';
 import { useAppTheme } from '../src/ui/theme';
+
+const Pressable = AppPressable;
 
 function formatTime(value: number) {
   if (!isFinite(value) || value < 0) value = 0;
@@ -117,7 +121,7 @@ export default function FavoritesScreen() {
             <Pressable
               hitSlop={8}
               onPress={toggleManage}
-              style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+              feedback="opacity"
             >
               <Text
                 style={{
@@ -177,6 +181,8 @@ export default function FavoritesScreen() {
             return (
               <Pressable
                 accessibilityState={manage ? { selected } : undefined}
+                feedback={manage ? 'opacity' : 'ripple'}
+                radius={RADIUS.card}
                 onPress={() => {
                   if (manage) {
                     toggleSelection(item.videoId);
@@ -187,7 +193,6 @@ export default function FavoritesScreen() {
                     params: { videoId: item.videoId, title: item.title, author: item.author },
                   } as any);
                 }}
-                style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}
               >
                 <View
                   style={[
@@ -233,11 +238,10 @@ export default function FavoritesScreen() {
                     <Pressable
                       onPress={() => removeFavorite(item.videoId)}
                       hitSlop={8}
-                      style={({ pressed }) => [
+                      style={[
                         styles.removeButton,
                         {
                           backgroundColor: theme.colors.primarySoft,
-                          opacity: pressed ? 0.6 : 1,
                         },
                       ]}
                     >
@@ -271,6 +275,8 @@ export default function FavoritesScreen() {
             return (
               <Pressable
                 accessibilityState={manage ? { selected } : undefined}
+                feedback={manage ? 'opacity' : 'ripple'}
+                radius={RADIUS.card}
                 onPress={() => {
                   if (manage) {
                     toggleSelection(item.id);
@@ -285,7 +291,6 @@ export default function FavoritesScreen() {
                     },
                   } as any);
                 }}
-                style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}
               >
                 <View
                   style={[
@@ -329,11 +334,10 @@ export default function FavoritesScreen() {
                     <Pressable
                       onPress={() => removeSentenceFavorite(item.id)}
                       hitSlop={8}
-                      style={({ pressed }) => [
+                      style={[
                         styles.removeButton,
                         {
                           backgroundColor: theme.colors.primarySoft,
-                          opacity: pressed ? 0.6 : 1,
                         },
                       ]}
                     >
@@ -376,7 +380,8 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   tab: {
-    borderRadius: 999,
+    borderRadius: RADIUS.control,
+    ...CONTINUOUS_CORNER,
     paddingHorizontal: 14,
     height: 32,
     alignItems: 'center',
@@ -387,19 +392,21 @@ const styles = StyleSheet.create({
   videoCard: {
     flexDirection: 'row',
     gap: 12,
-    borderRadius: 16,
+    borderRadius: RADIUS.card,
+    ...CONTINUOUS_CORNER,
     padding: 10,
     marginBottom: 10,
     borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
   },
-  thumb: { width: 112, aspectRatio: 16 / 9, borderRadius: 10, overflow: 'hidden' },
+  thumb: { width: 112, aspectRatio: 16 / 9, borderRadius: RADIUS.control, ...CONTINUOUS_CORNER, overflow: 'hidden' },
   videoTitle: { fontSize: 13.5, fontWeight: '700', lineHeight: 19 },
   videoMeta: { fontSize: 11, marginTop: 4 },
   sentenceCard: {
     flexDirection: 'row',
     gap: 11,
-    borderRadius: 16,
+    borderRadius: RADIUS.card,
+    ...CONTINUOUS_CORNER,
     padding: 12,
     marginBottom: 10,
     borderWidth: StyleSheet.hairlineWidth,
@@ -407,7 +414,8 @@ const styles = StyleSheet.create({
   sentenceIcon: {
     width: 34,
     height: 34,
-    borderRadius: 17,
+    borderRadius: RADIUS.control,
+    ...CONTINUOUS_CORNER,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 1,
@@ -418,7 +426,8 @@ const styles = StyleSheet.create({
   removeButton: {
     width: 34,
     height: 34,
-    borderRadius: 17,
+    borderRadius: RADIUS.pill,
+    ...CONTINUOUS_CORNER,
     alignItems: 'center',
     justifyContent: 'center',
   },

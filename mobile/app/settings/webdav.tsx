@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -16,9 +15,13 @@ import { getSecret, setSecret } from '../../src/core/secrets';
 import { useAppStore } from '../../src/core/store';
 import { syncNow, testWebdav } from '../../src/core/sync';
 import { relativeTime } from '../../src/core/utils';
+import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
 import { appAlert as Alert } from '../../src/ui/app-alert';
+import { AppPressable } from '../../src/ui/app-pressable';
 import { Card, NavHeader, SectionTitle, SettingSwitch } from '../../src/ui/components';
 import { useAppTheme } from '../../src/ui/theme';
+
+const Pressable = AppPressable;
 
 export default function WebdavSettingsScreen() {
   const theme = useAppTheme();
@@ -94,6 +97,7 @@ export default function WebdavSettingsScreen() {
         subtitle="订阅与设置跨设备漫游"
         right={
           <Pressable
+            feedback="opacity"
             onPress={async () => {
               await persist();
               Alert.alert('已保存', 'WebDAV 配置已保存。');
@@ -115,7 +119,8 @@ export default function WebdavSettingsScreen() {
             alignItems: 'center',
             gap: 12,
             backgroundColor: theme.colors.primarySoft,
-            borderRadius: 18,
+            borderRadius: RADIUS.card,
+            ...CONTINUOUS_CORNER,
             padding: 16,
             marginBottom: 16,
           }}
@@ -124,7 +129,7 @@ export default function WebdavSettingsScreen() {
             style={{
               width: 42,
               height: 42,
-              borderRadius: 14,
+              borderRadius: RADIUS.control,
               backgroundColor: theme.colors.primary,
               alignItems: 'center',
               justifyContent: 'center',
@@ -177,16 +182,17 @@ export default function WebdavSettingsScreen() {
           <Pressable
             onPress={test}
             disabled={testing}
-            style={({ pressed }) => ({
+            style={{
               height: 44,
-              borderRadius: 12,
+              borderRadius: RADIUS.control,
+              ...CONTINUOUS_CORNER,
               backgroundColor: theme.colors.surfaceAlt,
               alignItems: 'center',
               justifyContent: 'center',
               flexDirection: 'row',
               gap: 8,
-              opacity: pressed || testing ? 0.6 : 1,
-            })}
+              opacity: testing ? 0.6 : 1,
+            }}
           >
             {testing ? <ActivityIndicator size="small" color={theme.colors.primary} /> : <Ionicons name="pulse" size={16} color={theme.colors.primary} />}
             <Text style={{ color: theme.colors.text, fontSize: 13, fontWeight: '700' }}>
@@ -196,15 +202,15 @@ export default function WebdavSettingsScreen() {
         </Card>
 
         <Pressable
+          feedback="opacity"
           onPress={() => Linking.openURL('https://app.koofr.net')}
-          style={({ pressed }) => ({
+          style={{
             flexDirection: 'row',
             alignItems: 'center',
             gap: 5,
             marginTop: 10,
             paddingHorizontal: 4,
-            opacity: pressed ? 0.6 : 1,
-          })}
+          }}
         >
           <Ionicons name="open-outline" size={14} color={theme.colors.textTertiary} />
           <Text style={{ color: theme.colors.textTertiary, fontSize: 11.5 }}>打开 Koofr 生成应用密码</Text>
@@ -258,19 +264,21 @@ export default function WebdavSettingsScreen() {
         </Card>
 
         <Pressable
+          tone="onColor"
           onPress={runSync}
           disabled={syncing}
-          style={({ pressed }) => ({
+          style={{
             marginTop: 20,
             height: 52,
-            borderRadius: 16,
+            borderRadius: RADIUS.control,
+            ...CONTINUOUS_CORNER,
             backgroundColor: theme.colors.primary,
             alignItems: 'center',
             justifyContent: 'center',
             flexDirection: 'row',
             gap: 8,
-            opacity: pressed || syncing ? 0.7 : 1,
-          })}
+            opacity: syncing ? 0.7 : 1,
+          }}
         >
           {syncing ? <ActivityIndicator color="#fff" /> : <Ionicons name="sync" size={18} color="#fff" />}
           <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>
@@ -317,7 +325,7 @@ function Field({
         autoCorrect={false}
         style={{
           height: 44,
-          borderRadius: 11,
+          borderRadius: RADIUS.control,
           backgroundColor: theme.colors.surfaceAlt,
           paddingHorizontal: 12,
           color: theme.colors.text,

@@ -6,7 +6,6 @@ import {
   ActivityIndicator,
   FlatList,
   Modal,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -23,6 +22,8 @@ import {
   fetchChannelVideosPage,
 } from '../src/core/youtube/channelVideos';
 import { fetchChannelFeed, fetchPlaylistFeed } from '../src/core/youtube/rss';
+import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
+import { AppPressable } from '../src/ui/app-pressable';
 import { NavHeader } from '../src/ui/components';
 import { useAppTheme } from '../src/ui/theme';
 import { VideoCard } from '../src/ui/VideoCard';
@@ -205,7 +206,7 @@ export default function ChannelScreen() {
         {avatar ? (
           <Image
             source={{ uri: avatar }}
-            style={{ width: 94, height: 94, borderRadius: 47 }}
+            style={{ width: 94, height: 94, borderRadius: RADIUS.pill, ...CONTINUOUS_CORNER } as any}
             contentFit="cover"
             transition={180}
           />
@@ -214,7 +215,7 @@ export default function ChannelScreen() {
             style={{
               width: 94,
               height: 94,
-              borderRadius: 47,
+              borderRadius: RADIUS.pill,
               backgroundColor: theme.colors.primarySoft,
               alignItems: 'center',
               justifyContent: 'center',
@@ -242,8 +243,9 @@ export default function ChannelScreen() {
         </Text>
 
         {description ? (
-          <Pressable
+          <AppPressable
             onPress={() => setExpandDescription((value) => !value)}
+            feedback="opacity"
             style={{ marginTop: 10, paddingHorizontal: 8 }}
           >
             <Text
@@ -255,11 +257,11 @@ export default function ChannelScreen() {
             <Text style={{ color: theme.colors.primary, fontSize: 11, fontWeight: '700', marginTop: 3 }}>
               {expandDescription ? '收起' : '更多'}
             </Text>
-          </Pressable>
+          </AppPressable>
         ) : null}
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 16 }}>
-          <Pressable
+          <AppPressable
             onPress={() => {
               const first = latestItems[0];
               if (!first) return;
@@ -269,10 +271,12 @@ export default function ChannelScreen() {
               } as any);
             }}
             disabled={!latestItems[0]}
+            tone="onColor"
             style={{
               height: 48,
               minWidth: 176,
-              borderRadius: 24,
+              borderRadius: RADIUS.control,
+              ...CONTINUOUS_CORNER,
               backgroundColor: theme.colors.primary,
               alignItems: 'center',
               justifyContent: 'center',
@@ -283,13 +287,14 @@ export default function ChannelScreen() {
           >
             <Ionicons name="play" size={19} color="#FFFFFF" />
             <Text style={{ color: '#FFFFFF', fontSize: 14, fontWeight: '800' }}>播放最新</Text>
-          </Pressable>
-          <Pressable
+          </AppPressable>
+          <AppPressable
             onPress={toggleSubscription}
             style={{
               width: 48,
               height: 48,
-              borderRadius: 24,
+              borderRadius: RADIUS.pill,
+              ...CONTINUOUS_CORNER,
               alignItems: 'center',
               justifyContent: 'center',
               backgroundColor: subscribed ? theme.colors.primarySoft : theme.colors.card,
@@ -302,7 +307,7 @@ export default function ChannelScreen() {
               size={24}
               color={subscribed ? theme.colors.primary : theme.colors.text}
             />
-          </Pressable>
+          </AppPressable>
         </View>
 
         {items.length ? (
@@ -339,7 +344,7 @@ export default function ChannelScreen() {
         ).map(([id, label, count]) => {
           const active = tab === id;
           return (
-            <Pressable
+            <AppPressable
               key={id}
               onPress={() => {
                 setTab(id);
@@ -360,13 +365,13 @@ export default function ChannelScreen() {
               <View
                 style={{
                   height: 2.5,
-                  borderRadius: 2,
+                  borderRadius: RADIUS.pill,
                   marginTop: 6,
                   backgroundColor: active ? theme.colors.text : 'transparent',
                   alignSelf: 'stretch',
                 }}
               />
-            </Pressable>
+            </AppPressable>
           );
         })}
       </View>
@@ -459,12 +464,12 @@ export default function ChannelScreen() {
                   {selectedPlaylist?.videoCount ? `${selectedPlaylist.videoCount} 个视频` : '播放列表'}
                 </Text>
               </View>
-              <Pressable
+              <AppPressable
                 onPress={() => setSelectedPlaylist(null)}
                 style={[styles.closeButton, { backgroundColor: theme.colors.surfaceAlt }]}
               >
                 <Ionicons name="close" size={21} color={theme.colors.text} />
-              </Pressable>
+              </AppPressable>
             </View>
             <ScrollView showsVerticalScrollIndicator={false}>
               {playlistVideosLoading ? (
@@ -518,11 +523,12 @@ const styles = StyleSheet.create({
   modalMask: { flex: 1, backgroundColor: 'rgba(0,0,0,0.32)', justifyContent: 'flex-end' },
   modalCard: {
     height: '86%',
-    borderTopLeftRadius: 26,
-    borderTopRightRadius: 26,
+    borderTopLeftRadius: RADIUS.modal,
+    borderTopRightRadius: RADIUS.modal,
+    ...CONTINUOUS_CORNER,
     paddingHorizontal: 16,
     paddingTop: 16,
   },
   modalHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 12 },
-  closeButton: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
+  closeButton: { width: 38, height: 38, borderRadius: RADIUS.pill, ...CONTINUOUS_CORNER, alignItems: 'center', justifyContent: 'center' },
 });

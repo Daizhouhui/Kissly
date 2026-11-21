@@ -20,6 +20,8 @@ import { useAppStore } from '../../src/core/store';
 import { DiscoverLayout, VideoItem } from '../../src/core/types';
 import { relativeTime } from '../../src/core/utils';
 import { useFeed } from '../../src/hooks/useFeed';
+import { CONTINUOUS_CORNER, innerRadius, RADIUS } from '../../src/tokens';
+import { AppPressable } from '../../src/ui/app-pressable';
 import { useAppTheme } from '../../src/ui/theme';
 import { VideoCard } from '../../src/ui/VideoCard';
 
@@ -139,30 +141,36 @@ export default function HomeScreen() {
             YouTube
           </Text>
         </View>
-        <Pressable
+        <AppPressable
           onPress={() => router.push('/subscriptions' as any)}
           hitSlop={8}
-          style={({ pressed }) => [
+          feedback="ripple"
+          radius={RADIUS.pill}
+          accessibilityLabel="管理全部频道"
+          style={[
             styles.allChannelsButton,
             {
               backgroundColor: theme.colors.surfaceAlt,
               borderColor: theme.colors.border,
-              opacity: pressed ? 0.65 : 1,
             },
           ]}
         >
           <Ionicons name="albums-outline" size={24} color={theme.colors.textSecondary} />
-        </Pressable>
+        </AppPressable>
       </View>
 
-      <Pressable
+      <AppPressable
         onPress={openSearch}
+        feedback="ripple"
+        radius={RADIUS.control}
+        accessibilityLabel="搜索 YouTube"
         style={{
           flexDirection: 'row',
           alignItems: 'center',
           gap: 9,
           backgroundColor: theme.colors.surfaceAlt,
-          borderRadius: 25,
+          borderRadius: RADIUS.control,
+          ...CONTINUOUS_CORNER,
           paddingHorizontal: 16,
           height: 50,
           marginTop: 16,
@@ -172,14 +180,19 @@ export default function HomeScreen() {
         <Text style={{ flex: 1, color: theme.colors.textTertiary, fontSize: 14.5 }}>
           搜索 YouTube
         </Text>
-      </Pressable>
+      </AppPressable>
 
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ gap: 14, paddingRight: 8, paddingTop: 18, paddingBottom: 8 }}
       >
-        <Pressable onPress={() => setChannelFilter('')} style={{ alignItems: 'center', width: 58 }}>
+        <AppPressable
+          onPress={() => setChannelFilter('')}
+          feedback="opacity"
+          accessibilityLabel="全部频道"
+          style={{ alignItems: 'center', width: 58 }}
+        >
           <View
             style={[
               styles.channelAvatar,
@@ -205,13 +218,15 @@ export default function HomeScreen() {
           >
             全部
           </Text>
-        </Pressable>
+        </AppPressable>
         {subscriptions.map((sub) => {
           const active = channelFilter === sub.channelId;
           return (
-            <Pressable
+            <AppPressable
               key={sub.channelId}
               onPress={() => setChannelFilter(active ? '' : sub.channelId)}
+              feedback="opacity"
+              accessibilityLabel={sub.title}
               style={{ alignItems: 'center', width: 58 }}
             >
               <View
@@ -226,7 +241,7 @@ export default function HomeScreen() {
                 {sub.avatar ? (
                   <Image
                     source={{ uri: sub.avatar }}
-                    style={{ width: 54, height: 54, borderRadius: 27 }}
+                    style={{ width: 54, height: 54, borderRadius: RADIUS.pill }}
                     contentFit="cover"
                     transition={140}
                   />
@@ -246,11 +261,11 @@ export default function HomeScreen() {
               >
                 {sub.title}
               </Text>
-            </Pressable>
+            </AppPressable>
           );
         })}
         <Link href="/add-subscription" asChild>
-          <Pressable style={{ alignItems: 'center', width: 58 }}>
+          <AppPressable feedback="opacity" accessibilityLabel="添加频道" style={{ alignItems: 'center', width: 58 }}>
             <View
               style={[
                 styles.channelAvatar,
@@ -273,30 +288,32 @@ export default function HomeScreen() {
             >
               添加
             </Text>
-          </Pressable>
+          </AppPressable>
         </Link>
       </ScrollView>
 
       {continueItem ? (
-        <Pressable
+        <AppPressable
           onPress={() =>
             router.push({
               pathname: '/player',
               params: { videoId: continueItem.videoId, title: continueItem.title, author: continueItem.author },
             } as any)
           }
-          style={({ pressed }) => [
+          feedback="ripple"
+          radius={RADIUS.card}
+          accessibilityLabel={`继续观看 ${continueItem.title}`}
+          style={[
             styles.continueCard,
             {
               backgroundColor: theme.colors.card,
               borderColor: theme.colors.border,
-              opacity: pressed ? 0.88 : 1,
             },
           ]}
         >
           <Image
             source={{ uri: continueItem.thumbnail || `https://i.ytimg.com/vi/${continueItem.videoId}/hqdefault.jpg` }}
-            style={styles.continueThumb}
+            style={styles.continueThumb as any}
             contentFit="cover"
             transition={140}
           />
@@ -311,19 +328,19 @@ export default function HomeScreen() {
                 alignItems: 'center',
                 gap: 6,
                 backgroundColor: theme.colors.surfaceAlt,
-                borderRadius: 999,
+                borderRadius: RADIUS.pill,
                 height: 27,
                 paddingHorizontal: 9,
                 marginTop: 8,
               }}
             >
               <Ionicons name="play" size={11} color={theme.colors.textSecondary} />
-              <View style={{ width: 48, height: 3, borderRadius: 2, backgroundColor: theme.colors.borderStrong }}>
+              <View style={{ width: 48, height: 3, borderRadius: RADIUS.pill, backgroundColor: theme.colors.borderStrong }}>
                 <View
                   style={{
                     width: `${Math.max(6, Math.round((continueItem.progress ?? 0) * 100))}%` as any,
                     height: 3,
-                    borderRadius: 2,
+                    borderRadius: RADIUS.pill,
                     backgroundColor: theme.colors.primary,
                   }}
                 />
@@ -333,7 +350,7 @@ export default function HomeScreen() {
               </Text>
             </View>
           </View>
-        </Pressable>
+        </AppPressable>
       ) : null}
 
       <View style={styles.filterRow}>
@@ -341,13 +358,17 @@ export default function HomeScreen() {
           {FILTERS.map((item) => {
             const active = filter === item.id;
             return (
-              <Pressable
+              <AppPressable
                 key={item.id}
                 onPress={() => setFilter(item.id)}
+                feedback="opacity"
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
                 style={{
                   paddingHorizontal: 18,
                   height: 36,
-                  borderRadius: 18,
+                  borderRadius: RADIUS.control,
+                  ...CONTINUOUS_CORNER,
                   alignItems: 'center',
                   justifyContent: 'center',
                   backgroundColor: active ? theme.colors.primary : 'transparent',
@@ -364,25 +385,29 @@ export default function HomeScreen() {
                 >
                   {item.label}
                 </Text>
-              </Pressable>
+              </AppPressable>
             );
           })}
         </ScrollView>
         <View ref={layoutButtonRef} collapsable={false}>
-          <Pressable
+          <AppPressable
             onPress={openLayoutMenu}
             hitSlop={6}
+            feedback="ripple"
+            radius={RADIUS.pill}
+            accessibilityLabel="切换视频布局"
             style={{
               width: 36,
               height: 36,
-              borderRadius: 18,
+              borderRadius: RADIUS.pill,
+              ...CONTINUOUS_CORNER,
               backgroundColor: theme.colors.surfaceAlt,
               alignItems: 'center',
               justifyContent: 'center',
             }}
           >
             <LayoutGlyph id={layout} size={18} color={theme.colors.textSecondary} />
-          </Pressable>
+          </AppPressable>
         </View>
       </View>
     </View>
@@ -443,7 +468,7 @@ export default function HomeScreen() {
                 style={{
                   width: 76,
                   height: 76,
-                  borderRadius: 38,
+                  borderRadius: RADIUS.pill,
                   backgroundColor: theme.colors.primarySoft,
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -466,19 +491,24 @@ export default function HomeScreen() {
               >
                 搜索常看的 YouTube 频道，首页会按更新时间汇总。
               </Text>
-              <Pressable
+              <AppPressable
                 onPress={openSearch}
+                feedback="ripple"
+                tone="onColor"
+                radius={RADIUS.control}
+                accessibilityRole="button"
                 style={{
                   height: 44,
                   paddingHorizontal: 26,
-                  borderRadius: 22,
+                  borderRadius: RADIUS.control,
+                  ...CONTINUOUS_CORNER,
                   backgroundColor: theme.colors.primary,
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
               >
                 <Text style={{ color: '#FFFFFF', fontSize: 13.5, fontWeight: '800' }}>搜索频道</Text>
-              </Pressable>
+              </AppPressable>
             </View>
           ) : (
             <View style={{ alignItems: 'center', paddingTop: 46 }}>
@@ -527,15 +557,20 @@ export default function HomeScreen() {
             {LAYOUTS.map((option) => {
               const active = layout === option.id;
               return (
-                <Pressable
+                <AppPressable
                   key={option.id}
                   onPress={() => {
                     patchSettings({ discoverLayout: option.id });
                     setLayoutMenu(false);
                   }}
+                  feedback="ripple"
+                  radius={RADIUS.control}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
                   style={{
                     height: 42,
-                    borderRadius: 12,
+                    borderRadius: RADIUS.control,
+                    ...CONTINUOUS_CORNER,
                     paddingHorizontal: 10,
                     flexDirection: 'row',
                     alignItems: 'center',
@@ -561,7 +596,7 @@ export default function HomeScreen() {
                   {active ? (
                     <Ionicons name="checkmark" size={18} color={theme.colors.primary} />
                   ) : null}
-                </Pressable>
+                </AppPressable>
               );
             })}
           </View>
@@ -581,7 +616,8 @@ const styles = StyleSheet.create({
   allChannelsButton: {
     width: 48,
     height: 48,
-    borderRadius: 24,
+    borderRadius: RADIUS.pill,
+    ...CONTINUOUS_CORNER,
     borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
@@ -589,7 +625,7 @@ const styles = StyleSheet.create({
   channelAvatar: {
     width: 58,
     height: 58,
-    borderRadius: 29,
+    borderRadius: RADIUS.pill,
     borderWidth: 2.5,
     alignItems: 'center',
     justifyContent: 'center',
@@ -598,7 +634,8 @@ const styles = StyleSheet.create({
   continueCard: {
     flexDirection: 'row',
     gap: 12,
-    borderRadius: 18,
+    borderRadius: RADIUS.card,
+    ...CONTINUOUS_CORNER,
     borderWidth: StyleSheet.hairlineWidth,
     padding: 10,
     marginTop: 10,
@@ -606,7 +643,8 @@ const styles = StyleSheet.create({
   continueThumb: {
     width: 112,
     aspectRatio: 16 / 9,
-    borderRadius: 12,
+    borderRadius: innerRadius(RADIUS.card, 10),
+    ...CONTINUOUS_CORNER,
     backgroundColor: '#1B1B19',
   },
   filterRow: {
@@ -619,7 +657,8 @@ const styles = StyleSheet.create({
   layoutPopover: {
     position: 'absolute',
     width: 152,
-    borderRadius: 16,
+    borderRadius: RADIUS.card,
+    ...CONTINUOUS_CORNER,
     padding: 8,
     borderWidth: StyleSheet.hairlineWidth,
     shadowColor: '#000',

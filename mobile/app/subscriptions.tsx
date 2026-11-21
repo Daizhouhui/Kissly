@@ -10,7 +10,6 @@ import {
   FlatList,
   PanResponder,
   Platform,
-  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -21,10 +20,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppStore } from '../src/core/store';
 import { Subscription } from '../src/core/types';
 import { parseTakeoutCsv } from '../src/core/youtube/channel';
+import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
 import { appAlert } from '../src/ui/app-alert';
+import { AppPressable } from '../src/ui/app-pressable';
 import { EmptyState, PrimaryButton } from '../src/ui/components';
 import { RipplePressable } from '../src/ui/ripple-pressable';
 import { useAppTheme } from '../src/ui/theme';
+
+const Pressable = AppPressable;
 
 const ROW_HEIGHT = 74;
 const SWIPE_ACTION_WIDTH = 144;
@@ -60,7 +63,7 @@ function CheckCircle({ checked }: { checked: boolean }) {
       style={{
         width: 26,
         height: 26,
-        borderRadius: 13,
+        borderRadius: RADIUS.pill,
         borderWidth: checked ? 0 : 1.5,
         borderColor: theme.colors.borderStrong,
         backgroundColor: checked ? theme.colors.primary : 'transparent',
@@ -285,11 +288,11 @@ function SortableRow({
             }}
             disabled={index === 0}
             accessibilityLabel="置顶频道"
-            style={({ pressed }) => [
+            style={[
               styles.swipeAction,
               {
                 backgroundColor: theme.colors.primarySoft,
-                opacity: index === 0 ? 0.38 : pressed ? 0.72 : 1,
+                opacity: index === 0 ? 0.38 : 1,
               },
             ]}
           >
@@ -304,11 +307,11 @@ function SortableRow({
               onDelete();
             }}
             accessibilityLabel="取消订阅"
-            style={({ pressed }) => [
+            tone="onColor"
+            style={[
               styles.swipeAction,
               {
                 backgroundColor: theme.colors.danger,
-                opacity: pressed ? 0.78 : 1,
               },
             ]}
           >
@@ -332,6 +335,7 @@ function SortableRow({
         }}
       >
         <Pressable
+          feedback="opacity"
           onPress={() => {
             if (openSwipe) {
               onSwipeClose();
@@ -352,10 +356,11 @@ function SortableRow({
             gap: 12,
             backgroundColor: dragging ? theme.colors.bgElevated : theme.colors.card,
             paddingHorizontal: 14,
-            borderTopLeftRadius: index === 0 ? 16 : 0,
-            borderTopRightRadius: index === 0 ? 16 : 0,
-            borderBottomLeftRadius: index === count - 1 ? 16 : 0,
-            borderBottomRightRadius: index === count - 1 ? 16 : 0,
+            borderTopLeftRadius: index === 0 ? RADIUS.card : 0,
+            borderTopRightRadius: index === 0 ? RADIUS.card : 0,
+            borderBottomLeftRadius: index === count - 1 ? RADIUS.card : 0,
+            borderBottomRightRadius: index === count - 1 ? RADIUS.card : 0,
+            ...CONTINUOUS_CORNER,
             borderBottomWidth: index === count - 1 ? 0 : StyleSheet.hairlineWidth,
             borderBottomColor: theme.colors.border,
           }}
@@ -365,7 +370,7 @@ function SortableRow({
           {item.avatar ? (
             <Image
               source={{ uri: item.avatar }}
-              style={{ width: 54, height: 54, borderRadius: 27 }}
+              style={{ width: 54, height: 54, borderRadius: RADIUS.pill } as any}
               contentFit="cover"
               transition={180}
             />
@@ -783,7 +788,7 @@ export default function SubscriptionsScreen() {
             style={{
               height: 42,
               marginTop: 6,
-              borderRadius: 14,
+              borderRadius: RADIUS.control,
               backgroundColor: theme.colors.surfaceAlt,
               flexDirection: 'row',
               alignItems: 'center',
@@ -812,7 +817,7 @@ export default function SubscriptionsScreen() {
               ]}
             />
             {query ? (
-              <Pressable onPress={() => setQuery('')} hitSlop={8}>
+              <Pressable onPress={() => setQuery('')} hitSlop={8} feedback="opacity">
                 <Ionicons name="close-circle" size={18} color={theme.colors.textTertiary} />
               </Pressable>
             ) : null}
@@ -828,7 +833,7 @@ export default function SubscriptionsScreen() {
               marginTop: 12,
             }}
           >
-            <Pressable onPress={toggleSelectAll} hitSlop={8}>
+            <Pressable onPress={toggleSelectAll} hitSlop={8} feedback="opacity">
               <Text style={{ color: theme.colors.primary, fontSize: 12.5, fontWeight: '700' }}>
                 {selected.size === filteredSubscriptions.length ? '取消全选' : '全选'}
               </Text>
@@ -937,12 +942,12 @@ export default function SubscriptionsScreen() {
           ListFooterComponent={
             subscriptions.length && !searchActive ? (
               <View style={{ alignItems: 'center', paddingTop: 20, gap: 8 }}>
-                <Pressable onPress={importCsv} hitSlop={8}>
+                <Pressable onPress={importCsv} hitSlop={8} feedback="opacity">
                   <Text style={{ color: theme.colors.textTertiary, fontSize: 11.5 }}>
                     从 CSV 导入
                   </Text>
                 </Pressable>
-                <Pressable onPress={exportCsv} hitSlop={8}>
+                <Pressable onPress={exportCsv} hitSlop={8} feedback="opacity">
                   <Text style={{ color: theme.colors.textTertiary, fontSize: 11.5 }}>
                     导出 CSV{busy ? '（处理中…）' : ''}
                   </Text>
@@ -982,7 +987,8 @@ export default function SubscriptionsScreen() {
             accessibilityLabel="批量删除"
             style={{
               backgroundColor: theme.colors.danger,
-              borderRadius: 12,
+              borderRadius: RADIUS.control,
+              ...CONTINUOUS_CORNER,
               paddingHorizontal: 20,
               height: 42,
               alignItems: 'center',
@@ -1012,8 +1018,8 @@ const styles = StyleSheet.create({
   swipeAction: {
     width: SWIPE_ACTION_BUTTON_WIDTH,
     height: 56,
-    borderRadius: 14,
-    borderCurve: 'continuous',
+    borderRadius: RADIUS.control,
+    ...CONTINUOUS_CORNER,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
@@ -1022,14 +1028,16 @@ const styles = StyleSheet.create({
   avatarFallback: {
     width: 54,
     height: 54,
-    borderRadius: 27,
+    borderRadius: RADIUS.pill,
+    ...CONTINUOUS_CORNER,
     alignItems: 'center',
     justifyContent: 'center',
   },
   subscribedMark: {
     width: 26,
     height: 26,
-    borderRadius: 13,
+    borderRadius: RADIUS.pill,
+    ...CONTINUOUS_CORNER,
     alignItems: 'center',
     justifyContent: 'center',
   },
