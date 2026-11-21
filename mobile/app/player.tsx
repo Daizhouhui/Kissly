@@ -2702,47 +2702,42 @@ export default function PlayerScreen() {
             collapsable={false}
             style={styles.action}
             onPress={openSubtitleModeMenu}
+            accessibilityLabel="字幕设置"
           >
             <Ionicons
               name={subtitleModeOption(subtitleMode).icon}
-              size={22}
+              size={24}
               color={theme.colors.textSecondary}
             />
-            <Text style={[styles.actionLabel, { color: theme.colors.textSecondary }]}>字幕</Text>
           </Pressable>
-          <Pressable style={styles.action} onPress={saveFavorite}>
+          <Pressable
+            style={styles.action}
+            onPress={saveFavorite}
+            accessibilityLabel={isFavorite ? '取消收藏' : '收藏'}
+          >
             <Ionicons
               name={isFavorite ? 'bookmark' : 'bookmark-outline'}
-              size={22}
+              size={24}
               color={isFavorite ? theme.colors.primary : theme.colors.textSecondary}
             />
-            <Text
-              style={[
-                styles.actionLabel,
-                { color: isFavorite ? theme.colors.primary : theme.colors.textSecondary },
-              ]}
-            >
-              收藏
-            </Text>
           </Pressable>
-          <Pressable style={styles.action} onPress={togglePrecision}>
+          <Pressable
+            style={styles.action}
+            onPress={togglePrecision}
+            accessibilityLabel="进入精听"
+          >
             <Ionicons
               name="headset-outline"
-              size={23}
-              color={blindMode ? theme.colors.primary : theme.colors.textSecondary}
+              size={24}
+              color={theme.colors.textSecondary}
             />
-            <Text
-              style={[
-                styles.actionLabel,
-                { color: blindMode ? theme.colors.primary : theme.colors.textSecondary },
-              ]}
-            >
-              精听
-            </Text>
           </Pressable>
-          <Pressable style={styles.action} onPress={handleFullscreen}>
-            <Ionicons name="resize-outline" size={23} color={theme.colors.textSecondary} />
-            <Text style={[styles.actionLabel, { color: theme.colors.textSecondary }]}>全屏</Text>
+          <Pressable
+            style={styles.action}
+            onPress={handleFullscreen}
+            accessibilityLabel="全屏"
+          >
+            <Ionicons name="resize-outline" size={24} color={theme.colors.textSecondary} />
           </Pressable>
         </View>
       )}
@@ -5013,9 +5008,14 @@ const styles = StyleSheet.create({
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 6 },
   },
-  bottomActions: { flexDirection: 'row', justifyContent: 'space-around', paddingTop: 4 },
-  action: { alignItems: 'center', gap: 3, minWidth: 56, paddingVertical: 4 },
-  actionLabel: { color: '#8A8099', fontSize: 10, fontWeight: '600' },
+  bottomActions: { flexDirection: 'row', justifyContent: 'space-around', paddingTop: 2 },
+  action: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 56,
+    minHeight: 36,
+    paddingVertical: 6,
+  },
   precisionActions: {
     flexDirection: 'row',
     justifyContent: 'space-around',
