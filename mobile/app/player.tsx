@@ -2030,11 +2030,6 @@ export default function PlayerScreen() {
               }}
               style={[
                 styles.cue,
-                active && {
-                  borderWidth: 1,
-                  borderColor: theme.colors.primary,
-                  backgroundColor: 'transparent',
-                },
                 past && { opacity: 0.5 },
               ]}
             >
