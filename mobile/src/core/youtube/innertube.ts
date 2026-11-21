@@ -184,27 +184,60 @@ export async function getVideoMeta(videoId: string): Promise<VideoMeta> {
   throw new Error('无法读取该视频的信息，可能被限制访问');
 }
 
+export function pickCaptionTracks(
+  tracks: CaptionTrack[],
+  preferredLanguage = 'en'
+): CaptionTrack[] {
+  if (!tracks.length) return [];
+  const manual = tracks.filter((track) => (track.kind ?? '') !== 'asr');
+  const auto = tracks.filter((track) => (track.kind ?? '') === 'asr');
+  const preferred = preferredLanguage.toLowerCase().split('-')[0];
+  const matches = (track: CaptionTrack) =>
+    track.languageCode.toLowerCase() === preferredLanguage.toLowerCase() ||
+    track.languageCode.toLowerCase().split('-')[0] === preferred;
+  const matchingManual = manual.filter(matches);
+  const matchingAuto = auto.filter(matches);
+  const candidates = matchingManual.length || matchingAuto.length
+    ? [...matchingManual, ...matchingAuto]
+    : [...manual, ...auto];
+  const seen = new Set<string>();
+  return candidates
+    .filter((track) => {
+      const key = `${track.languageCode}|${track.kind ?? 'manual'}|${track.baseUrl}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 3);
+}
+
 export function pickCaptionTrack(
   tracks: CaptionTrack[],
   preferredLanguage = 'en'
 ): CaptionTrack | null {
-  if (!tracks.length) return null;
-  const manual = tracks.filter((track) => (track.kind ?? '') !== 'asr');
-  const auto = tracks.filter((track) => (track.kind ?? '') === 'asr');
-  const preferred = preferredLanguage.toLowerCase().split('-')[0];
-  const match = (list: CaptionTrack[]) =>
-    list.find(
-      (track) =>
-        track.languageCode.toLowerCase() === preferredLanguage.toLowerCase() ||
-        track.languageCode.toLowerCase().split('-')[0] === preferred
-    );
-  return (
-    match(manual) ??
-    match(auto) ??
-    manual[0] ??
-    auto[0] ??
-    tracks[0]
-  );
+  return pickCaptionTracks(tracks, preferredLanguage)[0] ?? null;
+}
+
+/**
+ * How much of the video the parsed cues actually cover. YouTube's ASR can
+ * return a complete json3 track for one request and a truncated one for
+ * another; choosing only "the first track with 3 cues" creates the scattered
+ * missing-caption bug. Coverage and end-time are therefore scored together.
+ */
+export function captionQualityScore(cues: Cue[], durationSeconds = 0): number {
+  if (!cues.length) return 0;
+  const lastEnd = cues.reduce((max, cue) => Math.max(max, cue.end), 0);
+  const covered = cues.reduce((sum, cue) => sum + Math.max(0, cue.end - cue.start), 0);
+  const chars = cues.reduce((sum, cue) => sum + cue.text.length, 0);
+  const duration = durationSeconds > 0 ? durationSeconds : Math.max(lastEnd, 1);
+  let gapSeconds = 0;
+  for (let index = 1; index < cues.length; index += 1) {
+    const gap = cues[index].start - cues[index - 1].end;
+    if (gap > 2.5) gapSeconds += gap;
+  }
+  const coverage = Math.min(1, covered / duration);
+  const endRatio = Math.min(1, lastEnd / duration);
+  return coverage * 100 + endRatio * 30 - gapSeconds * 0.5 + Math.min(chars, 20000) * 0.001;
 }
 
 function withFormat(baseUrl: string, format: string): string {
@@ -216,33 +249,62 @@ function withFormat(baseUrl: string, format: string): string {
   return `${clean}${joiner}fmt=${format}`;
 }
 
-export async function fetchCaptionCues(track: CaptionTrack): Promise<Cue[]> {
-  // Keep a couple of client hints in the retry set. Some Android caption
-  // URLs only expose the complete word-level json3 payload with `c=ANDROID`.
+export async function fetchCaptionCues(
+  track: CaptionTrack,
+  durationSeconds = 0
+): Promise<Cue[]> {
+  // Fetch every format, score what actually came back, and keep the most
+  // complete response. YouTube sometimes serves a truncated json3 payload
+  // for the same track while the VTT response contains the full rolling
+  // transcript. The old code returned the first json3 with 3+ cues, which is
+  // exactly how scattered missing subtitles were introduced.
   const variants = [
-    withFormat(track.baseUrl, 'json3'),
-    `${withFormat(track.baseUrl, 'json3')}&c=ANDROID`,
-    withFormat(track.baseUrl, 'srv3'),
-    withFormat(track.baseUrl, 'vtt'),
+    { label: 'vtt', rank: 0, url: withFormat(track.baseUrl, 'vtt') },
+    { label: 'json3', rank: 5, url: withFormat(track.baseUrl, 'json3') },
+    {
+      label: 'json3-android',
+      rank: 5,
+      url: `${withFormat(track.baseUrl, 'json3')}&c=ANDROID`,
+    },
+    { label: 'srv3', rank: 3, url: withFormat(track.baseUrl, 'srv3') },
   ];
   let best: Cue[] = [];
-  for (const url of variants) {
+  let bestScore = -Infinity;
+  for (const variant of variants) {
     try {
-      const response = await httpText(url, {
+      const response = await httpText(variant.url, {
         timeoutMs: 20000,
         headers: {
           ...BROWSER_HEADERS,
+          'User-Agent':
+            'com.google.android.youtube/21.03.36 (Linux; U; Android 14) gzip',
           Accept: '*/*',
           Referer: 'https://www.youtube.com/',
         },
       });
       if (response.status !== 200 || !response.text.trim()) continue;
       const cues = parseCaptionText(response.text, track.languageCode);
-      if (cues.length > best.length) best = cues;
-      // json3 with meaningful word-level data is the desired result.
-      if (cues.length >= 3 && url.includes('fmt=json3')) return cues;
+      if (!cues.length) continue;
+      const score = captionQualityScore(cues, durationSeconds) + variant.rank;
+      if (score > bestScore) {
+        bestScore = score;
+        best = cues;
+      }
+      if (variant.label === 'vtt' && durationSeconds > 0) {
+        const lastEnd = cues.reduce((max, cue) => Math.max(max, cue.end), 0);
+        const covered = cues.reduce(
+          (sum, cue) => sum + Math.max(0, cue.end - cue.start),
+          0
+        );
+        // Only skip the remaining formats when the VTT really covers the
+        // whole video. Otherwise a partial VTT must be compared against the
+        // json3/srv3 responses.
+        if (covered / durationSeconds >= 0.92 && lastEnd / durationSeconds >= 0.95) {
+          return cues;
+        }
+      }
     } catch {
-      // Try the next caption format/client hint.
+      // Try the next caption format.
     }
   }
   if (best.length) return best;

@@ -171,12 +171,23 @@ export async function translateCueList(
   const settings = getSettings();
   const to = options.to ?? settings.targetLang;
   const providerKey = settings.provider;
-  const cacheKey = `cues:${videoId}:${trackKey}:${to}:${providerKey}`;
+  const cacheKey = `cues:v2:${videoId}:${trackKey}:${to}:${providerKey}`;
   const cached = await loadCached<{ cues: Cue[]; provider: ProviderId }>(
     cacheKey,
     7 * 24 * 60 * 60 * 1000
   );
-  if (cached?.cues?.length) return cached;
+  if (
+    cached?.cues?.length &&
+    cached.cues.length === cues.length &&
+    cached.cues.every(
+      (cue, index) =>
+        Math.abs(cue.start - cues[index].start) < 0.002 &&
+        Math.abs(cue.end - cues[index].end) < 0.002 &&
+        cue.text === cues[index].text
+    )
+  ) {
+    return cached;
+  }
 
   const texts = cues.map((cue) => cue.text);
   const result = await translateTexts(texts, options);

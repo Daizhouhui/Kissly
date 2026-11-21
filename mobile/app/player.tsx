@@ -32,11 +32,12 @@ import {
   siliconflowConfig,
 } from '@/src/core/translate/ai';
 import { providerDisplayName, translateCueList } from '@/src/core/translate';
-import { Cue, SubtitleMode } from '@/src/core/types';
+import { CaptionTrack, Cue, SubtitleMode } from '@/src/core/types';
 import {
+  captionQualityScore,
   fetchCaptionCues,
   getVideoMeta,
-  pickCaptionTrack,
+  pickCaptionTracks,
 } from '@/src/core/youtube/innertube';
 import { fontWeightFor, fontFamilyFor, sentenceCues } from '@/src/ui/subtitleStyle';
 import { useAppTheme } from '@/src/ui/theme';
@@ -647,23 +648,68 @@ export default function PlayerScreen() {
         setMetaTitle(meta.title || initialTitle);
         setMetaAuthor(meta.author || initialAuthor);
         setMetaChannelId(meta.channelId ?? '');
-        const track = pickCaptionTrack(meta.captionTracks, learningLang.startsWith('en') ? 'en' : learningLang);
-        if (!track) {
+        const tracks = pickCaptionTracks(
+          meta.captionTracks,
+          learningLang.startsWith('en') ? 'en' : learningLang
+        );
+        if (!tracks.length) {
           setSourceCues([]);
           setStatus('这个视频没有可用英文字幕');
           return;
         }
-        setTrackKey(`${track.languageCode}:${track.kind ?? 'manual'}`);
-        const fetched = await fetchCaptionCues(track);
-        if (cancelled) return;
+        let bestTrack: CaptionTrack | null = null;
+        let fetched: Cue[] = [];
+        let bestScore = -1;
+        for (const track of tracks) {
+          try {
+            const candidate = await fetchCaptionCues(track, meta.lengthSeconds);
+            if (cancelled) return;
+            const score = captionQualityScore(candidate, meta.lengthSeconds);
+            if (!bestTrack || score > bestScore) {
+              bestTrack = track;
+              fetched = candidate;
+              bestScore = score;
+            }
+            // A complete manual track is good enough; otherwise continue to
+            // the ASR track and keep whichever covers more of the video.
+            const lastEnd = candidate.reduce(
+              (max, cue) => Math.max(max, cue.end),
+              0
+            );
+            const covered = candidate.reduce(
+              (sum, cue) => sum + Math.max(0, cue.end - cue.start),
+              0
+            );
+            let gapSeconds = 0;
+            for (let index = 1; index < candidate.length; index += 1) {
+              const gap = candidate[index].start - candidate[index - 1].end;
+              if (gap > 2.5) gapSeconds += gap;
+            }
+            const fullEnough =
+              meta.lengthSeconds > 0
+                ? covered / meta.lengthSeconds >= 0.85 &&
+                  lastEnd / meta.lengthSeconds >= 0.95 &&
+                  gapSeconds <= 5
+                : score >= 100;
+            if (fullEnough) break;
+          } catch {
+            // Try the next caption track.
+          }
+        }
+        if (!bestTrack || !fetched.length) {
+          setSourceCues([]);
+          setStatus('这个视频没有可用字幕，换一个视频试试。');
+          return;
+        }
+        setTrackKey(`${bestTrack.languageCode}:${bestTrack.kind ?? 'manual'}`);
         setSourceCues(fetched);
         setStatus('正在翻译字幕…');
         try {
           const translated = await translateCueList(
             videoId,
             fetched,
-            `${track.languageCode}:${track.kind ?? 'manual'}`,
-            { contextTitle: meta.title, from: track.languageCode }
+            `${bestTrack.languageCode}:${bestTrack.kind ?? 'manual'}`,
+            { contextTitle: meta.title, from: bestTrack.languageCode }
           );
           if (!cancelled) {
             setTranslatedCues(translated.cues);
@@ -1984,14 +2030,40 @@ export default function PlayerScreen() {
               }}
               style={[
                 styles.cue,
-                active && { backgroundColor: theme.colors.primarySoft },
+                active && {
+                  borderWidth: 1,
+                  borderColor: theme.colors.primary,
+                  backgroundColor: 'transparent',
+                },
                 past && { opacity: 0.5 },
               ]}
             >
-              <Pressable
-                onPress={() => seekTo(cue.start)}
-                style={{ paddingRight: active ? 30 : 0 }}
-              >
+              {active ? (
+                <View style={styles.cueHeader}>
+                  <Pressable
+                    onPress={() => seekTo(cue.start)}
+                    hitSlop={6}
+                    accessibilityLabel="跳到本句"
+                  >
+                    <Text style={[styles.cueTime, { color: theme.colors.primary }]}>
+                      {formatTime(cue.start)}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => toggleCueFavorite(cue)}
+                    hitSlop={8}
+                    accessibilityLabel={saved ? '取消收藏这句' : '收藏这句'}
+                    style={styles.cueHeart}
+                  >
+                    <Ionicons
+                      name={saved ? 'heart' : 'heart-outline'}
+                      size={18}
+                      color={saved ? theme.colors.primary : theme.colors.textTertiary}
+                    />
+                  </Pressable>
+                </View>
+              ) : null}
+              <Pressable onPress={() => seekTo(cue.start)}>
                 {showOriginal ? (
                   <Text
                     style={[
@@ -2026,22 +2098,6 @@ export default function PlayerScreen() {
                   </Text>
                 ) : null}
               </Pressable>
-              {active ? (
-                <Pressable
-                  onPress={() => toggleCueFavorite(cue)}
-                  hitSlop={8}
-                  style={[
-                    styles.cueHeart,
-                    { backgroundColor: theme.colors.card, borderColor: theme.colors.border },
-                  ]}
-                >
-                  <Ionicons
-                    name={saved ? 'heart' : 'heart-outline'}
-                    size={17}
-                    color={saved ? theme.colors.primary : theme.colors.textTertiary}
-                  />
-                </Pressable>
-              ) : null}
             </View>
           );
         })
@@ -3859,15 +3915,23 @@ const styles = StyleSheet.create({
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 5, maxWidth: '70%' },
   statusText: { color: '#8D849D', fontSize: 11, flexShrink: 1 },
   cue: { paddingVertical: 9, paddingHorizontal: 8, borderRadius: 12 },
-  cueActive: { backgroundColor: 'rgba(124,92,255,0.13)' },
+  cueHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 24,
+    marginBottom: 2,
+  },
+  cueTime: {
+    fontSize: 11,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+    letterSpacing: 0.2,
+  },
   cueHeart: {
-    position: 'absolute',
-    right: 6,
-    top: 7,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
   },
