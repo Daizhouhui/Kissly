@@ -56,6 +56,24 @@ const CLIENTS: ClientConfig[] = [
     },
   },
   {
+    name: 'IOS',
+    version: '20.03.02',
+    key: ANDROID_KEY,
+    headers: {
+      'X-Youtube-Client-Name': '5',
+      'X-Youtube-Client-Version': '20.03.02',
+      'X-Goog-Api-Format-Version': '2',
+      'User-Agent':
+        'com.google.ios.youtube/20.03.02 (iPhone16,2; U; CPU iOS 18_2_1 like Mac OS X;)',
+    },
+    extra: {
+      deviceMake: 'Apple',
+      deviceModel: 'iPhone16,2',
+      osName: 'iPhone',
+      osVersion: '18.2.1.22C161',
+    },
+  },
+  {
     name: 'WEB',
     version: '2.20260101.00.00',
     key: WEB_KEY,
@@ -102,6 +120,7 @@ function parsePlayerResponse(response: any): VideoMeta | null {
     captionTracks: tracks
       .map(normalizeTrack)
       .filter((track): track is CaptionTrack => !!track),
+    visitorData: response?.responseContext?.visitorData,
   };
 }
 
@@ -249,9 +268,19 @@ function withFormat(baseUrl: string, format: string): string {
   return `${clean}${joiner}fmt=${format}`;
 }
 
+function withAndroidClient(baseUrl: string): string {
+  const clean = baseUrl.replace(/&amp;/g, '&');
+  if (/[?&]c=/.test(clean)) {
+    return clean.replace(/([?&])c=[^&]*/, '$1c=ANDROID');
+  }
+  const joiner = clean.includes('?') ? '&' : '?';
+  return `${clean}${joiner}c=ANDROID`;
+}
+
 export async function fetchCaptionCues(
   track: CaptionTrack,
-  durationSeconds = 0
+  durationSeconds = 0,
+  visitorData = ''
 ): Promise<Cue[]> {
   // Fetch every format, score what actually came back, and keep the most
   // complete response. YouTube sometimes serves a truncated json3 payload
@@ -259,12 +288,23 @@ export async function fetchCaptionCues(
   // transcript. The old code returned the first json3 with 3+ cues, which is
   // exactly how scattered missing subtitles were introduced.
   const variants = [
-    { label: 'vtt', rank: 0, url: withFormat(track.baseUrl, 'vtt') },
-    { label: 'json3', rank: 5, url: withFormat(track.baseUrl, 'json3') },
+    { label: 'original', rank: 0, url: track.baseUrl },
     {
       label: 'json3-android',
-      rank: 5,
-      url: `${withFormat(track.baseUrl, 'json3')}&c=ANDROID`,
+      rank: 7,
+      url: withAndroidClient(withFormat(track.baseUrl, 'json3')),
+    },
+    { label: 'json3', rank: 5, url: withFormat(track.baseUrl, 'json3') },
+    {
+      label: 'vtt-android',
+      rank: 2,
+      url: withAndroidClient(withFormat(track.baseUrl, 'vtt')),
+    },
+    { label: 'vtt', rank: 0, url: withFormat(track.baseUrl, 'vtt') },
+    {
+      label: 'srv3-android',
+      rank: 4,
+      url: withAndroidClient(withFormat(track.baseUrl, 'srv3')),
     },
     { label: 'srv3', rank: 3, url: withFormat(track.baseUrl, 'srv3') },
   ];
@@ -273,13 +313,16 @@ export async function fetchCaptionCues(
   for (const variant of variants) {
     try {
       const response = await httpText(variant.url, {
-        timeoutMs: 20000,
+        timeoutMs: 10000,
         headers: {
           ...BROWSER_HEADERS,
           'User-Agent':
             'com.google.android.youtube/21.03.36 (Linux; U; Android 14) gzip',
-          Accept: '*/*',
-          Referer: 'https://www.youtube.com/',
+          'X-Goog-Api-Format-Version': '2',
+          ...(visitorData ? { 'X-Goog-Visitor-Id': visitorData } : {}),
+          Accept: 'application/json,text/xml,text/vtt,text/plain,*/*',
+          Origin: 'https://m.youtube.com',
+          Referer: 'https://m.youtube.com/',
         },
       });
       if (response.status !== 200 || !response.text.trim()) continue;
