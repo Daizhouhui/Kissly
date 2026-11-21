@@ -32,11 +32,27 @@ type Category = {
 
 const CATEGORIES: Category[] = [
   { id: 'all', label: '全部', query: 'English learning' },
+  { id: 'film', label: '影视', query: 'English movie scenes' },
+  { id: 'food', label: '美食', query: 'English food vlog' },
+  { id: 'travel', label: '旅行', query: 'English travel vlog' },
+  { id: 'tech', label: '科技', query: 'English tech review' },
+  { id: 'ai', label: 'AI', query: 'English AI news' },
+  { id: 'science', label: '科学', query: 'English science' },
+  { id: 'education', label: '教育', query: 'English learning' },
+  { id: 'psychology', label: '心理', query: 'English psychology' },
+  { id: 'career', label: '职业', query: 'English career advice' },
+  { id: 'art', label: '艺术', query: 'English art' },
+  { id: 'history', label: '历史', query: 'English history' },
+  { id: 'sports', label: '运动', query: 'English sports' },
+  { id: 'health', label: '健康', query: 'English health' },
+  { id: 'news', label: '新闻', query: 'English news' },
+  { id: 'interview', label: '访谈', query: 'English interview' },
+  { id: 'speech', label: '演讲', query: 'English speech' },
+  { id: 'entertainment', label: '娱乐', query: 'English entertainment' },
+  { id: 'gaming', label: '游戏', query: 'English gaming' },
   { id: 'vlog', label: 'Vlog', query: 'English vlog' },
   { id: 'animation', label: '动画', query: 'English animation learning' },
   { id: 'music', label: '音乐', query: 'English songs with lyrics' },
-  { id: 'film', label: '影视', query: 'English movie scenes' },
-  { id: 'food', label: '美食', query: 'English food vlog' },
 ];
 
 function requestErrorMessage(error: unknown): string {
