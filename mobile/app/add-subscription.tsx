@@ -362,7 +362,6 @@ export default function SearchChannelsScreen() {
                 }}
                 style={{ flex: 1, color: theme.colors.text, fontSize: 14.5, height: '100%' }}
               />
-              {loading ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
               {query ? (
                 <Pressable onPress={() => setQuery('')} hitSlop={8}>
                   <Ionicons name="close-circle" size={18} color={theme.colors.textTertiary} />

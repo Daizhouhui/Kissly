@@ -1,5 +1,4 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import * as Haptics from 'expo-haptics';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
@@ -9,6 +8,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { ReactNode, forwardRef, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   BackHandler,
   Platform,
   ScrollView,
@@ -31,6 +31,7 @@ import {
   siliconflowConfig,
 } from '@/src/core/translate/ai';
 import { providerDisplayName, translateCueList } from '@/src/core/translate';
+import { removeKeysByPrefix } from '@/src/core/storage';
 import { CaptionTrack, Cue, SubtitleMode } from '@/src/core/types';
 import {
   captionQualityScore,
@@ -38,12 +39,17 @@ import {
   getVideoMeta,
   pickCaptionTracks,
 } from '@/src/core/youtube/innertube';
+import {
+  clearCachedCaptions,
+  loadCachedCaptions,
+  saveCachedCaptions,
+} from '@/src/core/youtube/captionCache';
 import { parseCaptionText } from '@/src/core/youtube/parse';
 import { fontWeightFor, fontFamilyFor, sentenceCues } from '@/src/ui/subtitleStyle';
 import { appAlert as Alert } from '@/src/ui/app-alert';
 import { AppPressable, AppPressableProps } from '@/src/ui/app-pressable';
 import { RipplePressable } from '@/src/ui/ripple-pressable';
-import { LoopIcon, SpeedIcon } from '@/src/ui/player-icons';
+import { CollapseIcon, LoopIcon, SpeedIcon } from '@/src/ui/player-icons';
 import { CONTINUOUS_CORNER, RADIUS } from '@/src/tokens';
 import { useAppTheme } from '@/src/ui/theme';
 
@@ -57,6 +63,72 @@ const radiusStyle = (radius: number) => ({
   borderRadius: radius,
   ...CONTINUOUS_CORNER,
 });
+
+function CueFade({
+  active,
+  paused,
+  visible,
+  past,
+  children,
+}: {
+  active: boolean;
+  paused: boolean;
+  visible: boolean;
+  past: boolean;
+  children: ReactNode;
+}) {
+  const opacity = useRef(
+    new Animated.Value(active ? 1 : past ? 0.6 : 0.4)
+  ).current;
+  useEffect(() => {
+    const dim = past ? 0.6 : 0.4;
+    if (!active && !visible) {
+      // Off-screen rows snap back to the default grey, so a later fast scroll
+      // always starts from grey and then fades in after they become visible.
+      opacity.setValue(dim);
+      return;
+    }
+    const target = active ? 1 : paused ? 1 : dim;
+    Animated.timing(opacity, {
+      toValue: target,
+      duration: target === 1 && !active ? 1200 : 650,
+      useNativeDriver: true,
+    }).start();
+  }, [active, opacity, past, paused, visible]);
+  return <Animated.View style={{ opacity }}>{children}</Animated.View>;
+}
+
+function CueTranslationSkeleton({
+  text,
+  color,
+  height,
+  marginTop,
+  opacity,
+}: {
+  text: string;
+  color: string;
+  height: number;
+  marginTop: number;
+  opacity: number;
+}) {
+  const width = Math.max(70, Math.min(280, 30 + text.length * 3.4));
+  const widths = text.length > 45 ? [width, Math.round(width * 0.72)] : [width];
+  return (
+    <View style={{ marginTop, gap: 5, opacity }} pointerEvents="none">
+      {widths.map((barWidth, index) => (
+        <View
+          key={`${barWidth}-${index}`}
+          style={{
+            width: barWidth,
+            height,
+            borderRadius: height / 2,
+            backgroundColor: color,
+          }}
+        />
+      ))}
+    </View>
+  );
+}
 
 const AnyWebView: any = WebView;
 
@@ -989,11 +1061,6 @@ const RATE_MIN = 0.5;
 const RATE_MAX = 2;
 const RATE_DOTS = [0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2];
 
-function controlHaptic() {
-  if (Platform.OS === 'web') return;
-  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-}
-
 type SubtitleModeOption = {
   id: SubtitleMode;
   label: string;
@@ -1077,6 +1144,9 @@ export default function PlayerScreen() {
   const [videoStageSize, setVideoStageSize] = useState({ width: 0, height: 0 });
   const [sourceCues, setSourceCues] = useState<Cue[]>([]);
   const [translatedCues, setTranslatedCues] = useState<Cue[] | null>(null);
+  const [translationPending, setTranslationPending] = useState(false);
+  const [captionReloadToken, setCaptionReloadToken] = useState(0);
+  const [captionForceReload, setCaptionForceReload] = useState(false);
   const [metaTitle, setMetaTitle] = useState(initialTitle);
   const [metaAuthor, setMetaAuthor] = useState(initialAuthor);
   const [metaChannelId, setMetaChannelId] = useState('');
@@ -1120,6 +1190,8 @@ export default function PlayerScreen() {
   const followingTranscriptRef = useRef(true);
   const transcriptInitializedRef = useRef(false);
   const [followingTranscript, setFollowingTranscript] = useState(true);
+  const [visibleCueRange, setVisibleCueRange] = useState({ first: -1, last: -1 });
+  const visibleCueRangeRef = useRef({ first: -1, last: -1 });
   const fontTrackWidthRef = useRef(0);
   const rateTrackWidthRef = useRef(0);
   const orientationResumeTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -1130,6 +1202,10 @@ export default function PlayerScreen() {
   const showOriginal = subtitleMode !== 'translation';
   const fontSize = settings.subtitle.fontSize ?? 20;
   const landscapeFontSize = settings.subtitle.landscapeFontSize ?? 24;
+  const transcriptOriginalLineHeight = Math.round(Math.max(14, fontSize) * 1.48);
+  const transcriptTranslationLineHeight = Math.round(
+    Math.max(12, fontSize - (showOriginal ? 3 : 0)) * 1.48
+  );
   const hideVideo = settings.subtitle.hideVideo;
   const hideTitle = settings.subtitle.hideTitle ?? true;
   const scrollMode = settings.subtitle.scrollMode;
@@ -1366,9 +1442,84 @@ export default function PlayerScreen() {
   useEffect(() => {
     if (!videoId) return;
     let cancelled = false;
-    const currentSettings = getSettings();
+    setTranslatedCues(null);
+    setTranslationPending(false);
     setStatus('正在读取字幕…');
+
+    const translate = async (
+      cues: Cue[],
+      key: string,
+      contextTitle: string,
+      from: string,
+      ignoreCache: boolean
+    ) => {
+      setTranslationPending(true);
+      setStatus(`正在翻译字幕… 0/${cues.length}`);
+      try {
+        const translated = await translateCueList(
+          videoId,
+          cues,
+          key,
+          {
+            contextTitle,
+            from,
+            shouldStop: () => cancelled,
+            ignoreCache,
+          },
+          (partial, provider) => {
+            if (cancelled) return;
+            setTranslatedCues(partial);
+            setProviderLabel(providerDisplayName(provider));
+            const done = partial.reduce(
+              (count, cue) => count + (cue.translation ? 1 : 0),
+              0
+            );
+            setStatus(`正在翻译字幕… ${done}/${cues.length}`);
+          }
+        );
+        if (cancelled) return;
+        setTranslatedCues(translated.cues);
+        setProviderLabel(providerDisplayName(translated.provider));
+        setStatus('');
+      } catch (error) {
+        if (!cancelled) {
+          setStatus(`翻译失败：${error instanceof Error ? error.message : String(error)}`);
+        }
+      } finally {
+        if (!cancelled) setTranslationPending(false);
+      }
+    };
+
     const load = async () => {
+      // Source captions survive across app launches. Show the original
+      // transcript and start translating before any network caption lookup.
+      const cached = captionForceReload
+        ? null
+        : await loadCachedCaptions(videoId, learningLang);
+      if (cancelled) return;
+      if (cached) {
+        setTrackKey(cached.trackKey);
+        setSourceCues(cached.cues);
+        setMetaTitle(initialTitle);
+        setMetaAuthor(initialAuthor);
+        void getVideoMeta(videoId)
+          .then((meta) => {
+            if (cancelled) return;
+            setMetaTitle(meta.title || initialTitle);
+            setMetaAuthor(meta.author || initialAuthor);
+            setMetaChannelId(meta.channelId ?? '');
+          })
+          .catch(() => {});
+        await translate(
+          cached.cues,
+          cached.trackKey,
+          initialTitle,
+          cached.trackKey.split(':')[0],
+          false
+        );
+        return;
+      }
+
       try {
         const meta = await getVideoMeta(videoId);
         if (cancelled) return;
@@ -1450,38 +1601,39 @@ export default function PlayerScreen() {
           setStatus('这个视频没有可用字幕，换一个视频试试。');
           return;
         }
-        setTrackKey(`${bestTrack.languageCode}:${bestTrack.kind ?? 'manual'}`);
+        const key = `${bestTrack.languageCode}:${bestTrack.kind ?? 'manual'}`;
+        setTrackKey(key);
         setSourceCues(fetched);
-        setStatus('正在翻译字幕…');
-        try {
-          const translated = await translateCueList(
-            videoId,
-            fetched,
-            `${bestTrack.languageCode}:${bestTrack.kind ?? 'manual'}`,
-            { contextTitle: meta.title, from: bestTrack.languageCode }
-          );
-          if (!cancelled) {
-            setTranslatedCues(translated.cues);
-            setProviderLabel(providerDisplayName(translated.provider));
-            setStatus('');
-          }
-        } catch (error) {
-          if (!cancelled) {
-            setStatus(`翻译失败：${error instanceof Error ? error.message : String(error)}`);
-          }
-        }
+        void saveCachedCaptions(videoId, learningLang, fetched, key);
+        await translate(
+          fetched,
+          key,
+          meta.title,
+          bestTrack.languageCode,
+          captionForceReload
+        );
       } catch (error) {
         if (!cancelled) {
           setStatus(`字幕读取失败：${error instanceof Error ? error.message : String(error)}`);
         }
       }
     };
-    load();
+    load()
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setCaptionForceReload(false);
+      });
     return () => {
       cancelled = true;
       clearWebCaptionRequest(new Error('字幕请求已取消'));
     };
-  }, [videoId, initialAuthor, initialTitle, learningLang]);
+  }, [
+    videoId,
+    initialAuthor,
+    initialTitle,
+    learningLang,
+    captionReloadToken,
+  ]);
 
   useEffect(() => {
     if (!videoId) return;
@@ -2596,12 +2748,14 @@ export default function PlayerScreen() {
       <RipplePressable
         onPress={() => (blindMode ? jumpPrecisionCue(-1) : jumpCue(-1))}
         hitSlop={10}
+        haptic="light"
         style={styles.transportSmall}
       >
         <Ionicons name="play-skip-back" size={22} color={theme.colors.textSecondary} />
       </RipplePressable>
       <RipplePressable
         onPress={blindMode ? togglePrecisionPlay : togglePlay}
+        haptic="light"
         style={[styles.playButton, { backgroundColor: theme.colors.primary }]}
       >
         <Ionicons name={playing ? 'pause' : 'play'} size={24} color="#FFFFFF" />
@@ -2609,6 +2763,7 @@ export default function PlayerScreen() {
       <RipplePressable
         onPress={() => (blindMode ? jumpPrecisionCue(1) : jumpCue(1))}
         hitSlop={10}
+        haptic="light"
         style={styles.transportSmall}
       >
         <Ionicons name="play-skip-forward" size={22} color={theme.colors.textSecondary} />
@@ -2834,9 +2989,10 @@ export default function PlayerScreen() {
             <RipplePressable
               haptic={false}
               onPress={exitFullscreen}
+              accessibilityLabel="退出全屏"
               style={styles.landIconButton}
             >
-              <Ionicons name="resize-outline" size={18} color="#FFFFFF" />
+              <CollapseIcon color="#FFFFFF" size={20} />
             </RipplePressable>
             <RipplePressable
               haptic={false}
@@ -2849,28 +3005,22 @@ export default function PlayerScreen() {
 
           <View style={styles.landCenter}>
             <Pressable
-              onPress={() => {
-                controlHaptic();
-                jumpCue(-1);
-              }}
+              onPress={() => jumpCue(-1)}
+              haptic="light"
               style={styles.landTransportButton}
             >
               <Ionicons name="play-skip-back" size={18} color="#FFFFFF" />
             </Pressable>
             <Pressable
-              onPress={() => {
-                controlHaptic();
-                togglePlay();
-              }}
+              onPress={togglePlay}
+              haptic="light"
               style={styles.landPlay}
             >
               <Ionicons name={playing ? 'pause' : 'play'} size={30} color="#FFFFFF" />
             </Pressable>
             <Pressable
-              onPress={() => {
-                controlHaptic();
-                jumpCue(1);
-              }}
+              onPress={() => jumpCue(1)}
+              haptic="light"
               style={styles.landTransportButton}
             >
               <Ionicons name="play-skip-forward" size={18} color="#FFFFFF" />
@@ -2929,23 +3079,91 @@ export default function PlayerScreen() {
                 {activeCue.translation}
               </Text>
             ) : null}
+            {showTranslation && !activeCue.translation && translationPending ? (
+              <View
+                style={{
+                  marginTop: 8,
+                  alignItems: 'center',
+                  gap: 5,
+                  opacity: 0.5,
+                }}
+              >
+                <View
+                  style={{
+                    width: Math.min(
+                      320,
+                      Math.max(80, 60 + activeCue.text.length * 2.4)
+                    ),
+                    height: 10,
+                    borderRadius: 5,
+                    backgroundColor: '#FFFFFF',
+                  }}
+                />
+                {activeCue.text.length > 45 ? (
+                  <View
+                    style={{
+                      width: Math.min(
+                        260,
+                        Math.max(60, 40 + activeCue.text.length * 1.6)
+                      ),
+                      height: 10,
+                      borderRadius: 5,
+                      backgroundColor: '#FFFFFF',
+                    }}
+                  />
+                ) : null}
+              </View>
+            ) : null}
           </View>
         </View>
       ) : null}
     </View>
   ) : null;
 
+  const updateVisibleCueRange = (offset: number) => {
+    const height = transcriptHeightRef.current;
+    const offsets = cueOffsets.current;
+    if (!height || !cues.length) return;
+    const top = Math.max(0, offset - 24);
+    const bottom = offset + height + 24;
+    let first = -1;
+    let last = -1;
+    for (let index = 0; index < cues.length; index += 1) {
+      const y = offsets[index];
+      if (typeof y !== 'number') continue;
+      const rowBottom = offsets[index + 1] ?? y + 80;
+      if (rowBottom > top) {
+        first = index;
+        break;
+      }
+    }
+    if (first >= 0) {
+      for (let index = first; index < cues.length; index += 1) {
+        const y = offsets[index];
+        if (typeof y !== 'number') continue;
+        if (y > bottom) break;
+        last = index;
+      }
+    }
+    const current = visibleCueRangeRef.current;
+    if (current.first === first && current.last === last) return;
+    visibleCueRangeRef.current = { first, last };
+    setVisibleCueRange({ first, last });
+  };
+
   const transcript = (
     <View style={styles.transcriptWrap}>
       <ScrollView
         ref={scrollRef}
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 0, paddingBottom: 240 }}
+        contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 10, paddingBottom: 240 }}
         showsVerticalScrollIndicator={false}
         alwaysBounceVertical
         scrollEventThrottle={16}
         onScroll={(event) => {
-          transcriptScrollRef.current = event.nativeEvent.contentOffset.y;
+          const offset = event.nativeEvent.contentOffset.y;
+          transcriptScrollRef.current = offset;
+          updateVisibleCueRange(offset);
         }}
         onScrollBeginDrag={() => {
           followingTranscriptRef.current = false;
@@ -2955,11 +3173,15 @@ export default function PlayerScreen() {
           maybeResumeTranscriptFollow(event.nativeEvent.contentOffset.y);
         }}
         onContentSizeChange={() => {
+          updateVisibleCueRange(transcriptScrollRef.current);
           if (!followingTranscriptRef.current || transcriptInitializedRef.current) return;
           requestAnimationFrame(() => scrollTranscriptToActive(false));
         }}
         onLayout={(event) => {
           transcriptHeightRef.current = event.nativeEvent.layout.height;
+          requestAnimationFrame(() =>
+            updateVisibleCueRange(transcriptScrollRef.current)
+          );
           if (!followingTranscriptRef.current) return;
           requestAnimationFrame(() => scrollTranscriptToActive(false));
         }}
@@ -2975,6 +3197,8 @@ export default function PlayerScreen() {
           cues.map((cue, index) => {
             const active = index === activeIndex;
             const past = index < activeIndex;
+            const visible =
+              index >= visibleCueRange.first && index <= visibleCueRange.last;
             const saved = active
               ? sentenceFavorites.some((fav) => fav.id === sentenceFavoriteId(videoId, cue.start))
               : false;
@@ -2983,6 +3207,11 @@ export default function PlayerScreen() {
                 key={`${cue.start}-${index}`}
                 onLayout={(event) => {
                   cueOffsets.current[index] = event.nativeEvent.layout.y;
+                  if (index === activeIndex) {
+                    requestAnimationFrame(() =>
+                      updateVisibleCueRange(transcriptScrollRef.current)
+                    );
+                  }
                   if (index === activeIndex && followingTranscriptRef.current) {
                     const y = event.nativeEvent.layout.y;
                     const animated = transcriptInitializedRef.current;
@@ -3003,7 +3232,7 @@ export default function PlayerScreen() {
                       hitSlop={6}
                       accessibilityLabel="跳到本句"
                     >
-                      <Text style={[styles.cueTime, { color: theme.colors.primary }]}>
+                      <Text style={[styles.cueTime, { color: theme.colors.textTertiary }]}>
                         {formatTime(cue.start)}
                       </Text>
                     </Pressable>
@@ -3022,18 +3251,26 @@ export default function PlayerScreen() {
                   </View>
                 ) : null}
                 <Pressable onPress={() => seekFromTranscript(cue, index)}>
+                  <CueFade
+                    active={active}
+                    paused={!playing}
+                    visible={visible}
+                    past={past}
+                  >
                   {showOriginal ? (
                     <Text
                       style={[
                         styles.cueOriginal,
                         {
-                          color: theme.colors.textSecondary,
+                          color: active
+                            ? theme.colors.primary
+                            : theme.colors.text,
                           fontSize: Math.max(14, fontSize),
+                          lineHeight: transcriptOriginalLineHeight,
                           fontFamily: originalFont,
                           fontWeight: originalWeight,
                         },
-                        active && { color: theme.colors.primary, fontWeight: '800' },
-                        !active && (past ? styles.cuePastOriginal : styles.cueFutureOriginal),
+                        active && { fontWeight: '800' },
                       ]}
                     >
                       {cue.text}
@@ -3044,18 +3281,29 @@ export default function PlayerScreen() {
                       style={[
                         styles.cueTranslation,
                         {
-                          color: showOriginal ? theme.colors.textTertiary : theme.colors.textSecondary,
+                          color: theme.colors.textSecondary,
                           fontSize: Math.max(12, fontSize - (showOriginal ? 3 : 0)),
+                          lineHeight: transcriptTranslationLineHeight,
+                          marginTop: showOriginal ? 10 : 0,
                           fontFamily: translationFont,
                           fontWeight: translationWeight,
                         },
                         active && { color: showOriginal ? theme.colors.text : theme.colors.primary },
-                        !active && (past ? styles.cuePastTranslation : styles.cueFutureTranslation),
                       ]}
                     >
                       {cue.translation}
                     </Text>
                   ) : null}
+                  {showTranslation && !cue.translation && translationPending ? (
+                    <CueTranslationSkeleton
+                      text={cue.text}
+                      color={theme.colors.border}
+                      height={Math.max(9, Math.round(Math.max(12, fontSize - (showOriginal ? 3 : 0)) * 0.62))}
+                      marginTop={showOriginal ? 10 : 0}
+                      opacity={active ? 1 : past ? 0.5 : 0.38}
+                    />
+                  ) : null}
+                  </CueFade>
                 </Pressable>
               </View>
             );
@@ -3815,6 +4063,7 @@ export default function PlayerScreen() {
                   <SheetRow
                     icon="refresh-outline"
                     title="重新翻译字幕"
+                    subtitle="清除本地字幕缓存，重新加载并逐段翻译"
                     onPress={() => {
                       setSheet(false);
                       retranslate();
@@ -4672,22 +4921,24 @@ export default function PlayerScreen() {
   }
 
   async function retranslate() {
-    if (!sourceCues.length || !trackKey) {
+    if (!videoId) {
       setToast('没有可重新翻译的字幕');
       return;
     }
-    setStatus('正在重新翻译…');
+    setStatus('正在重新加载字幕…');
     try {
-      const translated = await translateCueList(videoId, sourceCues, trackKey, {
-        contextTitle: metaTitle,
-        from: trackKey.split(':')[0],
-      });
-      setTranslatedCues(translated.cues);
-      setProviderLabel(providerDisplayName(translated.provider));
-      setStatus('');
-      setToast('字幕已重新翻译');
+      // "Retranslate" means a genuinely fresh run: drop both the cached
+      // source captions and every saved batch for this video, then reload.
+      await clearCachedCaptions(videoId, learningLang);
+      await removeKeysByPrefix(`cues:v3:${videoId}:`);
+      setSourceCues([]);
+      setTranslatedCues(null);
+      setTrackKey('');
+      setProviderLabel('');
+      setCaptionForceReload(true);
+      setCaptionReloadToken((value) => value + 1);
     } catch (error) {
-      setStatus(`翻译失败：${error instanceof Error ? error.message : String(error)}`);
+      setStatus(`重新加载失败：${error instanceof Error ? error.message : String(error)}`);
     }
   }
 }
@@ -4908,7 +5159,12 @@ const styles = StyleSheet.create({
   },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 5, maxWidth: '70%' },
   statusText: { color: '#8D849D', fontSize: 11, flexShrink: 1 },
-  cue: { paddingVertical: 9, paddingHorizontal: 8, ...radiusStyle(RADIUS.control) },
+  cue: {
+    paddingVertical: 13,
+    paddingHorizontal: 8,
+    marginBottom: 6,
+    ...radiusStyle(RADIUS.control),
+  },
   transcriptWrap: { flex: 1 },
   followCurrentButton: {
     position: 'absolute',
@@ -4933,11 +5189,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     minHeight: 32,
-    marginBottom: 3,
+    marginBottom: 8,
   },
   cueTime: {
     fontSize: 13.5,
-    fontWeight: '800',
+    fontWeight: '600',
     fontVariant: ['tabular-nums'],
     letterSpacing: 0.2,
   },
@@ -4948,14 +5204,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  cueOriginal: { color: '#A79EB9', lineHeight: 25, fontWeight: '600' },
-  cueOriginalActive: { color: '#C4B5FD', fontWeight: '800' },
-  cueTranslation: { color: '#746B85', lineHeight: 20, marginTop: 3 },
-  cueTranslationActive: { color: '#F1ECFA' },
-  cueFutureOriginal: { opacity: 0.58 },
-  cueFutureTranslation: { opacity: 0.46 },
-  cuePastOriginal: { opacity: 0.86 },
-  cuePastTranslation: { opacity: 0.72 },
+  cueOriginal: { color: '#A79EB9', lineHeight: 30, fontWeight: '600' },
+  cueTranslation: { color: '#746B85', lineHeight: 24, marginTop: 0 },
   emptyTranscript: { alignItems: 'center', paddingTop: 36, gap: 10 },
   emptyTranscriptText: { color: '#8D849D', fontSize: 12, textAlign: 'center', lineHeight: 18, paddingHorizontal: 20 },
   controls: { backgroundColor: '#120E1B', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#241C33', paddingHorizontal: 18, paddingTop: 6 },
@@ -5077,7 +5327,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   landscapeSubOriginal: { color: '#FFFFFF', fontSize: 18, fontWeight: '800', textAlign: 'center', textShadowColor: '#000', textShadowRadius: 6 },
-  landscapeSubTranslation: { color: '#E4DEF2', fontSize: 14, textAlign: 'center', marginTop: 3, textShadowColor: '#000', textShadowRadius: 6 },
+  landscapeSubTranslation: { color: '#FFFFFF', fontSize: 14, textAlign: 'center', marginTop: 3, textShadowColor: '#000', textShadowRadius: 6 },
   landTop: {
     position: 'absolute',
     left: 16,

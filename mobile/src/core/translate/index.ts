@@ -13,7 +13,26 @@ export type TranslateOptions = {
   from?: string;
   to?: string;
   contextTitle?: string;
+  /** Lets a caller (for example a screen that was left) stop between batches. */
+  shouldStop?: () => boolean;
+  /** Bypass saved batches for an explicit "translate again" action. */
+  ignoreCache?: boolean;
 };
+
+export type CueTranslationProgress = (
+  cues: Cue[],
+  provider: ProviderId
+) => void;
+
+/**
+ * Translations are kept much longer than source captions in practice: users
+ * reopen long videos repeatedly, and re-calling a provider for every open is
+ * both slow and rate-limit prone.
+ */
+const CUE_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/** Small enough that the first visible lines arrive quickly, large enough to
+ * avoid one provider request per line. */
+const TRANSLATE_BATCH_SIZE = 8;
 
 const memoryTitles = new Map<string, string>();
 let titleCacheLoaded = false;
@@ -166,19 +185,26 @@ export async function translateCueList(
   videoId: string,
   cues: Cue[],
   trackKey: string,
-  options: TranslateOptions = {}
+  options: TranslateOptions = {},
+  onProgress?: CueTranslationProgress
 ): Promise<{ cues: Cue[]; provider: ProviderId }> {
   const settings = getSettings();
   const to = options.to ?? settings.targetLang;
   const providerKey = settings.provider;
-  const cacheKey = `cues:v2:${videoId}:${trackKey}:${to}:${providerKey}`;
-  const cached = await loadCached<{ cues: Cue[]; provider: ProviderId }>(
-    cacheKey,
-    7 * 24 * 60 * 60 * 1000
-  );
+  const cacheKey = `cues:v3:${videoId}:${trackKey}:${to}:${providerKey}`;
+  const cached = options.ignoreCache
+    ? null
+    : await loadCached<{ cues: Cue[]; provider: ProviderId }>(
+        cacheKey,
+        CUE_CACHE_TTL_MS
+      );
+
+  // A cached list may be partial: batches saved before the user closed the
+  // player. Reuse every line that still matches this exact cue.
+  const translations = cues.map(() => '');
+  let provider: ProviderId | null = null;
   if (
-    cached?.cues?.length &&
-    cached.cues.length === cues.length &&
+    cached?.cues?.length === cues.length &&
     cached.cues.every(
       (cue, index) =>
         Math.abs(cue.start - cues[index].start) < 0.002 &&
@@ -186,17 +212,62 @@ export async function translateCueList(
         cue.text === cues[index].text
     )
   ) {
-    return cached;
+    provider = cached.provider;
+    cached.cues.forEach((cue, index) => {
+      if (cue.translation) translations[index] = cue.translation;
+    });
   }
 
-  const texts = cues.map((cue) => cue.text);
-  const result = await translateTexts(texts, options);
-  const translated = cues.map((cue, index) => ({
-    ...cue,
-    translation: result.texts[index] ?? '',
-  }));
-  await saveCached(cacheKey, { cues: translated, provider: result.provider });
-  return { cues: translated, provider: result.provider };
+  const build = (values: string[]): Cue[] =>
+    cues.map((cue, index) => ({
+      ...cue,
+      translation: values[index] ?? '',
+    }));
+
+  if (provider && translations.every(Boolean)) {
+    const complete = build(translations);
+    onProgress?.(complete, provider);
+    return { cues: complete, provider };
+  }
+
+  for (let start = 0; start < cues.length; start += TRANSLATE_BATCH_SIZE) {
+    if (options.shouldStop?.()) {
+      return {
+        cues: build(translations),
+        provider: provider ?? settings.provider,
+      };
+    }
+    const end = Math.min(cues.length, start + TRANSLATE_BATCH_SIZE);
+    const missing: number[] = [];
+    for (let index = start; index < end; index += 1) {
+      if (!translations[index]) missing.push(index);
+    }
+    if (!missing.length) continue;
+
+    const result = await translateTexts(
+      missing.map((index) => cues[index].text),
+      options
+    );
+    if (options.shouldStop?.()) {
+      return {
+        cues: build(translations),
+        provider: provider ?? result.provider,
+      };
+    }
+    missing.forEach((index, offset) => {
+      translations[index] = result.texts[offset] ?? '';
+    });
+    provider = result.provider;
+
+    const partial = build(translations);
+    await saveCached(cacheKey, { cues: partial, provider: result.provider });
+    onProgress?.(partial, result.provider);
+  }
+
+  const complete = build(translations);
+  const finalProvider = provider ?? settings.provider;
+  onProgress?.(complete, finalProvider);
+  return { cues: complete, provider: finalProvider };
 }
 
 export async function translateTitles(

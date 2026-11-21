@@ -26,6 +26,14 @@ export async function removeKey(key: string): Promise<void> {
   } catch {}
 }
 
+export async function removeKeysByPrefix(prefix: string): Promise<void> {
+  try {
+    const keys = await AsyncStorage.getAllKeys();
+    const targets = keys.filter((key) => key.startsWith(NS + prefix));
+    if (targets.length) await AsyncStorage.multiRemove(targets);
+  } catch {}
+}
+
 export type TimedValue<T> = { at: number; value: T };
 
 export async function loadCached<T>(

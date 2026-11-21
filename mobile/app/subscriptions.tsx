@@ -491,9 +491,8 @@ export default function SubscriptionsScreen() {
     if (next === scrollOffsetRef.current) return;
     scrollOffsetRef.current = next;
     listRef.current?.scrollToOffset({ offset: next, animated: false });
-    const delta = next - drag.startScroll;
-    dragScrollDeltaRef.current = delta;
-    dragScrollDeltaAnim.setValue(delta);
+    // The visual compensation is applied in onScroll from the *actual* offset,
+    // so a one-frame lag between request and apply never jitters the row.
   };
 
   const startAutoScroll = (index: number, pointerY: number) => {
@@ -853,12 +852,28 @@ export default function SubscriptionsScreen() {
           scrollEnabled
           extraData={{ dragIndex, swipeOpenId }}
           CellRendererComponent={DragCell}
+          // The dragged row is pinned on screen with translateY while its
+          // layout slot scrolls away during edge auto-scroll. Native view
+          // clipping and the virtualization window both key off the layout
+          // slot, so they would detach/blank the row every scroll tick and
+          // make it flicker. Keep every cell attached while dragging.
+          removeClippedSubviews={false}
+          windowSize={dragIndex !== null ? 41 : 11}
+          maxToRenderPerBatch={dragIndex !== null ? 40 : 10}
+          updateCellsBatchingPeriod={dragIndex !== null ? 16 : 50}
           onLayout={(event) => {
             listMetricsRef.current.top = event.nativeEvent.layout.y;
             listMetricsRef.current.height = event.nativeEvent.layout.height;
           }}
           onScroll={(event) => {
-            scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+            const offset = event.nativeEvent.contentOffset.y;
+            scrollOffsetRef.current = offset;
+            const drag = dragRef.current;
+            if (drag) {
+              const delta = offset - drag.startScroll;
+              dragScrollDeltaRef.current = delta;
+              dragScrollDeltaAnim.setValue(delta);
+            }
           }}
           onScrollBeginDrag={() => setSwipeOpenId(null)}
           onContentSizeChange={(_, height) => {
@@ -956,7 +971,6 @@ export default function SubscriptionsScreen() {
             ) : undefined
           }
           showsVerticalScrollIndicator={false}
-          removeClippedSubviews={false}
         />
       </DragIndexContext.Provider>
 

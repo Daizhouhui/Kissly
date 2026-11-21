@@ -5,6 +5,44 @@ type IconProps = {
   size?: number;
 };
 
+/** Two inward diagonal arrows, matching the reference fullscreen exit control. */
+export function CollapseIcon({ color, size = 20 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      <Path
+        d="M20 4 L13.8 10.2"
+        fill="none"
+        stroke={color}
+        strokeWidth={1.7}
+        strokeLinecap="round"
+      />
+      <Path
+        d="M13.8 5.8 L13.8 10.2 L18.2 10.2"
+        fill="none"
+        stroke={color}
+        strokeWidth={1.7}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <Path
+        d="M4 20 L10.2 13.8"
+        fill="none"
+        stroke={color}
+        strokeWidth={1.7}
+        strokeLinecap="round"
+      />
+      <Path
+        d="M5.8 13.8 L10.2 13.8 L10.2 18.2"
+        fill="none"
+        stroke={color}
+        strokeWidth={1.7}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
 export function SpeedIcon({ color, size = 32 }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 32 32">
