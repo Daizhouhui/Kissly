@@ -34,6 +34,9 @@ type Category = {
 
 const CATEGORIES: Category[] = [
   { id: 'all', label: '全部', query: 'English learning' },
+  { id: 'vlog', label: 'Vlog', query: 'English vlog' },
+  { id: 'animation', label: '动画', query: 'English animation learning' },
+  { id: 'music', label: '音乐', query: 'English songs with lyrics' },
   { id: 'film', label: '影视', query: 'English movie scenes' },
   { id: 'food', label: '美食', query: 'English food vlog' },
   { id: 'travel', label: '旅行', query: 'English travel vlog' },
@@ -52,9 +55,6 @@ const CATEGORIES: Category[] = [
   { id: 'speech', label: '演讲', query: 'English speech' },
   { id: 'entertainment', label: '娱乐', query: 'English entertainment' },
   { id: 'gaming', label: '游戏', query: 'English gaming' },
-  { id: 'vlog', label: 'Vlog', query: 'English vlog' },
-  { id: 'animation', label: '动画', query: 'English animation learning' },
-  { id: 'music', label: '音乐', query: 'English songs with lyrics' },
 ];
 
 function requestErrorMessage(error: unknown): string {
