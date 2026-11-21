@@ -10,7 +10,6 @@ import {
   ActivityIndicator,
   Alert,
   BackHandler,
-  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -74,7 +73,7 @@ function playerBridgeScript() {
   try {
     if (window.__kissBridge && window.__kissBridge.timer) clearInterval(window.__kissBridge.timer);
     if (window.__kissBridge && window.__kissBridge.cssTimer) clearInterval(window.__kissBridge.cssTimer);
-    var bridge = window.__kissBridge = { mode: 'mobile-watch' };
+    var bridge = window.__kissBridge = { mode: 'mobile-watch', wantPlay: false, recoverAt: 0, recoverAttempts: 0 };
     function injectCss(){
       try {
         var old = document.getElementById('kiss-watch-css');
@@ -93,7 +92,17 @@ function playerBridgeScript() {
     function getPlayer(){
       return document.getElementById('movie_player') || document.querySelector('.html5-video-player');
     }
-    function getVideo(){ return document.querySelector('video'); }
+    function getVideo(){
+      // Scope to the real watch player first. YouTube can keep preview/mini
+      // player <video> elements in the DOM; the first document-level video is
+      // not necessarily the one the user is watching.
+      try {
+        var p = getPlayer();
+        var scoped = p && p.querySelector ? p.querySelector('video') : null;
+        if (scoped) return scoped;
+      } catch(e) {}
+      return document.querySelector('#movie_player video') || document.querySelector('video');
+    }
     var audioFixTimer = null;
     function unmuteOverlay(){
       try {
@@ -142,6 +151,27 @@ function playerBridgeScript() {
       var v = getVideo();
       var p = getPlayer();
       if (!v) return;
+      // Keep playback intent independent from React state. If the page or an
+      // ad transition pauses the video without an explicit user pause, retry
+      // playback instead of leaving the player stuck on a paused frame.
+      if (bridge.wantPlay && v.paused && !v.ended && v.readyState >= 2) {
+        var now = Date.now();
+        if (
+          (!bridge.recoverAt || now - bridge.recoverAt > 1500) &&
+          bridge.recoverAttempts < 12
+        ) {
+          bridge.recoverAt = now;
+          bridge.recoverAttempts++;
+          try {
+            var recovery = v.play();
+            if (recovery && recovery.catch) recovery.catch(function(){});
+          } catch(e) {}
+          scheduleAudio(200);
+        }
+      } else if (!v.paused) {
+        bridge.recoverAt = 0;
+        bridge.recoverAttempts = 0;
+      }
       var quality = '';
       try { quality = p && p.getPlaybackQuality ? p.getPlaybackQuality() : ''; } catch(e) {}
       send({
@@ -189,6 +219,9 @@ function playerBridgeScript() {
         try { v.playsInline = true; } catch(e) {}
         send({ type:'ready' });
         setQuality();
+        bridge.wantPlay = true;
+        bridge.recoverAt = 0;
+        bridge.recoverAttempts = 0;
         var playPromise = null;
         try { playPromise = v.play(); } catch(e) {}
         if (playPromise && playPromise.catch) playPromise.catch(function(){ send({type:'blocked'}); });
@@ -204,9 +237,11 @@ function playerBridgeScript() {
       setQuality();
     }
     window.__kiss = {
-      play: function(){ var v=getVideo(); try{ var r=v&&v.play(); if(r&&r.catch)r.catch(function(){}); }catch(e){}; scheduleAudio(260); setTimeout(ensureAudio, 1000); return true; },
-      pause: function(){ var v=getVideo(); try{ v&&v.pause(); }catch(e){}; return true; },
+      play: function(){ bridge.wantPlay = true; bridge.recoverAt = 0; bridge.recoverAttempts = 0; var v=getVideo(); try{ var r=v&&v.play(); if(r&&r.catch)r.catch(function(){}); }catch(e){}; scheduleAudio(260); setTimeout(ensureAudio, 1000); return true; },
+      pause: function(){ bridge.wantPlay = false; bridge.recoverAt = 0; bridge.recoverAttempts = 0; var v=getVideo(); try{ v&&v.pause(); }catch(e){}; return true; },
       resume: function(){
+        bridge.wantPlay = true;
+        bridge.recoverAttempts = 0;
         var v=getVideo();
         if (!v) return true;
         try {
@@ -224,11 +259,17 @@ function playerBridgeScript() {
         if (!v) return true;
         try {
           if (v.paused || v.ended) {
+            bridge.wantPlay = true;
+            bridge.recoverAt = 0;
+            bridge.recoverAttempts = 0;
             var r=v.play();
             if (r && r.catch) r.catch(function(){});
             scheduleAudio(180);
             setTimeout(ensureAudio, 900);
           } else {
+            bridge.wantPlay = false;
+            bridge.recoverAt = 0;
+            bridge.recoverAttempts = 0;
             v.pause();
           }
         } catch(e) {}
@@ -242,7 +283,13 @@ function playerBridgeScript() {
       quality: function(){ setQuality(); return true; }
     };
     bind();
-    document.addEventListener('yt-navigate-finish', function(){ bindTries = 0; setTimeout(bind, 400); }, true);
+    document.addEventListener('yt-navigate-finish', function(){
+      bridge.wantPlay = true;
+      bridge.recoverAt = 0;
+      bridge.recoverAttempts = 0;
+      bindTries = 0;
+      setTimeout(bind, 400);
+    }, true);
     setTimeout(function(){
       var v=getVideo();
       var p=getPlayer();
@@ -1373,7 +1420,7 @@ export default function PlayerScreen() {
           allowsFullscreenVideo={false}
           setSupportMultipleWindows={false}
           cacheEnabled
-          javaScriptCanOpenWindowsAutomatically
+          javaScriptCanOpenWindowsAutomatically={false}
           sharedCookiesEnabled
           thirdPartyCookiesEnabled
           userAgent={WATCH_UA}
@@ -1395,20 +1442,39 @@ export default function PlayerScreen() {
             setVideoLoading(false);
             setVideoProblem('播放器加载失败，请检查网络后重试，或在浏览器中打开该视频。');
           }}
+          onOpenWindow={() => {
+            // Ads frequently call window.open() for their landing page.
+            // Keep all navigation inside the watch WebView.
+          }}
           onShouldStartLoadWithRequest={(request: any) => {
             const url = String(request.url || '');
-            if (
-              url.startsWith('about:') ||
-              url.startsWith('https://www.youtube.com') ||
-              url.startsWith('https://youtube.com') ||
-              url.startsWith('https://m.youtube.com') ||
-              url.startsWith('https://consent.youtube.com') ||
-              url.startsWith('https://accounts.google.com') ||
-              url.startsWith('https://www.google.com')
-            ) {
-              return true;
-            }
-            Linking.openURL(url).catch(() => {});
+            if (url.startsWith('about:')) return true;
+            const adRedirect =
+              /googlesyndication\.com|doubleclick\.net|googleadservices\.com|\/pagead\/|\/aclk|google\.com\/url\?|youtube\.com\/redirect\?/i.test(
+                url
+              );
+            if (adRedirect) return false;
+            try {
+              const hostMatch = url.match(/^https:\/\/([^/?#]+)/i);
+              const host = hostMatch
+                ? hostMatch[1].toLowerCase().replace(/:\d+$/, '')
+                : '';
+              const allowedHosts = new Set([
+                'www.youtube.com',
+                'youtube.com',
+                'm.youtube.com',
+                'consent.youtube.com',
+                'accounts.youtube.com',
+                'accounts.google.com',
+                'www.google.com',
+                'google.com',
+                'consent.google.com',
+              ]);
+              if (host && allowedHosts.has(host)) return true;
+            } catch {}
+            // Never hand off ad redirects (googlesyndication.com,
+            // doubleclick.net, googleadservices.com, custom schemes, etc.)
+            // to the system browser. Returning false drops the navigation.
             return false;
           }}
         />
