@@ -42,9 +42,18 @@ function decodeEntities(value: string): string {
 }
 
 function cleanTimedText(value: string): string {
-  return decodeEntities(String(value ?? '').replace(/<[^>]+>/g, ''))
-    .trim()
-    .replace(/\s+/g, ' ');
+  return stripCaptionMarkers(
+    decodeEntities(String(value ?? '').replace(/<[^>]+>/g, ''))
+  )
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// YouTube auto-captions prefix a speaker change with ">>" (sometimes repeated).
+// It is a caption control marker, not spoken text, so keep it out of the
+// transcript, translations, favorites and sentence analysis.
+function stripCaptionMarkers(value: string): string {
+  return value.replace(/^\s*(?:>>\s*)+/u, '');
 }
 
 function isNonSpeech(text: string): boolean {
