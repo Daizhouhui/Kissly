@@ -523,6 +523,7 @@ export default function PlayerScreen() {
   const [sheetParent, setSheetParent] = useState<'main' | 'listening'>('main');
   const [fontSizeTarget, setFontSizeTarget] = useState<'portrait' | 'landscape'>('portrait');
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [videoStageSize, setVideoStageSize] = useState({ width: 0, height: 0 });
   const [sourceCues, setSourceCues] = useState<Cue[]>([]);
   const [translatedCues, setTranslatedCues] = useState<Cue[] | null>(null);
   const [metaTitle, setMetaTitle] = useState(initialTitle);
@@ -681,14 +682,20 @@ export default function PlayerScreen() {
   }, [settings.keepAwake]);
 
   useEffect(() => {
-    if (!landscape) {
+    if (
+      Platform.OS === 'web' ||
+      hideVideo ||
+      blindMode ||
+      adShowing ||
+      videoProblem
+    ) {
       setControlsVisible(true);
       return;
     }
-    if (!controlsVisible || !playing) return;
-    const timer = setTimeout(() => setControlsVisible(false), 3800);
+    if (!controlsVisible || !playing || videoLoading) return;
+    const timer = setTimeout(() => setControlsVisible(false), 3000);
     return () => clearTimeout(timer);
-  }, [controlsVisible, landscape, playing]);
+  }, [adShowing, blindMode, controlsVisible, hideVideo, playing, videoLoading, videoProblem]);
 
   useEffect(() => {
     setRepeatPass(0);
@@ -1013,6 +1020,26 @@ export default function PlayerScreen() {
     // a second pause when the user taps play.
     send('window.__kiss && window.__kiss.toggle(); true;');
     setBlocked(false);
+  };
+
+  const handleVideoStageTap = (
+    event: any,
+    width: number,
+    height: number
+  ) => {
+    const x = Number(event?.nativeEvent?.locationX ?? 0);
+    const y = Number(event?.nativeEvent?.locationY ?? 0);
+    const stageWidth = width || windowSize.width;
+    const stageHeight = height || windowSize.height;
+    const centerHit = Math.max(64, Math.min(96, stageWidth * 0.25));
+    const inCenter =
+      Math.abs(x - stageWidth / 2) <= centerHit / 2 &&
+      Math.abs(y - stageHeight / 2) <= centerHit / 2;
+    if (inCenter) {
+      togglePlay();
+      return;
+    }
+    setControlsVisible((value) => !value);
   };
 
   const togglePrecisionPlay = () => {
@@ -1545,6 +1572,14 @@ export default function PlayerScreen() {
   const displayAuthor = metaAuthor || initialAuthor;
   const rateLabel = Number.isInteger(rate) ? `${rate}x` : `${rate.toFixed(1)}x`;
   const nativeVideo = Platform.OS !== 'web';
+  const videoTappable =
+    nativeVideo &&
+    ready &&
+    !videoLoading &&
+    !videoProblem &&
+    !adShowing &&
+    !blindMode &&
+    !hideVideo;
   const webUrl = `https://m.youtube.com/watch?v=${videoId}&hl=zh-CN&autoplay=0`;
 
   if (!videoId) {
@@ -1558,6 +1593,14 @@ export default function PlayerScreen() {
   const videoBlock = (
     <View
       key="video-stage"
+      onLayout={(event) => {
+        const { width, height } = event.nativeEvent.layout;
+        setVideoStageSize((current) =>
+          current.width === width && current.height === height
+            ? current
+            : { width, height }
+        );
+      }}
       style={
         landscape
           ? styles.landscapeVideo
@@ -1656,6 +1699,14 @@ export default function PlayerScreen() {
           <Text style={styles.webVideoFallbackText}>请在 Kissly 手机 App 内播放</Text>
         </View>
       )}
+      {!landscape && videoTappable ? (
+        <Pressable
+          style={[StyleSheet.absoluteFill, { zIndex: 2 }]}
+          onPress={(event) =>
+            handleVideoStageTap(event, videoStageSize.width, videoStageSize.height)
+          }
+        />
+      ) : null}
       {videoLoading && !hideVideo && nativeVideo ? (
         <View style={styles.videoLoading} pointerEvents="none">
           <ActivityIndicator color={theme.colors.primary} />
@@ -1664,35 +1715,32 @@ export default function PlayerScreen() {
           </Text>
         </View>
       ) : null}
-      {!playing && !landscape && !hideVideo && !blindMode && nativeVideo ? (
+      {!landscape && videoTappable && controlsVisible ? (
         <Pressable style={styles.centerPlay} onPress={togglePlay}>
-          <Ionicons name="play" size={34} color="#FFFFFF" />
+          <Ionicons name={playing ? 'pause' : 'play'} size={34} color="#FFFFFF" />
         </Pressable>
       ) : null}
-      {!landscape && !hideVideo && !blindMode && nativeVideo ? (
+      {!landscape && !hideVideo && !blindMode && !adShowing && nativeVideo && controlsVisible ? (
         <View style={styles.qualityChip} pointerEvents="none">
           <Text style={styles.qualityChipText}>
             {quality ? quality.toUpperCase() : 'HD1080'} · 优先
           </Text>
         </View>
       ) : null}
-      {!landscape && !hideVideo && !blindMode && !adShowing && nativeVideo ? (
-        <>
-          <Pressable
-            onPress={toggleTranslation}
-            hitSlop={10}
-            style={styles.videoTranslate}
-          >
-            <Ionicons name="language" size={18} color="#FFFFFF" />
-          </Pressable>
-          <Pressable
-            onPress={handleFullscreen}
-            hitSlop={10}
-            style={styles.videoFullscreen}
-          >
-            <Ionicons name="expand-outline" size={18} color="#FFFFFF" />
-          </Pressable>
-        </>
+      {!landscape &&
+      !hideVideo &&
+      !blindMode &&
+      !adShowing &&
+      !videoProblem &&
+      nativeVideo &&
+      controlsVisible ? (
+        <Pressable
+          onPress={handleFullscreen}
+          hitSlop={10}
+          style={styles.videoFullscreen}
+        >
+          <Ionicons name="resize-outline" size={20} color="#FFFFFF" />
+        </Pressable>
       ) : null}
       {videoProblem && !hideVideo && nativeVideo ? (
         <View style={styles.problemOverlay}>
@@ -1953,7 +2001,7 @@ export default function PlayerScreen() {
             </Text>
           </Pressable>
           <Pressable style={styles.action} onPress={handleFullscreen}>
-            <Ionicons name="expand-outline" size={23} color={theme.colors.textSecondary} />
+            <Ionicons name="resize-outline" size={23} color={theme.colors.textSecondary} />
             <Text style={[styles.actionLabel, { color: theme.colors.textSecondary }]}>全屏</Text>
           </Pressable>
         </View>
@@ -1965,7 +2013,9 @@ export default function PlayerScreen() {
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
       <Pressable
         style={StyleSheet.absoluteFill}
-        onPress={() => setControlsVisible((value) => !value)}
+        onPress={(event) =>
+          handleVideoStageTap(event, windowSize.width, windowSize.height)
+        }
       />
       {controlsVisible ? (
         <>
@@ -2020,7 +2070,7 @@ export default function PlayerScreen() {
               <Text style={styles.landRateText}>{rateLabel}</Text>
             </Pressable>
             <Pressable onPress={exitFullscreen} style={styles.landIconButton}>
-              <Ionicons name="contract-outline" size={24} color="#FFFFFF" />
+              <Ionicons name="resize-outline" size={24} color="#FFFFFF" />
             </Pressable>
             <Pressable
               onPress={blindMode ? openListeningSettings : openMainSettings}
@@ -3940,6 +3990,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.16)',
+    zIndex: 6,
   },
   qualityChip: {
     position: 'absolute',
@@ -3956,20 +4007,6 @@ const styles = StyleSheet.create({
   videoFullscreen: {
     position: 'absolute',
     right: 10,
-    bottom: 10,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: 'rgba(10,8,16,0.7)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 8,
-  },
-  videoTranslate: {
-    position: 'absolute',
-    right: 50,
     bottom: 10,
     width: 34,
     height: 34,
