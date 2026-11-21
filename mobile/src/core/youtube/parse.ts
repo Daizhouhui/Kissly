@@ -242,7 +242,9 @@ export function groupCaptionSegments(
     const last = current[current.length - 1];
     if (last) {
       const gapMs = (segment.start - last.end) * 1000;
-      const durationMs = (segment.end - current[0].start) * 1000;
+      // Use the next word's start, not the previous word's possibly-held
+      // VTT end timestamp, so a long silent hold does not split a sentence.
+      const durationMs = (segment.start - current[0].start) * 1000;
       const nextChars =
         charCount + segment.text.length + (noSpace ? 0 : 1);
       const nextWords = wordCount + segment.text.split(/\s+/).filter(Boolean).length;
@@ -308,35 +310,88 @@ export function parseSrv3(xml: string, languageCode = 'auto'): Cue[] {
 }
 
 export function parseVtt(vtt: string, languageCode = 'auto'): Cue[] {
-  const cues: Cue[] = [];
   const lines = vtt.replace(/\r/g, '').split('\n');
+  const segments: TimedSegment[] = [];
   let start = 0;
   let end = 0;
-  let text: string[] = [];
+  let textLines: string[] = [];
+  let previousLastLine = '';
+  let sawInlineTags = false;
+
   const flush = () => {
-    const joined = cleanTimedText(text.join(' '));
-    if (joined && end > start) {
-      cues.push({
-        start: Number(start.toFixed(3)),
-        end: Number(end.toFixed(3)),
-        text: joined,
-      });
+    const duration = end - start;
+    if (duration > 0 && textLines.length) {
+      const cleanedLines = textLines.map(cleanTimedText).filter(Boolean);
+      const firstLine = cleanedLines[0] ?? '';
+      const lastLine = cleanedLines[cleanedLines.length - 1] ?? '';
+      const rolling =
+        sawInlineTags &&
+        cleanedLines.length >= 2 &&
+        !!previousLastLine &&
+        (firstLine === previousLastLine ||
+          firstLine.startsWith(`${previousLastLine} `) ||
+          previousLastLine.startsWith(`${firstLine} `));
+      // YouTube's auto-generated VTT is a rolling two-line transcript:
+      // the first line repeats the previous cue and the last line contains
+      // the newly spoken words with inline absolute timestamps. Parsing the
+      // whole cue would duplicate every previous line; parsing only the
+      // timestamped line keeps the complete, unique word stream.
+      const taggedLine = [...textLines]
+        .reverse()
+        .find((line) => /<(?:(\d{1,2}):)?(\d{2}):(\d{2})[.,](\d{3})>/.test(line));
+      let produced = false;
+      if (taggedLine) {
+        sawInlineTags = true;
+        const tagRe = /<(?:(\d{1,2}):)?(\d{2}):(\d{2})[.,](\d{3})>/g;
+        let cursorTime = start;
+        let cursorIndex = 0;
+        let match: RegExpExecArray | null;
+        while ((match = tagRe.exec(taggedLine))) {
+          const at = Number(match[1] ?? 0) * 3600 +
+            Number(match[2]) * 60 +
+            Number(match[3]) +
+            Number(match[4]) / 1000;
+          const text = cleanTimedText(taggedLine.slice(cursorIndex, match.index));
+          if (text && at > cursorTime && at <= end) {
+            segments.push({ text, start: cursorTime, end: at });
+            produced = true;
+          }
+          cursorTime = Math.max(cursorTime, Math.min(at, end));
+          cursorIndex = tagRe.lastIndex;
+        }
+        const tail = cleanTimedText(taggedLine.slice(cursorIndex));
+        if (tail && end > cursorTime) {
+          segments.push({ text: tail, start: cursorTime, end });
+          produced = true;
+        }
+      }
+      if (!produced) {
+        // Manual VTT: keep the whole cue. Rolling VTT cues without inline
+        // timestamps (usually the last fragment of a sentence) must only
+        // use the final line, otherwise the previous line is duplicated.
+        const joined = rolling ? lastLine : cleanTimedText(textLines.join(' '));
+        if (joined && duration >= 0.05) {
+          segments.push({ text: joined, start, end });
+        }
+      }
+      if (lastLine) previousLastLine = lastLine;
     }
-    text = [];
+    textLines = [];
   };
+
   for (const line of lines) {
     const timing = line.match(
-      /^(\d{1,2}):(\d{2}):(\d{2})[.,](\d{3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[.,](\d{3})/
+      /^(?:(\d{1,2}):)?(\d{2}):(\d{2})[.,](\d{3})\s*-->\s*(?:(\d{1,2}):)?(\d{2}):(\d{2})[.,](\d{3})/
     );
     if (timing) {
       flush();
       start =
-        Number(timing[1]) * 3600 +
+        Number(timing[1] ?? 0) * 3600 +
         Number(timing[2]) * 60 +
         Number(timing[3]) +
         Number(timing[4]) / 1000;
       end =
-        Number(timing[5]) * 3600 +
+        Number(timing[5] ?? 0) * 3600 +
         Number(timing[6]) * 60 +
         Number(timing[7]) +
         Number(timing[8]) / 1000;
@@ -347,11 +402,21 @@ export function parseVtt(vtt: string, languageCode = 'auto'): Cue[] {
       continue;
     }
     if (/^(WEBVTT|NOTE|Kind:|Language:)/i.test(line)) continue;
-    text.push(line.trim());
+    textLines.push(line.trim());
   }
   flush();
-  void languageCode;
-  return cues;
+
+  return groupCaptionSegments(
+    segments.filter(
+      (item) =>
+        item.text &&
+        !isNonSpeech(item.text) &&
+        Number.isFinite(item.start) &&
+        Number.isFinite(item.end) &&
+        item.end > item.start
+    ),
+    languageCode
+  );
 }
 
 export function parseCaptionText(text: string, languageCode = 'auto'): Cue[] {
