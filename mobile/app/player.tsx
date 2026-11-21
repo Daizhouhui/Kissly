@@ -103,6 +103,20 @@ function playerBridgeScript() {
       } catch(e) {}
       return document.querySelector('#movie_player video') || document.querySelector('video');
     }
+    function isAdShowing(){
+      try {
+        var p = getPlayer();
+        if (p && p.classList && p.classList.contains('ad-showing')) return true;
+        if (p && p.querySelector) {
+          var skip = p.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button');
+          if (skip) {
+            var rect = skip.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) return true;
+          }
+        }
+      } catch(e) {}
+      return false;
+    }
     var audioFixTimer = null;
     function unmuteOverlay(){
       try {
@@ -181,7 +195,8 @@ function playerBridgeScript() {
         playing: !v.paused && !v.ended,
         ready: v.readyState >= 2,
         rate: v.playbackRate,
-        quality: quality
+        quality: quality,
+        ad: isAdShowing()
       });
     }
     var bindTries = 0;
@@ -378,6 +393,7 @@ export default function PlayerScreen() {
   const [videoLoading, setVideoLoading] = useState(true);
   const videoLoadingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [adShowing, setAdShowing] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -1046,12 +1062,14 @@ export default function PlayerScreen() {
         setDuration(message.duration);
       }
       if (typeof message.playing === 'boolean') setPlaying(message.playing);
+      if (typeof message.ad === 'boolean') setAdShowing(message.ad);
       if (message.quality) setQuality(String(message.quality));
       if (message.ready) setReady(true);
       return;
     }
     if (message.type === 'problem') {
       setReady(false);
+      setAdShowing(false);
       setVideoProblem('这个视频限制了站内播放，可能需要登录、年龄验证或作者关闭了外站播放。');
     }
   };
@@ -1059,6 +1077,7 @@ export default function PlayerScreen() {
   const retry = () => {
     setVideoProblem('');
     setReady(false);
+    setAdShowing(false);
     setPlaying(false);
     setCurrent(0);
     setVideoLoading(true);
@@ -1507,7 +1526,7 @@ export default function PlayerScreen() {
           </Text>
         </View>
       ) : null}
-      {!landscape && !hideVideo && !blindMode && nativeVideo ? (
+      {!landscape && !hideVideo && !blindMode && !adShowing && nativeVideo ? (
         <>
           <Pressable
             onPress={toggleTranslation}
