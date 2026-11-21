@@ -2569,7 +2569,7 @@ export default function PlayerScreen() {
         style={styles.speedButton}
         accessibilityLabel={`播放速度 ${rateLabel}`}
       >
-        <SpeedIcon color={theme.colors.textSecondary} size={32} />
+        <SpeedIcon color={theme.colors.textSecondary} size={27} />
         {!defaultRate ? (
           <View
             style={[
@@ -4972,8 +4972,8 @@ const styles = StyleSheet.create({
   },
   transportSmall: { width: 42, height: 38, alignItems: 'center', justifyContent: 'center' },
   speedButton: {
-    width: 48,
-    height: 38,
+    width: 44,
+    height: 34,
     alignItems: 'center',
     justifyContent: 'center',
   },
