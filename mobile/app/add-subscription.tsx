@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -17,6 +18,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { loadJson, saveJson } from '../src/core/storage';
 import { useAppStore } from '../src/core/store';
 import { Subscription } from '../src/core/types';
 import { resolveChannelInput } from '../src/core/youtube/channel';
@@ -133,6 +135,9 @@ export default function SearchChannelsScreen() {
   const [preview, setPreview] = useState<Subscription | null>(null);
   const [pasteError, setPasteError] = useState('');
   const [showImport, setShowImport] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [history, setHistory] = useState<string[]>([]);
+  const historyLoaded = useRef(false);
   const requestRef = useRef(0);
   const subscribedIds = new Set(subscriptions.map((sub) => sub.channelId));
 
@@ -179,9 +184,62 @@ export default function SearchChannelsScreen() {
     }
   };
 
+  const rememberSearch = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    setHistory((current) => {
+      const next = [
+        trimmed,
+        ...current.filter((item) => item.toLowerCase() !== trimmed.toLowerCase()),
+      ].slice(0, 12);
+      return next;
+    });
+  };
+
+  const clearHistory = () => {
+    setHistory([]);
+  };
+
+  const selectHistoryItem = (value: string) => {
+    setQuery(value);
+    setHistoryOpen(false);
+    rememberSearch(value);
+    if (value === query) runSearch(value);
+  };
+
   useEffect(() => {
-    if (initialQuery.trim()) runSearch(initialQuery);
-    else loadRecommendations('all');
+    let cancelled = false;
+    void loadJson<string[]>('search-history', []).then((items) => {
+      if (cancelled) return;
+      const valid = Array.isArray(items)
+        ? items
+            .filter((item): item is string => typeof item === 'string' && !!item.trim())
+            .map((item) => item.trim())
+            .slice(0, 12)
+        : [];
+      setHistory((current) => {
+        const merged = [...current, ...valid].filter(
+          (item, index, list) =>
+            list.findIndex((entry) => entry.toLowerCase() === item.toLowerCase()) === index
+        );
+        return merged.slice(0, 12);
+      });
+      historyLoaded.current = true;
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (historyLoaded.current) void saveJson('search-history', history);
+  }, [history]);
+
+  useEffect(() => {
+    if (initialQuery.trim()) {
+      rememberSearch(initialQuery);
+      runSearch(initialQuery);
+    } else loadRecommendations('all');
     return () => {
       requestRef.current += 1;
     };
@@ -288,13 +346,17 @@ export default function SearchChannelsScreen() {
               <TextInput
                 value={query}
                 onChangeText={setQuery}
+                onFocus={() => setHistoryOpen(false)}
                 placeholder="搜索 YouTube"
                 placeholderTextColor={theme.colors.textTertiary}
                 autoFocus={!initialQuery}
                 autoCapitalize="none"
                 autoCorrect={false}
                 returnKeyType="search"
-                onSubmitEditing={() => runSearch(query)}
+                onSubmitEditing={() => {
+                  rememberSearch(query);
+                  runSearch(query);
+                }}
                 style={{ flex: 1, color: theme.colors.text, fontSize: 14.5, height: '100%' }}
               />
               {loading ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
@@ -304,7 +366,100 @@ export default function SearchChannelsScreen() {
                 </Pressable>
               ) : null}
             </View>
+            <Pressable
+              onPress={() => {
+                Keyboard.dismiss();
+                setHistoryOpen((value) => !value);
+              }}
+              accessibilityLabel="搜索历史"
+              hitSlop={8}
+              style={{
+                width: 38,
+                height: 48,
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: 12,
+                backgroundColor: historyOpen ? theme.colors.primarySoft : 'transparent',
+              }}
+            >
+              <Ionicons
+                name={historyOpen ? 'time' : 'time-outline'}
+                size={23}
+                color={historyOpen ? theme.colors.primary : theme.colors.textSecondary}
+              />
+            </Pressable>
           </View>
+
+          {historyOpen ? (
+            <View
+              style={{
+                marginTop: 14,
+                backgroundColor: theme.colors.card,
+                borderRadius: 16,
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: theme.colors.border,
+                overflow: 'hidden',
+              }}
+            >
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  paddingHorizontal: 14,
+                  paddingTop: 13,
+                  paddingBottom: 10,
+                }}
+              >
+                <Text style={{ color: theme.colors.text, fontSize: 13.5, fontWeight: '800' }}>
+                  搜索历史
+                </Text>
+                {history.length ? (
+                  <Pressable onPress={clearHistory} hitSlop={8}>
+                    <Text style={{ color: theme.colors.textTertiary, fontSize: 12 }}>清空</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+              {history.length ? (
+                history.map((item, index) => (
+                  <Pressable
+                    key={`${item}-${index}`}
+                    onPress={() => selectHistoryItem(item)}
+                    style={({ pressed }) => ({
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 9,
+                      paddingHorizontal: 14,
+                      paddingVertical: 11,
+                      opacity: pressed ? 0.7 : 1,
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: theme.colors.border,
+                    })}
+                  >
+                    <Ionicons name="time-outline" size={17} color={theme.colors.textTertiary} />
+                    <Text
+                      numberOfLines={1}
+                      style={{ flex: 1, color: theme.colors.textSecondary, fontSize: 13 }}
+                    >
+                      {item}
+                    </Text>
+                  </Pressable>
+                ))
+              ) : (
+                <Text
+                  style={{
+                    color: theme.colors.textTertiary,
+                    fontSize: 12,
+                    lineHeight: 18,
+                    paddingHorizontal: 14,
+                    paddingBottom: 14,
+                  }}
+                >
+                  暂无搜索记录，搜索后会保存在这里。
+                </Text>
+              )}
+            </View>
+          ) : null}
 
           <ScrollView
             horizontal
