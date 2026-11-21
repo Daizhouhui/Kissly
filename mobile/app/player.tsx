@@ -1,4 +1,5 @@
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
@@ -8,7 +9,6 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   BackHandler,
   Platform,
   Pressable,
@@ -40,7 +40,9 @@ import {
   pickCaptionTracks,
 } from '@/src/core/youtube/innertube';
 import { fontWeightFor, fontFamilyFor, sentenceCues } from '@/src/ui/subtitleStyle';
+import { appAlert as Alert } from '@/src/ui/app-alert';
 import { RipplePressable } from '@/src/ui/ripple-pressable';
+import { LoopIcon, SpeedIcon } from '@/src/ui/player-icons';
 import { Squircle } from '@/src/ui/squircle';
 import { useAppTheme } from '@/src/ui/theme';
 
@@ -451,6 +453,11 @@ const RATE_MIN = 0.5;
 const RATE_MAX = 2;
 const RATE_DOTS = [0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2];
 
+function controlHaptic() {
+  if (Platform.OS === 'web') return;
+  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+}
+
 type SubtitleModeOption = {
   id: SubtitleMode;
   label: string;
@@ -534,6 +541,7 @@ export default function PlayerScreen() {
   const [status, setStatus] = useState('正在读取字幕…');
   const [progressWidth, setProgressWidth] = useState(0);
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
+  const seekPreviewRef = useRef<number | null>(null);
   const [trackKey, setTrackKey] = useState('');
   const [toast, setToast] = useState('');
   const [rate, setRate] = useState(1);
@@ -888,20 +896,11 @@ export default function PlayerScreen() {
 
   useEffect(() => {
     if (activeIndex < 0) return;
-    const y = cueOffsets.current[activeIndex];
-    if (typeof y !== 'number') return;
-    if (settings.subtitle.scrollMode === 'top') {
-      scrollRef.current?.scrollTo({ y: Math.max(0, y - 80), animated: true });
-      return;
-    }
-    const viewTop = transcriptScrollRef.current;
-    const viewHeight = transcriptHeightRef.current;
-    const isAbove = y < viewTop + 24;
-    const isBelow = y > viewTop + Math.max(80, viewHeight - 130);
-    if (isAbove || isBelow) {
-      scrollRef.current?.scrollTo({ y: Math.max(0, y - 80), animated: true });
-    }
-  }, [activeIndex, settings.subtitle.scrollMode]);
+    // Only the active cue and upcoming cues are rendered now, so the
+    // active cue is always the first child. Snap the transcript back to
+    // the top whenever the active sentence changes.
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [activeIndex]);
 
   useEffect(() => {
     return () => {
@@ -1078,9 +1077,21 @@ export default function PlayerScreen() {
     send(`window.__kiss && window.__kiss.seek(${next}); true;`);
   };
 
-  const seekFromEvent = (locationX: number) => {
-    if (!duration || !progressWidth) return;
-    seekTo((locationX / progressWidth) * duration);
+  const previewSeekAt = (locationX: number) => {
+    if (!duration || !progressWidth) return null;
+    const ratio = Math.max(0, Math.min(1, locationX / progressWidth));
+    const value = Math.round(ratio * duration * 10) / 10;
+    seekPreviewRef.current = value;
+    setSeekPreview(value);
+    return value;
+  };
+
+  const commitPreviewSeek = () => {
+    const value = seekPreviewRef.current;
+    if (value == null) return;
+    seekPreviewRef.current = null;
+    seekTo(value);
+    setSeekPreview(null);
   };
 
   const jumpCue = (direction: -1 | 1) => {
@@ -1573,6 +1584,7 @@ export default function PlayerScreen() {
   const displayTitle = metaTitle || initialTitle || 'YouTube';
   const displayAuthor = metaAuthor || initialAuthor;
   const rateLabel = Number.isInteger(rate) ? `${rate}x` : `${rate.toFixed(1)}x`;
+  const defaultRate = Math.abs(rate - 1) < 0.001;
   const nativeVideo = Platform.OS !== 'web';
   const videoTappable =
     nativeVideo &&
@@ -1718,15 +1730,9 @@ export default function PlayerScreen() {
         </View>
       ) : null}
       {!landscape && videoTappable && controlsVisible ? (
-        <RipplePressable
-          style={styles.centerPlay}
-          onPress={togglePlay}
-          rippleSize={60}
-          haptic="medium"
-          accessibilityLabel={playing ? '暂停' : '播放'}
-        >
-          <Ionicons name={playing ? 'pause' : 'play'} size={29} color="#FFFFFF" />
-        </RipplePressable>
+        <Pressable style={styles.centerPlay} onPress={togglePlay}>
+          <Ionicons name={playing ? 'pause' : 'play'} size={34} color="#FFFFFF" />
+        </Pressable>
       ) : null}
       {!landscape && !hideVideo && !blindMode && !adShowing && nativeVideo && controlsVisible ? (
         <View style={styles.qualityChip} pointerEvents="none">
@@ -1742,15 +1748,13 @@ export default function PlayerScreen() {
       !videoProblem &&
       nativeVideo &&
       controlsVisible ? (
-        <RipplePressable
+        <Pressable
           onPress={handleFullscreen}
           hitSlop={10}
           style={styles.videoFullscreen}
-          rippleSize={34}
-          accessibilityLabel="全屏"
         >
           <Ionicons name="resize-outline" size={20} color="#FFFFFF" />
-        </RipplePressable>
+        </Pressable>
       ) : null}
       {videoProblem && !hideVideo && nativeVideo ? (
         <View style={styles.problemOverlay}>
@@ -1780,22 +1784,22 @@ export default function PlayerScreen() {
       onLayout={(event) => setProgressWidth(event.nativeEvent.layout.width)}
       onStartShouldSetResponder={() => true}
       onMoveShouldSetResponder={() => true}
-      onResponderGrant={(event) => seekFromEvent(event.nativeEvent.locationX)}
+      onResponderGrant={(event) => {
+        previewSeekAt(event.nativeEvent.locationX);
+      }}
       onResponderMove={(event) => {
-        if (!duration || !progressWidth) return;
-        setSeekPreview((event.nativeEvent.locationX / progressWidth) * duration);
+        previewSeekAt(event.nativeEvent.locationX);
       }}
-      onResponderRelease={(event) => {
-        seekFromEvent(event.nativeEvent.locationX);
-        setSeekPreview(null);
-      }}
+      onResponderRelease={() => commitPreviewSeek()}
+      onResponderTerminate={() => commitPreviewSeek()}
+      onResponderTerminationRequest={() => false}
     >
-      <View style={[styles.progressRail, { backgroundColor: 'rgba(255,255,255,0.26)' }]}>
+      <View style={[styles.progressRail, { backgroundColor: theme.colors.surfaceAlt }]}>
         <View
           style={[
             styles.progressFill,
             {
-              backgroundColor: 'rgba(255,255,255,0.95)',
+              backgroundColor: theme.colors.primary,
               width: duration
                 ? Math.max(
                     0,
@@ -1813,7 +1817,7 @@ export default function PlayerScreen() {
         style={[
           styles.progressThumb,
           {
-            backgroundColor: '#FFFFFF',
+            backgroundColor: theme.colors.primary,
             left: duration
               ? Math.max(
                   0,
@@ -1831,10 +1835,10 @@ export default function PlayerScreen() {
 
   const timeRow = (
     <View style={styles.timeRow}>
-      <Text style={[styles.timeText, { color: 'rgba(255,255,255,0.68)' }]}>
+      <Text style={[styles.timeText, { color: theme.colors.textTertiary }]}>
         {formatTime(seekPreview ?? current)}
       </Text>
-      <Text style={[styles.timeText, { color: 'rgba(255,255,255,0.68)' }]}>
+      <Text style={[styles.timeText, { color: theme.colors.textTertiary }]}>
         {formatTime(duration)}
       </Text>
     </View>
@@ -1842,82 +1846,73 @@ export default function PlayerScreen() {
 
   const transport = (
     <View style={styles.transport}>
-      <RipplePressable
+      <Pressable
         onPress={openRateSheet}
         hitSlop={8}
-        style={styles.ratePill}
-        rippleSize={34}
-        accessibilityLabel="调节播放速度"
+        style={styles.speedButton}
+        accessibilityLabel={`播放速度 ${rateLabel}`}
       >
-        <Ionicons name="play" size={11} color="#FFFFFF" />
-        <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '800' }}>
-          {rateLabel}
-        </Text>
-      </RipplePressable>
+        <SpeedIcon color={theme.colors.textSecondary} size={32} />
+        {!defaultRate ? (
+          <View
+            style={[
+              styles.speedBadge,
+              { backgroundColor: theme.colors.primary },
+            ]}
+          >
+            <Text style={styles.speedBadgeText}>{rateLabel}</Text>
+          </View>
+        ) : null}
+      </Pressable>
       <RipplePressable
         onPress={() => (blindMode ? jumpPrecisionCue(-1) : jumpCue(-1))}
         hitSlop={10}
         style={styles.transportSmall}
-        rippleSize={44}
-        haptic="light"
-        accessibilityLabel="上一句"
       >
-        <Ionicons name="play-skip-back" size={24} color="rgba(255,255,255,0.94)" />
+        <Ionicons name="play-skip-back" size={22} color={theme.colors.textSecondary} />
       </RipplePressable>
       <RipplePressable
         onPress={blindMode ? togglePrecisionPlay : togglePlay}
-        style={styles.playButton}
-        rippleSize={54}
-        haptic="medium"
-        accessibilityLabel={playing ? '暂停' : '播放'}
+        style={[styles.playButton, { backgroundColor: theme.colors.primary }]}
       >
-        <Ionicons name={playing ? 'pause' : 'play'} size={26} color="#FFFFFF" />
+        <Ionicons name={playing ? 'pause' : 'play'} size={24} color="#FFFFFF" />
       </RipplePressable>
       <RipplePressable
         onPress={() => (blindMode ? jumpPrecisionCue(1) : jumpCue(1))}
         hitSlop={10}
         style={styles.transportSmall}
-        rippleSize={44}
-        haptic="light"
-        accessibilityLabel="下一句"
       >
-        <Ionicons name="play-skip-forward" size={24} color="rgba(255,255,255,0.94)" />
+        <Ionicons name="play-skip-forward" size={22} color={theme.colors.textSecondary} />
       </RipplePressable>
       {blindMode ? (
-        <RipplePressable
+        <Pressable
           onPress={togglePrecisionOriginal}
           hitSlop={8}
           accessibilityLabel={blindReveal ? '隐藏原文' : '显示原文和译文'}
           style={[
             styles.loopButton,
-            blindReveal && { backgroundColor: 'rgba(255,255,255,0.14)' },
+            blindReveal && { backgroundColor: theme.colors.primarySoft },
           ]}
-          rippleSize={38}
-          accessibilityHint="显示或隐藏当前句原文"
         >
           <Ionicons
             name={blindReveal ? 'eye' : 'eye-off-outline'}
             size={21}
-            color={blindReveal ? '#FFFFFF' : 'rgba(255,255,255,0.56)'}
+            color={blindReveal ? theme.colors.primary : theme.colors.textTertiary}
           />
-        </RipplePressable>
+        </Pressable>
       ) : (
-        <RipplePressable
+        <Pressable
           onPress={() => setLoopSentence((value) => !value)}
           hitSlop={8}
           accessibilityLabel={loopSentence ? '关闭单句循环' : '开启单句循环'}
-          style={[
-            styles.loopButton,
-            loopSentence && { backgroundColor: 'rgba(255,255,255,0.14)' },
-          ]}
-          rippleSize={38}
+          style={styles.loopButton}
         >
-          <Ionicons
-            name={loopSentence ? 'repeat' : 'repeat-outline'}
-            size={21}
-            color={loopSentence ? '#FFFFFF' : 'rgba(255,255,255,0.56)'}
+          <LoopIcon
+            color={loopSentence ? theme.colors.primary : theme.colors.textTertiary}
+            barColor={loopSentence ? theme.colors.text : theme.colors.textTertiary}
+            size={24}
           />
-        </RipplePressable>
+        </Pressable>
       )}
     </View>
   );
@@ -1927,6 +1922,8 @@ export default function PlayerScreen() {
       style={[
         styles.controls,
         {
+          backgroundColor: theme.colors.playerSurface,
+          borderTopColor: theme.colors.border,
           paddingBottom: Math.max(12, insets.bottom),
         },
       ]}
@@ -1936,18 +1933,16 @@ export default function PlayerScreen() {
       {transport}
       {blindMode ? (
         <View style={styles.precisionActions}>
-          <RipplePressable
+          <Pressable
             style={styles.precisionAction}
             onPress={analyzeCurrentCue}
-            rippleSize={54}
             accessibilityLabel="AI 对话分析"
           >
-            <Ionicons name="sparkles-outline" size={23} color="rgba(255,255,255,0.62)" />
-          </RipplePressable>
-          <RipplePressable
+            <Ionicons name="sparkles-outline" size={23} color={theme.colors.textSecondary} />
+          </Pressable>
+          <Pressable
             style={styles.precisionAction}
             onPress={togglePrecisionTranslation}
-            rippleSize={54}
             accessibilityLabel="显示或隐藏译文"
           >
             <Ionicons
@@ -1955,102 +1950,83 @@ export default function PlayerScreen() {
               size={23}
               color={
                 precisionTranslationVisible
-                  ? '#FFFFFF'
-                  : 'rgba(255,255,255,0.62)'
+                  ? theme.colors.primary
+                  : theme.colors.textSecondary
               }
             />
-          </RipplePressable>
-          <RipplePressable
+          </Pressable>
+          <Pressable
             style={[
               styles.precisionAction,
               styles.precisionActionActive,
-              { backgroundColor: 'rgba(255,255,255,0.13)' },
+              { backgroundColor: theme.colors.primarySoft },
             ]}
             onPress={exitPrecision}
-            rippleSize={54}
             accessibilityLabel="退出精听"
           >
-            <Ionicons name="headset" size={24} color="#FFFFFF" />
-          </RipplePressable>
-          <RipplePressable
+            <Ionicons name="headset" size={24} color={theme.colors.primary} />
+          </Pressable>
+          <Pressable
             style={styles.precisionAction}
             onPress={() => precisionCue && toggleCueFavorite(precisionCue)}
-            rippleSize={54}
             accessibilityLabel="收藏当前句"
           >
             <Ionicons
               name={precisionCueSaved ? 'heart' : 'heart-outline'}
               size={23}
-              color={precisionCueSaved ? '#FFFFFF' : 'rgba(255,255,255,0.62)'}
+              color={precisionCueSaved ? theme.colors.primary : theme.colors.textSecondary}
             />
-          </RipplePressable>
+          </Pressable>
         </View>
       ) : (
         <View style={styles.bottomActions}>
-          <RipplePressable
-            pressableRef={subtitleButtonRef}
+          <Pressable
+            ref={subtitleButtonRef}
             collapsable={false}
             style={styles.action}
             onPress={openSubtitleModeMenu}
-            rippleSize={58}
-            accessibilityLabel="字幕显示设置"
           >
             <Ionicons
               name={subtitleModeOption(subtitleMode).icon}
               size={22}
-              color="rgba(255,255,255,0.62)"
+              color={theme.colors.textSecondary}
             />
-            <Text style={[styles.actionLabel, { color: 'rgba(255,255,255,0.62)' }]}>字幕</Text>
-          </RipplePressable>
-          <RipplePressable
-            style={styles.action}
-            onPress={saveFavorite}
-            rippleSize={58}
-            accessibilityLabel={isFavorite ? '取消收藏' : '收藏'}
-          >
+            <Text style={[styles.actionLabel, { color: theme.colors.textSecondary }]}>字幕</Text>
+          </Pressable>
+          <Pressable style={styles.action} onPress={saveFavorite}>
             <Ionicons
               name={isFavorite ? 'bookmark' : 'bookmark-outline'}
               size={22}
-              color={isFavorite ? '#FFFFFF' : 'rgba(255,255,255,0.62)'}
+              color={isFavorite ? theme.colors.primary : theme.colors.textSecondary}
             />
             <Text
               style={[
                 styles.actionLabel,
-                { color: isFavorite ? '#FFFFFF' : 'rgba(255,255,255,0.62)' },
+                { color: isFavorite ? theme.colors.primary : theme.colors.textSecondary },
               ]}
             >
               收藏
             </Text>
-          </RipplePressable>
-          <RipplePressable
-            style={styles.action}
-            onPress={togglePrecision}
-            rippleSize={58}
-            accessibilityLabel="精听"
-          >
+          </Pressable>
+          <Pressable style={styles.action} onPress={togglePrecision}>
             <Ionicons
               name="headset-outline"
               size={23}
-              color={blindMode ? '#FFFFFF' : 'rgba(255,255,255,0.62)'}
+              color={blindMode ? theme.colors.primary : theme.colors.textSecondary}
             />
             <Text
               style={[
                 styles.actionLabel,
-                { color: blindMode ? '#FFFFFF' : 'rgba(255,255,255,0.62)' },
+                { color: blindMode ? theme.colors.primary : theme.colors.textSecondary },
               ]}
             >
               精听
             </Text>
-          </RipplePressable>
-          <RipplePressable
-            style={styles.action}
-            onPress={handleFullscreen}
-            rippleSize={58}
-            accessibilityLabel="全屏"
-          >
-            <Ionicons name="resize-outline" size={23} color="rgba(255,255,255,0.62)" />
-            <Text style={[styles.actionLabel, { color: 'rgba(255,255,255,0.62)' }]}>全屏</Text>
-          </RipplePressable>
+          </Pressable>
+          <Pressable style={styles.action} onPress={handleFullscreen}>
+            <Ionicons name="resize-outline" size={23} color={theme.colors.textSecondary} />
+            <Text style={[styles.actionLabel, { color: theme.colors.textSecondary }]}>全屏</Text>
+          </Pressable>
         </View>
       )}
     </View>
@@ -2068,27 +2044,25 @@ export default function PlayerScreen() {
         <>
           <View style={[styles.landTop, { paddingTop: Math.max(8, insets.top) }]}>
             <Squircle
-              style={styles.landProgressCapsule}
-              fill="rgba(27,27,29,0.46)"
-              exponent={4.5}
+              fill="rgba(18,15,23,0.55)"
+              exponent={4}
+              style={styles.landProgressPill}
             >
-              <Text style={styles.landTime}>{formatTime(current)}</Text>
+              <Text style={styles.landTime}>{formatTime(seekPreview ?? current)}</Text>
               <View
                 style={styles.landProgressTouch}
                 onLayout={(event) => setProgressWidth(event.nativeEvent.layout.width)}
                 onStartShouldSetResponder={() => true}
                 onMoveShouldSetResponder={() => true}
-                onResponderGrant={(event) => seekFromEvent(event.nativeEvent.locationX)}
+                onResponderGrant={(event) => {
+                  previewSeekAt(event.nativeEvent.locationX);
+                }}
                 onResponderMove={(event) => {
-                  if (!duration || !progressWidth) return;
-                  setSeekPreview(
-                    (event.nativeEvent.locationX / progressWidth) * duration
-                  );
+                  previewSeekAt(event.nativeEvent.locationX);
                 }}
-                onResponderRelease={(event) => {
-                  seekFromEvent(event.nativeEvent.locationX);
-                  setSeekPreview(null);
-                }}
+                onResponderRelease={() => commitPreviewSeek()}
+                onResponderTerminate={() => commitPreviewSeek()}
+                onResponderTerminationRequest={() => false}
               >
                 <View style={styles.landProgressRail}>
                   <View
@@ -2111,72 +2085,70 @@ export default function PlayerScreen() {
               </View>
               <Text style={styles.landTime}>{formatTime(duration)}</Text>
             </Squircle>
-            <View style={styles.landTopActions}>
-              <RipplePressable
-                pressableRef={landscapeCcButtonRef}
-                collapsable={false}
-                onPress={openLandscapeModeMenu}
-                style={styles.landIconButton}
-                rippleSize={46}
-                accessibilityLabel="字幕显示设置"
-              >
-                <Text style={styles.landCc}>CC</Text>
-              </RipplePressable>
-              <RipplePressable
-                onPress={openRateSheet}
-                style={styles.landTopRatePill}
-                rippleSize={46}
-                accessibilityLabel="调节播放速度"
-              >
-                <Text style={styles.landRateText}>{rateLabel}</Text>
-              </RipplePressable>
-              <RipplePressable
-                onPress={exitFullscreen}
-                style={styles.landIconButton}
-                rippleSize={46}
-                accessibilityLabel="退出全屏"
-              >
-                <Ionicons name="resize-outline" size={24} color="#FFFFFF" />
-              </RipplePressable>
-              <RipplePressable
-                onPress={blindMode ? openListeningSettings : openMainSettings}
-                style={styles.landIconButton}
-                rippleSize={46}
-                accessibilityLabel="更多设置"
-              >
-                <Ionicons name="ellipsis-horizontal" size={26} color="#FFFFFF" />
-              </RipplePressable>
-            </View>
+            <RipplePressable
+              pressableRef={landscapeCcButtonRef}
+              collapsable={false}
+              haptic={false}
+              onPress={openLandscapeModeMenu}
+              style={styles.landIconButton}
+            >
+              <MaterialCommunityIcons
+                name="closed-caption-outline"
+                size={22}
+                color="#FFFFFF"
+              />
+            </RipplePressable>
+            <RipplePressable
+              haptic={false}
+              onPress={openRateSheet}
+              style={styles.landTopRatePill}
+            >
+              <Text style={styles.landRateText}>{rateLabel}</Text>
+            </RipplePressable>
+            <RipplePressable
+              haptic={false}
+              onPress={exitFullscreen}
+              style={styles.landIconButton}
+            >
+              <Ionicons name="resize-outline" size={18} color="#FFFFFF" />
+            </RipplePressable>
+            <RipplePressable
+              haptic={false}
+              onPress={blindMode ? openListeningSettings : openMainSettings}
+              style={styles.landIconButton}
+            >
+              <Ionicons name="ellipsis-horizontal" size={19} color="#FFFFFF" />
+            </RipplePressable>
           </View>
 
           <View style={styles.landCenter}>
-            <RipplePressable
-              onPress={() => jumpCue(-1)}
+            <Pressable
+              onPress={() => {
+                controlHaptic();
+                jumpCue(-1);
+              }}
               style={styles.landTransportButton}
-              rippleSize={56}
-              haptic="light"
-              accessibilityLabel="上一句"
             >
-              <Ionicons name="play-skip-back" size={27} color="#FFFFFF" />
-            </RipplePressable>
-            <RipplePressable
-              onPress={togglePlay}
+              <Ionicons name="play-skip-back" size={18} color="#FFFFFF" />
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                controlHaptic();
+                togglePlay();
+              }}
               style={styles.landPlay}
-              rippleSize={60}
-              haptic="medium"
-              accessibilityLabel={playing ? '暂停' : '播放'}
             >
-              <Ionicons name={playing ? 'pause' : 'play'} size={31} color="#FFFFFF" />
-            </RipplePressable>
-            <RipplePressable
-              onPress={() => jumpCue(1)}
+              <Ionicons name={playing ? 'pause' : 'play'} size={30} color="#FFFFFF" />
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                controlHaptic();
+                jumpCue(1);
+              }}
               style={styles.landTransportButton}
-              rippleSize={56}
-              haptic="light"
-              accessibilityLabel="下一句"
             >
-              <Ionicons name="play-skip-forward" size={27} color="#FFFFFF" />
-            </RipplePressable>
+              <Ionicons name="play-skip-forward" size={18} color="#FFFFFF" />
+            </Pressable>
           </View>
         </>
       ) : null}
@@ -2192,9 +2164,13 @@ export default function PlayerScreen() {
           pointerEvents="none"
         >
           <Squircle
+            fill={
+              controlsVisible
+                ? 'rgba(16,13,24,0.6)'
+                : 'rgba(0,0,0,0.28)'
+            }
+            exponent={4}
             style={styles.landSubBox}
-            fill={controlsVisible ? 'rgba(18,18,20,0.62)' : 'rgba(0,0,0,0.32)'}
-            exponent={5}
           >
             {showOriginal ? (
               <Text
@@ -2202,7 +2178,6 @@ export default function PlayerScreen() {
                   styles.landSubOriginal,
                   {
                     fontSize: landscapeFontSize,
-                    lineHeight: Math.round(landscapeFontSize * 1.28),
                     fontFamily: originalFont,
                     fontWeight: originalWeight,
                   },
@@ -2218,7 +2193,6 @@ export default function PlayerScreen() {
                   styles.landSubTranslation,
                   {
                     fontSize: Math.max(13, landscapeFontSize - 5),
-                    lineHeight: Math.round(Math.max(13, landscapeFontSize - 5) * 1.35),
                     fontFamily: translationFont,
                     fontWeight: translationWeight,
                   },
@@ -2259,6 +2233,7 @@ export default function PlayerScreen() {
         cues.map((cue, index) => {
           const active = index === activeIndex;
           const past = index < activeIndex;
+          if (past) return null;
           const saved = active
             ? sentenceFavorites.some((fav) => fav.id === sentenceFavoriteId(videoId, cue.start))
             : false;
@@ -2268,10 +2243,7 @@ export default function PlayerScreen() {
               onLayout={(event) => {
                 cueOffsets.current[index] = event.nativeEvent.layout.y;
               }}
-              style={[
-                styles.cue,
-                past && { opacity: 0.5 },
-              ]}
+              style={styles.cue}
             >
               {active ? (
                 <View style={styles.cueHeader}>
@@ -2292,7 +2264,7 @@ export default function PlayerScreen() {
                   >
                     <Ionicons
                       name={saved ? 'heart' : 'heart-outline'}
-                      size={18}
+                      size={22}
                       color={saved ? theme.colors.primary : theme.colors.textTertiary}
                     />
                   </Pressable>
@@ -2310,6 +2282,7 @@ export default function PlayerScreen() {
                         fontWeight: originalWeight,
                       },
                       active && { color: theme.colors.primary, fontWeight: '800' },
+                      !active && styles.cueFutureOriginal,
                       past && { color: theme.colors.textTertiary },
                     ]}
                   >
@@ -2327,6 +2300,7 @@ export default function PlayerScreen() {
                         fontWeight: translationWeight,
                       },
                       active && { color: showOriginal ? theme.colors.text : theme.colors.primary },
+                      !active && styles.cueFutureTranslation,
                     ]}
                   >
                     {cue.translation}
@@ -2380,7 +2354,7 @@ export default function PlayerScreen() {
           <View style={{ flex: 1 }} />
           <View
             style={{
-              backgroundColor: 'rgba(255,255,255,0.14)',
+              backgroundColor: theme.colors.primary,
               borderRadius: 999,
               paddingHorizontal: 11,
               paddingVertical: 4,
@@ -2657,15 +2631,48 @@ export default function PlayerScreen() {
                   >
                     {displayTitle}
                   </Text>
-                  {displayAuthor ? (
-                    <Text
-                      style={[styles.headerSubtitle, { color: theme.colors.textTertiary }]}
-                      numberOfLines={1}
+                  {displayAuthor || showTranslation ? (
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        maxWidth: '100%',
+                        marginTop: 2,
+                      }}
                     >
-                      {displayAuthor}
-                    </Text>
+                      {displayAuthor ? (
+                        <Text
+                          style={[
+                            styles.headerSubtitle,
+                            { color: theme.colors.textTertiary, marginTop: 0, flexShrink: 1 },
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {displayAuthor}
+                        </Text>
+                      ) : null}
+                      {showTranslation ? (
+                        <Text
+                          numberOfLines={1}
+                          style={[
+                            styles.headerProvider,
+                            { color: theme.colors.textTertiary, flexShrink: 1 },
+                            displayAuthor ? { marginLeft: 5 } : null,
+                          ]}
+                        >
+                          {displayAuthor ? '· ' : ''}译 · {providerLabel || '机器翻译'}
+                        </Text>
+                      ) : null}
+                    </View>
                   ) : null}
                 </>
+              ) : showTranslation ? (
+                <Text
+                  numberOfLines={1}
+                  style={[styles.headerProvider, { color: theme.colors.textTertiary }]}
+                >
+                  译 · {providerLabel || '机器翻译'}
+                </Text>
               ) : null}
             </View>
             <Pressable
@@ -2692,9 +2699,9 @@ export default function PlayerScreen() {
             blindCard
           ) : (
             <>
-              <View style={styles.transcriptHeader}>
-                <View style={{ flex: 1 }} />
-                {status ? (
+              {status ? (
+                <View style={styles.transcriptHeader}>
+                  <View style={{ flex: 1 }} />
                   <View style={styles.statusRow}>
                     <ActivityIndicator size="small" color={theme.colors.primary} />
                     <Text
@@ -2704,12 +2711,8 @@ export default function PlayerScreen() {
                       {status}
                     </Text>
                   </View>
-                ) : (
-                  <Text style={[styles.statusText, { color: theme.colors.textTertiary }]}>
-                    译 · {providerLabel || '机器翻译'}
-                  </Text>
-                )}
-              </View>
+                </View>
+              ) : null}
               {transcript}
             </>
           )}
@@ -4012,6 +4015,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: { color: '#F5F2FF', fontSize: 16, fontWeight: '800', letterSpacing: -0.2 },
   headerSubtitle: { color: '#8D849D', fontSize: 11, marginTop: 2 },
+  headerProvider: { color: '#8D849D', fontSize: 10.5, fontWeight: '600' },
   videoFrame: {
     marginHorizontal: 14,
     backgroundColor: '#000000',
@@ -4067,35 +4071,39 @@ const styles = StyleSheet.create({
     position: 'absolute',
     alignSelf: 'center',
     top: '50%',
-    marginTop: -30,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: 'rgba(0,0,0,0.42)',
+    marginTop: -34,
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: 'rgba(10,8,16,0.72)',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.16)',
     zIndex: 6,
   },
   qualityChip: {
     position: 'absolute',
     left: 10,
     top: 10,
-    backgroundColor: 'rgba(20,20,22,0.56)',
+    backgroundColor: 'rgba(12,9,18,0.68)',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderColor: 'rgba(255,255,255,0.12)',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
   },
-  qualityChipText: { color: 'rgba(255,255,255,0.9)', fontSize: 10, fontWeight: '700' },
+  qualityChipText: { color: '#CFE2D7', fontSize: 10, fontWeight: '700' },
   videoFullscreen: {
     position: 'absolute',
     right: 10,
     bottom: 10,
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: 'rgba(20,20,22,0.56)',
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(10,8,16,0.7)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 8,
@@ -4137,19 +4145,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    minHeight: 24,
-    marginBottom: 2,
+    minHeight: 32,
+    marginBottom: 3,
   },
   cueTime: {
-    fontSize: 11,
-    fontWeight: '700',
+    fontSize: 13.5,
+    fontWeight: '800',
     fontVariant: ['tabular-nums'],
     letterSpacing: 0.2,
   },
   cueHeart: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -4157,9 +4165,11 @@ const styles = StyleSheet.create({
   cueOriginalActive: { color: '#C4B5FD', fontWeight: '800' },
   cueTranslation: { color: '#746B85', lineHeight: 20, marginTop: 3 },
   cueTranslationActive: { color: '#F1ECFA' },
+  cueFutureOriginal: { opacity: 0.58 },
+  cueFutureTranslation: { opacity: 0.46 },
   emptyTranscript: { alignItems: 'center', paddingTop: 36, gap: 10 },
   emptyTranscriptText: { color: '#8D849D', fontSize: 12, textAlign: 'center', lineHeight: 18, paddingHorizontal: 20 },
-  controls: { backgroundColor: '#0C0D0F', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(255,255,255,0.08)', paddingHorizontal: 18, paddingTop: 6 },
+  controls: { backgroundColor: '#120E1B', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#241C33', paddingHorizontal: 18, paddingTop: 6 },
   progressTouch: { height: 22, justifyContent: 'center' },
   progressRail: { height: 4, borderRadius: 2, backgroundColor: '#2B2340', overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 2, backgroundColor: '#446B5B' },
@@ -4180,36 +4190,48 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 8,
   },
-  transportSmall: { width: 46, height: 44, alignItems: 'center', justifyContent: 'center' },
-  ratePill: {
-    minWidth: 52,
-    height: 30,
-    paddingHorizontal: 9,
-    borderRadius: 15,
-    backgroundColor: 'rgba(20,20,22,0.72)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.14)',
-    flexDirection: 'row',
+  transportSmall: { width: 42, height: 38, alignItems: 'center', justifyContent: 'center' },
+  speedButton: {
+    width: 48,
+    height: 38,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 3,
+  },
+  speedBadge: {
+    position: 'absolute',
+    right: -3,
+    top: -5,
+    minWidth: 25,
+    height: 15,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  speedBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 8,
+    fontWeight: '800',
+    letterSpacing: 0.1,
   },
   loopButton: {
-    width: 40,
-    height: 38,
-    borderRadius: 19,
+    width: 38,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
   },
   playButton: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: 'rgba(20,20,22,0.72)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.16)',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#446B5B',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#446B5B',
+    shadowOpacity: 0.4,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
   },
   bottomActions: { flexDirection: 'row', justifyContent: 'space-around', paddingTop: 4 },
   action: { alignItems: 'center', gap: 3, minWidth: 56, paddingVertical: 4 },
@@ -4264,79 +4286,84 @@ const styles = StyleSheet.create({
   landscapeSubTranslation: { color: '#E4DEF2', fontSize: 14, textAlign: 'center', marginTop: 3, textShadowColor: '#000', textShadowRadius: 6 },
   landTop: {
     position: 'absolute',
-    left: 14,
+    left: 16,
     right: 14,
     top: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 9,
     zIndex: 10,
   },
-  landProgressCapsule: {
-    flex: 1,
-    minWidth: 0,
-    height: 46,
-    paddingHorizontal: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
+  landTime: {
+    color: '#EDE9F7',
+    fontSize: 13,
+    fontVariant: ['tabular-nums'],
+    textShadowColor: '#000',
+    textShadowRadius: 4,
   },
-  landTopActions: {
+  landProgressPill: {
+    flex: 1,
+    height: 40,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    paddingHorizontal: 11,
   },
-  landTime: {
-    color: 'rgba(255,255,255,0.9)',
-    fontSize: 13,
-    fontVariant: ['tabular-nums'],
-    textShadowColor: 'rgba(0,0,0,0.25)',
-    textShadowRadius: 3,
-  },
-  landProgressTouch: { flex: 1, height: 28, justifyContent: 'center', minWidth: 60 },
-  landProgressRail: { height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.42)', overflow: 'hidden' },
-  landProgressFill: { height: '100%', borderRadius: 2, backgroundColor: '#FFFFFF' },
+  landProgressTouch: { flex: 1, height: 28, justifyContent: 'center', minWidth: 80 },
+  landProgressRail: { height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.28)', overflow: 'hidden' },
+  landProgressFill: { height: '100%', backgroundColor: '#FFFFFF' },
   landIconButton: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: 'rgba(28,28,30,0.46)',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(18,15,23,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
   landTopRatePill: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: 'rgba(28,28,30,0.46)',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(18,15,23,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
-  landCc: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.4 },
   landCenter: {
     position: 'absolute',
     left: 0,
     right: 0,
-    top: '40%',
+    top: '43%',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 18,
+    gap: 26,
     zIndex: 9,
   },
   landTransportButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: 'rgba(28,28,30,0.46)',
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: 'rgba(18,15,23,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   landPlay: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: 'rgba(28,28,30,0.46)',
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    backgroundColor: 'rgba(18,15,23,0.62)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  landRatePill: {
+    minWidth: 46,
+    height: 30,
+    paddingHorizontal: 8,
+    borderRadius: 15,
+    backgroundColor: 'rgba(0,0,0,0.48)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -4346,26 +4373,24 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     alignItems: 'center',
-    paddingHorizontal: 26,
+    paddingHorizontal: 32,
     zIndex: 8,
   },
   landSubBox: {
     maxWidth: '88%',
-    borderRadius: 24,
-    borderCurve: 'continuous',
-    paddingHorizontal: 22,
-    paddingVertical: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
   },
   landSubOriginal: {
     color: '#FFFFFF',
-    fontWeight: '700',
+    fontWeight: '800',
     lineHeight: 30,
     textAlign: 'center',
     textShadowColor: '#000',
     textShadowRadius: 6,
   },
   landSubTranslation: {
-    color: 'rgba(255,255,255,0.84)',
+    color: '#E9E3F5',
     lineHeight: 24,
     textAlign: 'center',
     marginTop: 2,

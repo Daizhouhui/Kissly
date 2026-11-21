@@ -8,38 +8,81 @@ type SquircleProps = {
   fill?: string;
   stroke?: string;
   strokeWidth?: number;
-  /** Higher values make the corners straighter, closer to a rounded rectangle. */
+  /** Corner radius. Clamped to half of the shortest side. */
+  radius?: number;
+  /** Higher values make the corner transition tighter, closer to a rounded rectangle. */
   exponent?: number;
 };
 
-function superellipsePath(width: number, height: number, exponent: number, inset: number) {
-  const cx = width / 2;
-  const cy = height / 2;
-  const ax = Math.max(0.5, width / 2 - inset);
-  const ay = Math.max(0.5, height / 2 - inset);
-  const steps = Math.max(72, Math.min(240, Math.round((width + height) / 3)));
-  const points: string[] = [];
+function signedPower(value: number, power: number) {
+  return Math.sign(value) * Math.pow(Math.abs(value), power);
+}
 
-  for (let index = 0; index <= steps; index += 1) {
-    const angle = (index / steps) * Math.PI * 2;
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
-    const x =
-      cx +
-      ax * Math.sign(cos) * Math.pow(Math.abs(cos), 2 / exponent);
-    const y =
-      cy +
-      ay * Math.sign(sin) * Math.pow(Math.abs(sin), 2 / exponent);
-    points.push(`${index === 0 ? 'M' : 'L'}${x.toFixed(2)} ${y.toFixed(2)}`);
-  }
+function cornerPoint(
+  cx: number,
+  cy: number,
+  radius: number,
+  angle: number,
+  exponent: number
+) {
+  const power = 2 / exponent;
+  return [
+    cx + radius * signedPower(Math.cos(angle), power),
+    cy + radius * signedPower(Math.sin(angle), power),
+  ] as const;
+}
 
-  return `${points.join(' ')} Z`;
+function squirclePath(
+  width: number,
+  height: number,
+  cornerRadius: number,
+  exponent: number,
+  inset: number
+) {
+  const left = inset;
+  const top = inset;
+  const right = width - inset;
+  const bottom = height - inset;
+  const r = Math.max(
+    0,
+    Math.min(cornerRadius, (right - left) / 2, (bottom - top) / 2)
+  );
+  const n = (value: number) => Number(value.toFixed(2));
+  const parts: string[] = [
+    `M ${n(left + r)} ${n(top)}`,
+    `L ${n(right - r)} ${n(top)}`,
+  ];
+
+  const corner = (
+    cx: number,
+    cy: number,
+    startAngle: number,
+    endAngle: number
+  ) => {
+    const segments = 9;
+    for (let index = 1; index <= segments; index += 1) {
+      const angle = startAngle + ((endAngle - startAngle) * index) / segments;
+      const [x, y] = cornerPoint(cx, cy, r, angle, exponent);
+      parts.push(`L ${n(x)} ${n(y)}`);
+    }
+  };
+
+  corner(right - r, top + r, -Math.PI / 2, 0);
+  parts.push(`L ${n(right)} ${n(bottom - r)}`);
+  corner(right - r, bottom - r, 0, Math.PI / 2);
+  parts.push(`L ${n(left + r)} ${n(bottom)}`);
+  corner(left + r, bottom - r, Math.PI / 2, Math.PI);
+  parts.push(`L ${n(left)} ${n(top + r)}`);
+  corner(left + r, top + r, Math.PI, (Math.PI * 3) / 2);
+  parts.push('Z');
+
+  return parts.join(' ');
 }
 
 /**
- * A superellipse surface for iOS/macOS continuous-curvature corners.
- * The path is rendered on both platforms so Android does not fall back to a
- * plain circular corner radius.
+ * A superellipse-cornered surface for iOS/macOS continuous-curvature corners.
+ * The corners use superellipse arcs, while the edges stay straight, so wide
+ * pills and subtitle cards do not turn into lens shapes.
  */
 export function Squircle({
   children,
@@ -47,7 +90,8 @@ export function Squircle({
   fill = 'rgba(20, 20, 22, 0.5)',
   stroke,
   strokeWidth = 0,
-  exponent = 5,
+  radius = 20,
+  exponent = 4,
 }: SquircleProps) {
   const [size, setSize] = useState({ width: 0, height: 0 });
 
@@ -62,16 +106,17 @@ export function Squircle({
 
   const path =
     size.width > 0 && size.height > 0
-      ? superellipsePath(
+      ? squirclePath(
           size.width,
           size.height,
+          radius,
           exponent,
           stroke ? strokeWidth / 2 : 0
         )
       : null;
 
   return (
-    <View style={style} onLayout={onLayout}>
+    <View style={[style, styles.container]} onLayout={onLayout}>
       {path ? (
         <Svg
           pointerEvents="none"
@@ -92,3 +137,9 @@ export function Squircle({
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    overflow: 'hidden',
+  },
+});

@@ -2,10 +2,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../src/core/store';
+import { appAlert as Alert } from '../src/ui/app-alert';
 import { EmptyState, ManageBar, NavHeader, SelectionCircle } from '../src/ui/components';
 import { useAppTheme } from '../src/ui/theme';
 

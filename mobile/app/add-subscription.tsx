@@ -5,7 +5,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -23,6 +22,7 @@ import { useAppStore } from '../src/core/store';
 import { Subscription } from '../src/core/types';
 import { resolveChannelInput } from '../src/core/youtube/channel';
 import { ChannelSearchResult, searchChannels } from '../src/core/youtube/search';
+import { appAlert as Alert } from '../src/ui/app-alert';
 import { GhostButton } from '../src/ui/components';
 import { useAppTheme } from '../src/ui/theme';
 
