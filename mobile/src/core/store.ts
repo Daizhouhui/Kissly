@@ -29,6 +29,8 @@ function deepMerge<T>(base: T, patch: unknown): T {
 
 export type SyncState = 'idle' | 'syncing' | 'ok' | 'error';
 
+export type YoutubeLoginStatus = 'unknown' | 'loggedIn' | 'loggedOut';
+
 type SubscriptionTombstones = Record<string, number>;
 
 function withOrder(items: Subscription[]): Subscription[] {
@@ -58,6 +60,8 @@ type AppState = {
   lastSyncAt: number;
   syncState: SyncState;
   syncMessage: string;
+  youtubeLoginStatus: YoutubeLoginStatus;
+  youtubeLoginCheckedAt: number;
   setHydrated: (value: boolean) => void;
   patchSettings: (patch: DeepPartial<Settings>) => void;
   replaceSettings: (settings: Settings, updatedAt?: number) => void;
@@ -83,6 +87,7 @@ type AppState = {
   removeHistory: (videoIds: string[]) => void;
   clearHistory: () => void;
   setSync: (state: SyncState, message?: string, at?: number) => void;
+  setYoutubeLoginStatus: (status: YoutubeLoginStatus, checkedAt?: number) => void;
 };
 
 export const useAppStore = create<AppState>()(
@@ -100,6 +105,8 @@ export const useAppStore = create<AppState>()(
       lastSyncAt: 0,
       syncState: 'idle',
       syncMessage: '',
+      youtubeLoginStatus: 'unknown',
+      youtubeLoginCheckedAt: 0,
       setHydrated: (value) => set({ hydrated: value }),
       patchSettings: (patch) =>
         set((state) => ({
@@ -250,6 +257,11 @@ export const useAppStore = create<AppState>()(
           syncMessage,
           lastSyncAt: at ?? state.lastSyncAt,
         })),
+      setYoutubeLoginStatus: (status, checkedAt) =>
+        set({
+          youtubeLoginStatus: status,
+          youtubeLoginCheckedAt: checkedAt ?? Date.now(),
+        }),
     }),
     {
       name: 'kissmobile.app',
@@ -267,6 +279,8 @@ export const useAppStore = create<AppState>()(
         history: state.history,
         lastSyncAt: state.lastSyncAt,
         settingsUpdatedAt: state.settingsUpdatedAt,
+        youtubeLoginStatus: state.youtubeLoginStatus,
+        youtubeLoginCheckedAt: state.youtubeLoginCheckedAt,
       }),
       merge: (persisted, current) => {
         const saved = persisted as Partial<AppState> | undefined;
@@ -300,6 +314,8 @@ export const useAppStore = create<AppState>()(
           history: saved?.history ?? [],
           lastSyncAt: saved?.lastSyncAt ?? 0,
           settingsUpdatedAt: saved?.settingsUpdatedAt ?? 0,
+          youtubeLoginStatus: saved?.youtubeLoginStatus ?? 'unknown',
+          youtubeLoginCheckedAt: saved?.youtubeLoginCheckedAt ?? 0,
         };
       },
       onRehydrateStorage: () => (state) => {

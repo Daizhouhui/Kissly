@@ -8,6 +8,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useAppStore } from '../src/core/store';
 import { maybeAutoSync } from '../src/core/sync';
 import { useAppTheme } from '../src/ui/theme';
+import { YoutubeLoginProbe } from '../src/ui/youtube-login-probe';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -53,6 +54,7 @@ export default function RootLayout() {
           <Stack.Screen name="settings/export" />
           <Stack.Screen name="settings/about" />
         </Stack>
+        <YoutubeLoginProbe enabled={hydrated} />
       </View>
     </SafeAreaProvider>
   );
