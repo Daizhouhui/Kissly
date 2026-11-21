@@ -6,7 +6,6 @@ import {
   ActivityIndicator,
   Linking,
   Modal,
-  Pressable,
   ScrollView,
   Share,
   StyleSheet,
@@ -19,8 +18,12 @@ import { targetLabel } from '../../src/core/defaults';
 import { useAppStore } from '../../src/core/store';
 import { syncNow } from '../../src/core/sync';
 import { relativeTime } from '../../src/core/utils';
+import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
 import { appAlert as Alert } from '../../src/ui/app-alert';
+import { AppPressable } from '../../src/ui/app-pressable';
 import { useAppTheme } from '../../src/ui/theme';
+
+const Pressable = AppPressable;
 
 function MeRow({
   icon,
@@ -48,14 +51,14 @@ function MeRow({
     <Pressable
       onPress={onPress}
       disabled={!onPress || disabled}
-      style={({ pressed }) => [
+      radius={0}
+      style={[
         styles.row,
         roomy && styles.rowRoomy,
         !last && {
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: theme.colors.border,
         },
-        pressed && onPress && !disabled ? { opacity: 0.68 } : null,
         disabled && { opacity: 0.45 },
       ]}
     >
@@ -105,7 +108,8 @@ function Group({ children, first }: { children: ReactNode; first?: boolean }) {
       style={{
         marginTop: first ? 24 : 14,
         backgroundColor: theme.colors.card,
-        borderRadius: 16,
+        borderRadius: RADIUS.card,
+        ...CONTINUOUS_CORNER,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.colors.border,
         overflow: 'hidden',
@@ -154,7 +158,7 @@ export default function MeScreen() {
   const patchSettings = useAppStore((state) => state.patchSettings);
   const [syncing, setSyncing] = useState(false);
   const [dialog, setDialog] = useState<'title' | 'tab' | null>(null);
-  const version = Constants.expoConfig?.version ?? '1.2.2';
+  const version = Constants.expoConfig?.version ?? '1.2.8';
 
   const runSync = async () => {
     if (!settings.webdav.enabled) {
@@ -312,7 +316,7 @@ export default function MeScreen() {
           <Pressable
             onPress={runSync}
             disabled={syncing}
-            style={({ pressed }) => [styles.syncButton, pressed && { opacity: 0.75 }]}
+            style={styles.syncButton}
           >
             {syncing || syncState === 'syncing' ? (
               <ActivityIndicator size="small" color={theme.colors.primary} />
@@ -338,8 +342,9 @@ export default function MeScreen() {
       </ScrollView>
 
       <Modal visible={dialog !== null} transparent animationType="fade">
-        <Pressable style={styles.dialogMask} onPress={() => setDialog(null)}>
+        <Pressable feedback="none" style={styles.dialogMask} onPress={() => setDialog(null)}>
           <Pressable
+            feedback="none"
             style={[styles.dialogCard, { backgroundColor: theme.colors.card }]}
             onPress={() => {}}
           >
@@ -354,6 +359,7 @@ export default function MeScreen() {
               return (
                 <Pressable
                   key={option.id}
+                  feedback="opacity"
                   onPress={() => {
                     if (dialog === 'title') {
                       patchSettings({
@@ -386,7 +392,7 @@ export default function MeScreen() {
                 </Pressable>
               );
             })}
-            <Pressable onPress={() => setDialog(null)} style={styles.dialogCancel}>
+            <Pressable onPress={() => setDialog(null)} feedback="opacity" style={styles.dialogCancel}>
               <Text style={{ color: theme.colors.primary, fontSize: 13, fontWeight: '700' }}>
                 取消
               </Text>
@@ -414,7 +420,8 @@ const styles = StyleSheet.create({
   syncButton: {
     marginTop: 14,
     height: 44,
-    borderRadius: 14,
+    borderRadius: RADIUS.control,
+    ...CONTINUOUS_CORNER,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -427,16 +434,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 28,
   },
-  dialogCard: { width: '100%', maxWidth: 390, borderRadius: 24, padding: 22, paddingBottom: 12 },
+  dialogCard: { width: '100%', maxWidth: 390, borderRadius: RADIUS.modal, ...CONTINUOUS_CORNER, padding: 22, paddingBottom: 12 },
   dialogRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 13 },
   radio: {
     width: 20,
     height: 20,
-    borderRadius: 10,
+    borderRadius: RADIUS.pill,
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  radioInner: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#FFFFFF' },
+  radioInner: { width: 8, height: 8, borderRadius: RADIUS.pill, backgroundColor: '#FFFFFF' },
   dialogCancel: { alignSelf: 'flex-end', paddingVertical: 12, paddingHorizontal: 4 },
 });

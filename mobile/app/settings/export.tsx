@@ -1,12 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAppStore } from '../../src/core/store';
+import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
 import { appAlert as Alert } from '../../src/ui/app-alert';
+import { AppPressable } from '../../src/ui/app-pressable';
 import { NavHeader } from '../../src/ui/components';
 import { useAppTheme } from '../../src/ui/theme';
+
+const Pressable = AppPressable;
 
 function csvCell(value: unknown) {
   const text = String(value ?? '');
@@ -44,10 +48,9 @@ function ExportRow({
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => [
+      style={[
         styles.row,
         { backgroundColor: theme.colors.card, borderColor: theme.colors.border },
-        pressed && { opacity: 0.75 },
       ]}
     >
       <View style={[styles.iconBox, { backgroundColor: theme.colors.primarySoft }]}>
@@ -197,7 +200,8 @@ export default function ExportScreen() {
 const styles = StyleSheet.create({
   row: {
     minHeight: 68,
-    borderRadius: 15,
+    borderRadius: RADIUS.card,
+    ...CONTINUOUS_CORNER,
     borderWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: 14,
     flexDirection: 'row',
@@ -206,7 +210,7 @@ const styles = StyleSheet.create({
   iconBox: {
     width: 38,
     height: 38,
-    borderRadius: 11,
+    borderRadius: RADIUS.control,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,

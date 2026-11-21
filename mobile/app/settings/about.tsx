@@ -8,16 +8,19 @@ import {
   ActivityIndicator,
   Linking,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 
+import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
 import { Card, NavHeader, Row, SectionTitle } from '../../src/ui/components';
 import { appAlert as Alert } from '../../src/ui/app-alert';
+import { AppPressable } from '../../src/ui/app-pressable';
 import { useAppTheme } from '../../src/ui/theme';
+
+const Pressable = AppPressable;
 
 type AndroidRelease = {
   version: string;
@@ -93,7 +96,7 @@ async function fetchLatestAndroidRelease(): Promise<AndroidRelease | null> {
 
 export default function AboutScreen() {
   const theme = useAppTheme();
-  const currentVersion = cleanVersion(Constants.expoConfig?.version ?? '1.2.6');
+  const currentVersion = cleanVersion(Constants.expoConfig?.version ?? '1.2.8');
   const currentBuild =
     Platform.OS === 'android'
       ? Constants.expoConfig?.android?.versionCode
@@ -231,7 +234,8 @@ export default function AboutScreen() {
             style={{
               width: 92,
               height: 92,
-              borderRadius: 28,
+              borderRadius: RADIUS.modal,
+              ...CONTINUOUS_CORNER,
               alignItems: 'center',
               justifyContent: 'center',
               ...theme.shadow.floating,
@@ -296,10 +300,11 @@ export default function AboutScreen() {
 
         <Pressable
           onPress={() => Linking.openURL('https://github.com/Daizhouhui/Kissly/releases')}
-          style={({ pressed }) => ({
+          style={{
             marginTop: 22,
             height: 48,
-            borderRadius: 14,
+            borderRadius: RADIUS.control,
+            ...CONTINUOUS_CORNER,
             borderWidth: StyleSheet.hairlineWidth,
             borderColor: theme.colors.border,
             backgroundColor: theme.colors.card,
@@ -307,8 +312,7 @@ export default function AboutScreen() {
             justifyContent: 'center',
             flexDirection: 'row',
             gap: 7,
-            opacity: pressed ? 0.65 : 1,
-          })}
+          }}
         >
           <Ionicons name="cloud-download-outline" size={17} color={theme.colors.text} />
           <Text style={{ color: theme.colors.text, fontSize: 13, fontWeight: '600' }}>查看最新构建</Text>
@@ -316,22 +320,23 @@ export default function AboutScreen() {
 
         {Platform.OS === 'android' ? (
           <Pressable
+            tone="onColor"
             onPress={() => {
               void checkForAndroidUpdate();
             }}
             disabled={updatePhase !== 'idle'}
-            style={({ pressed }) => ({
+            style={{
               marginTop: 10,
               height: 48,
-              borderRadius: 14,
+              borderRadius: RADIUS.control,
+              ...CONTINUOUS_CORNER,
               backgroundColor: theme.colors.primary,
               alignItems: 'center',
               justifyContent: 'center',
               flexDirection: 'row',
               gap: 7,
-              opacity:
-                updatePhase !== 'idle' ? 0.72 : pressed ? 0.82 : 1,
-            })}
+              opacity: updatePhase !== 'idle' ? 0.72 : 1,
+            }}
           >
             {updatePhase !== 'idle' ? (
               <ActivityIndicator size="small" color="#FFFFFF" />

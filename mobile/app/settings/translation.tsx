@@ -2,7 +2,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -19,9 +18,13 @@ import {
   isSystemTranslationAvailable,
   prepareSystemLanguagePack,
 } from '../../src/core/translate/system';
+import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
 import { appAlert as Alert } from '../../src/ui/app-alert';
+import { AppPressable } from '../../src/ui/app-pressable';
 import { Card, NavHeader, SectionTitle, SettingSwitch } from '../../src/ui/components';
 import { useAppTheme } from '../../src/ui/theme';
+
+const Pressable = AppPressable;
 
 type Engine = {
   id: ProviderId;
@@ -209,9 +212,11 @@ export default function TranslationSettingsScreen() {
     return (
       <Pressable
         key={engine.id}
+        feedback="opacity"
+        radius={0}
         onPress={() => selectProvider(engine.id)}
         disabled={preparing}
-        style={({ pressed }) => ({
+        style={{
           flexDirection: 'row',
           alignItems: 'center',
           gap: 12,
@@ -220,14 +225,14 @@ export default function TranslationSettingsScreen() {
           backgroundColor: active ? theme.colors.primarySoft : theme.colors.card,
           borderBottomWidth: last ? 0 : StyleSheet.hairlineWidth,
           borderBottomColor: theme.colors.border,
-          opacity: pressed || preparing ? 0.85 : 1,
-        })}
+          opacity: preparing ? 0.85 : 1,
+        }}
       >
         <View
           style={{
             width: 38,
             height: 38,
-            borderRadius: 11,
+            borderRadius: RADIUS.control,
             backgroundColor: `${engine.color}14`,
             alignItems: 'center',
             justifyContent: 'center',
@@ -247,7 +252,7 @@ export default function TranslationSettingsScreen() {
                 style={{
                   paddingHorizontal: 6,
                   paddingVertical: 2,
-                  borderRadius: 5,
+                  borderRadius: RADIUS.badge,
                   backgroundColor: active ? theme.colors.primary : theme.colors.surfaceAlt,
                 }}
               >
@@ -271,7 +276,7 @@ export default function TranslationSettingsScreen() {
           style={{
             width: 24,
             height: 24,
-            borderRadius: 12,
+            borderRadius: RADIUS.pill,
             borderWidth: active ? 0 : 1.5,
             borderColor: theme.colors.borderStrong,
             alignItems: 'center',
@@ -289,7 +294,8 @@ export default function TranslationSettingsScreen() {
     <View
       style={{
         backgroundColor: theme.colors.card,
-        borderRadius: 18,
+        borderRadius: RADIUS.card,
+        ...CONTINUOUS_CORNER,
         overflow: 'hidden',
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.colors.border,
@@ -309,7 +315,7 @@ export default function TranslationSettingsScreen() {
         title="翻译引擎"
         subtitle="免费优先，AI 兜底"
         right={
-          <Pressable onPress={saveKeys} hitSlop={8} style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>
+          <Pressable onPress={saveKeys} hitSlop={8} feedback="opacity">
             <Text style={{ color: theme.colors.primary, fontSize: 14, fontWeight: '700' }}>保存</Text>
           </Pressable>
         }
@@ -388,16 +394,17 @@ export default function TranslationSettingsScreen() {
               <Pressable
                 onPress={test}
                 disabled={testing}
-                style={({ pressed }) => ({
+                style={{
                   height: 44,
-                  borderRadius: 12,
+                  borderRadius: RADIUS.control,
+                  ...CONTINUOUS_CORNER,
                   backgroundColor: theme.colors.surfaceAlt,
                   alignItems: 'center',
                   justifyContent: 'center',
                   flexDirection: 'row',
                   gap: 8,
-                  opacity: pressed || testing ? 0.6 : 1,
-                })}
+                  opacity: testing ? 0.6 : 1,
+                }}
               >
                 {testing ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
                 <Text style={{ color: theme.colors.text, fontSize: 13, fontWeight: '700' }}>
@@ -412,10 +419,11 @@ export default function TranslationSettingsScreen() {
           <Pressable
             onPress={test}
             disabled={testing}
-            style={({ pressed }) => ({
+            style={{
               marginTop: 18,
               height: 46,
-              borderRadius: 14,
+              borderRadius: RADIUS.control,
+              ...CONTINUOUS_CORNER,
               borderWidth: StyleSheet.hairlineWidth,
               borderColor: theme.colors.border,
               backgroundColor: theme.colors.card,
@@ -423,8 +431,8 @@ export default function TranslationSettingsScreen() {
               justifyContent: 'center',
               flexDirection: 'row',
               gap: 8,
-              opacity: pressed || testing ? 0.65 : 1,
-            })}
+              opacity: testing ? 0.65 : 1,
+            }}
           >
             {testing ? <ActivityIndicator size="small" color={theme.colors.primary} /> : <Ionicons name="pulse" size={17} color={theme.colors.primary} />}
             <Text style={{ color: theme.colors.text, fontSize: 13, fontWeight: '700' }}>
@@ -485,7 +493,7 @@ function Field({
         autoCorrect={false}
         style={{
           height: 44,
-          borderRadius: 11,
+          borderRadius: RADIUS.control,
           backgroundColor: theme.colors.surfaceAlt,
           paddingHorizontal: 12,
           color: theme.colors.text,

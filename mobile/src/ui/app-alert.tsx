@@ -11,7 +11,8 @@ import {
 } from 'react-native';
 import type { AlertButton, AlertOptions } from 'react-native';
 
-import { RipplePressable } from './ripple-pressable';
+import { AppPressable } from './app-pressable';
+import { RADIUS } from '../tokens';
 import { useAppTheme } from './theme';
 
 type DialogConfig = {
@@ -141,10 +142,11 @@ export function AppAlertHost() {
                     ? '#0C0D0F'
                     : '#FFFFFF';
               return (
-                <RipplePressable
+                <AppPressable
                   key={`${button.text ?? 'button'}-${index}`}
-                  haptic={false}
-                  rippleColor={isCancel ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.18)'}
+                  feedback="ripple"
+                  tone={isCancel ? 'surface' : 'onColor'}
+                  radius={RADIUS.control}
                   onPress={() => close(button)}
                   style={[
                     styles.button,
@@ -162,7 +164,7 @@ export function AppAlertHost() {
                   >
                     {button.text ?? '确定'}
                   </Text>
-                </RipplePressable>
+                </AppPressable>
               );
             })}
           </View>
@@ -195,7 +197,7 @@ const styles = StyleSheet.create({
   },
   card: {
     borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 28,
+    borderRadius: RADIUS.modal,
     borderCurve: 'continuous',
     paddingTop: 24,
     paddingBottom: 18,
@@ -209,7 +211,7 @@ const styles = StyleSheet.create({
   actionsRow: { flexDirection: 'row' },
   button: {
     height: 48,
-    borderRadius: 16,
+    borderRadius: RADIUS.control,
     borderCurve: 'continuous',
     alignItems: 'center',
     justifyContent: 'center',

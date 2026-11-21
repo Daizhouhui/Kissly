@@ -1,8 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
+import { CONTINUOUS_CORNER, RADIUS } from '@/src/tokens';
+import { AppPressable } from '@/src/ui/app-pressable';
 import { useAppTheme } from '@/src/ui/theme';
+
+const Pressable = AppPressable;
 
 export default function NotFoundScreen() {
   const theme = useAppTheme();
@@ -13,7 +17,7 @@ export default function NotFoundScreen() {
         style={{
           width: 78,
           height: 78,
-          borderRadius: 39,
+          borderRadius: RADIUS.pill,
           backgroundColor: theme.colors.primarySoft,
           alignItems: 'center',
           justifyContent: 'center',
@@ -27,17 +31,18 @@ export default function NotFoundScreen() {
         这个地址不存在，回到首页继续看视频吧。
       </Text>
       <Pressable
+        tone="onColor"
         onPress={() => router.replace('/' as any)}
-        style={({ pressed }) => ({
+        style={{
           marginTop: 22,
           height: 46,
           paddingHorizontal: 30,
-          borderRadius: 14,
+          borderRadius: RADIUS.control,
+          ...CONTINUOUS_CORNER,
           backgroundColor: theme.colors.primary,
           alignItems: 'center',
           justifyContent: 'center',
-          opacity: pressed ? 0.75 : 1,
-        })}
+        }}
       >
         <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>返回首页</Text>
       </Pressable>

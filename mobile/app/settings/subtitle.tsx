@@ -1,11 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAppStore } from '../../src/core/store';
 import { SubtitleMode, SubtitlePosition } from '../../src/core/types';
+import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
+import { AppPressable } from '../../src/ui/app-pressable';
 import { Card, NavHeader, SectionTitle, SettingSwitch } from '../../src/ui/components';
 import { useAppTheme } from '../../src/ui/theme';
+
+const Pressable = AppPressable;
 
 const MODES: { value: SubtitleMode; label: string; hint: string }[] = [
   { value: 'bilingual', label: '双语', hint: '原文 + 译文' },
@@ -32,17 +36,17 @@ export default function SubtitleSettingsScreen() {
           colors={['#223129', '#0B0F0C']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={{ borderRadius: 22, padding: 18, minHeight: 190, justifyContent: 'flex-end' }}
+          style={{ borderRadius: RADIUS.card, ...CONTINUOUS_CORNER, padding: 18, minHeight: 190, justifyContent: 'flex-end' }}
         >
           <View style={{ position: 'absolute', top: 16, left: 16, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#9DC3AC' }} />
+            <View style={{ width: 7, height: 7, borderRadius: RADIUS.pill, backgroundColor: '#9DC3AC' }} />
             <Text style={{ color: 'rgba(255,255,255,.55)', fontSize: 10, fontWeight: '600' }}>字幕预览</Text>
           </View>
 
           <View
             style={{
               backgroundColor: `rgba(0,0,0,${subtitles.backgroundOpacity})`,
-              borderRadius: 12,
+              borderRadius: RADIUS.control,
               paddingHorizontal: 12,
               paddingVertical: 10,
               alignSelf: 'stretch',
@@ -90,7 +94,7 @@ export default function SubtitleSettingsScreen() {
                 style={{
                   flex: 1,
                   paddingVertical: 12,
-                  borderRadius: 14,
+                  borderRadius: RADIUS.control,
                   backgroundColor: active ? theme.colors.primarySoft : theme.colors.card,
                   borderWidth: active ? 1 : StyleSheet.hairlineWidth,
                   borderColor: active ? theme.colors.primary : theme.colors.border,
@@ -128,11 +132,12 @@ export default function SubtitleSettingsScreen() {
               return (
                 <Pressable
                   key={id}
+                  tone={active ? 'onColor' : 'surface'}
                   onPress={() => setSubtitle({ scrollMode: id })}
                   style={{
                     flex: 1,
                     height: 38,
-                    borderRadius: 11,
+                    borderRadius: RADIUS.control,
                     backgroundColor: active ? theme.colors.primary : theme.colors.surfaceAlt,
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -159,11 +164,12 @@ export default function SubtitleSettingsScreen() {
               return (
                 <Pressable
                   key={id}
+                  tone={active ? 'onColor' : 'surface'}
                   onPress={() => setSubtitle({ sentenceMode: id })}
                   style={{
                     flex: 1,
                     height: 38,
-                    borderRadius: 11,
+                    borderRadius: RADIUS.control,
                     backgroundColor: active ? theme.colors.primary : theme.colors.surfaceAlt,
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -205,7 +211,7 @@ export default function SubtitleSettingsScreen() {
                   style={{
                     flex: 1,
                     height: 40,
-                    borderRadius: 11,
+                    borderRadius: RADIUS.control,
                     backgroundColor: active ? theme.colors.primarySoft : theme.colors.surfaceAlt,
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -240,11 +246,12 @@ export default function SubtitleSettingsScreen() {
                 return (
                   <Pressable
                     key={opacity}
+                    tone={active ? 'onColor' : 'surface'}
                     onPress={() => setSubtitle({ backgroundOpacity: opacity })}
                     style={{
                       flex: 1,
                       height: 34,
-                      borderRadius: 10,
+                      borderRadius: RADIUS.control,
                       backgroundColor: active ? theme.colors.primary : theme.colors.surfaceAlt,
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -304,7 +311,7 @@ function SizeRow({
         style={{
           width: 42,
           height: 42,
-          borderRadius: 13,
+          borderRadius: RADIUS.control,
           backgroundColor: theme.colors.surfaceAlt,
           alignItems: 'center',
           justifyContent: 'center',
@@ -321,7 +328,7 @@ function SizeRow({
         style={{
           width: 42,
           height: 42,
-          borderRadius: 13,
+          borderRadius: RADIUS.control,
           backgroundColor: theme.colors.surfaceAlt,
           alignItems: 'center',
           justifyContent: 'center',

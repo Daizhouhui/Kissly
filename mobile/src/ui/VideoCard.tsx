@@ -1,10 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 import { VideoItem } from '../core/types';
 import { formatTime, relativeTime } from '../core/utils';
 import { useAppStore } from '../core/store';
+import { CONTINUOUS_CORNER, RADIUS } from '../tokens';
+import { AppPressable } from './app-pressable';
 import { useAppTheme } from './theme';
 
 export type VideoCardVariant = 'list' | 'grid' | 'large';
@@ -33,7 +35,7 @@ export function VideoCard({
       {item.channelAvatar ? (
         <Image
           source={{ uri: item.channelAvatar }}
-          style={{ width: 17, height: 17, borderRadius: 9 }}
+          style={{ width: 17, height: 17, borderRadius: RADIUS.pill }}
           contentFit="cover"
           transition={120}
         />
@@ -64,20 +66,22 @@ export function VideoCard({
   if (variant !== 'list') {
     const large = variant === 'large';
     return (
-      <Pressable
+      <AppPressable
         onPress={onPress}
-        style={({ pressed }) => ({
-          opacity: pressed ? 0.86 : 1,
-          transform: [{ scale: pressed ? 0.995 : 1 }],
+        feedback="ripple"
+        radius={large ? RADIUS.card : RADIUS.control}
+        accessibilityLabel={primaryTitle}
+        style={{
           paddingVertical: large ? 10 : 6,
           width: '100%',
-        })}
+        }}
       >
         <View
           style={{
             width: '100%',
             aspectRatio: 16 / 9,
-            borderRadius: large ? 16 : 13,
+            borderRadius: large ? RADIUS.card : RADIUS.control,
+            ...CONTINUOUS_CORNER,
             overflow: 'hidden',
             backgroundColor: theme.colors.surfaceAlt,
           }}
@@ -130,26 +134,28 @@ export function VideoCard({
           </Text>
         ) : null}
         {meta}
-      </Pressable>
+      </AppPressable>
     );
   }
 
   return (
-    <Pressable
+    <AppPressable
       onPress={onPress}
-      style={({ pressed }) => ({
-        opacity: pressed ? 0.84 : 1,
-        transform: [{ scale: pressed ? 0.995 : 1 }],
+      feedback="ripple"
+      radius={RADIUS.control}
+      accessibilityLabel={primaryTitle}
+      style={{
         flexDirection: 'row',
         gap: 12,
         paddingVertical: 9,
-      })}
+      }}
     >
       <View
         style={{
           width: thumbWidth,
           aspectRatio: 16 / 9,
-          borderRadius: 12,
+          borderRadius: RADIUS.control,
+          ...CONTINUOUS_CORNER,
           overflow: 'hidden',
           backgroundColor: theme.colors.surfaceAlt,
         }}
@@ -204,7 +210,7 @@ export function VideoCard({
         ) : null}
         {meta}
       </View>
-    </Pressable>
+    </AppPressable>
   );
 }
 
@@ -216,7 +222,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.74)',
     paddingHorizontal: 5,
     paddingVertical: 2,
-    borderRadius: 4,
+    borderRadius: RADIUS.badge,
+    ...CONTINUOUS_CORNER,
   },
   durationText: { color: '#FFFFFF', fontSize: 9.5, fontWeight: '700' },
 });

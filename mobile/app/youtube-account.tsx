@@ -7,7 +7,6 @@ import {
   Linking,
   Modal,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -19,7 +18,11 @@ import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { useAppStore } from '@/src/core/store';
 import { Subscription } from '@/src/core/types';
 import { resolveChannelInput } from '@/src/core/youtube/channel';
+import { CONTINUOUS_CORNER, RADIUS } from '@/src/tokens';
+import { AppPressable } from '@/src/ui/app-pressable';
 import { useAppTheme } from '@/src/ui/theme';
+
+const Pressable = AppPressable;
 
 const AnyWebView: any = WebView;
 
@@ -338,7 +341,7 @@ function ImportAvatar({ uri, title }: { uri?: string; title: string }) {
         style={{
           width: 42,
           height: 42,
-          borderRadius: 21,
+          borderRadius: RADIUS.pill,
           backgroundColor: theme.colors.primarySoft,
           alignItems: 'center',
           justifyContent: 'center',
@@ -353,7 +356,7 @@ function ImportAvatar({ uri, title }: { uri?: string; title: string }) {
   return (
     <Image
       source={{ uri }}
-      style={{ width: 42, height: 42, borderRadius: 21 }}
+      style={{ width: 42, height: 42, borderRadius: RADIUS.pill }}
       contentFit="cover"
       transition={120}
       onError={() => setFailed(true)}
@@ -732,7 +735,7 @@ export default function YoutubeAccountScreen() {
           <Text style={{ flex: 1, color: theme.colors.textSecondary, fontSize: 11.5, lineHeight: 17 }}>
             页面加载较慢或没有出来。网页仍在下方继续加载，不会挡住登录界面。
           </Text>
-          <Pressable onPress={reload} style={[styles.bannerButton, { backgroundColor: theme.colors.primary }]}>
+          <Pressable onPress={reload} tone="onColor" style={[styles.bannerButton, { backgroundColor: theme.colors.primary }]}>
             <Text style={{ color: '#FFFFFF', fontSize: 11.5, fontWeight: '800' }}>重试</Text>
           </Pressable>
           <Pressable
@@ -756,6 +759,7 @@ export default function YoutubeAccountScreen() {
           ) : null}
         </View>
         <Pressable
+          tone="onColor"
           style={[styles.importButton, { backgroundColor: theme.colors.primary }, extracting && { opacity: 0.6 }]}
           disabled={extracting}
           onPress={extract}
@@ -777,6 +781,7 @@ export default function YoutubeAccountScreen() {
       >
         <View style={styles.reviewMask}>
           <Pressable
+            feedback="none"
             style={StyleSheet.absoluteFill}
             onPress={() => setReviewOpen(false)}
           />
@@ -813,7 +818,7 @@ export default function YoutubeAccountScreen() {
                 已选 {selectedIds.size} 个
               </Text>
               {importableItems.length ? (
-                <Pressable onPress={toggleAllReviewItems} hitSlop={8}>
+                <Pressable onPress={toggleAllReviewItems} hitSlop={8} feedback="opacity">
                   <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>
                     {selectedIds.size >= importableItems.length ? '取消全选' : '全选'}
                   </Text>
@@ -837,8 +842,10 @@ export default function YoutubeAccountScreen() {
                   <Pressable
                     key={`${item.channelId}-${index}`}
                     disabled={exists}
+                    feedback="opacity"
+                    radius={0}
                     onPress={() => toggleReviewItem(item.channelId)}
-                    style={({ pressed }) => ({
+                    style={{
                       flexDirection: 'row',
                       alignItems: 'center',
                       gap: 11,
@@ -846,8 +853,8 @@ export default function YoutubeAccountScreen() {
                       paddingVertical: 11,
                       borderTopWidth: StyleSheet.hairlineWidth,
                       borderTopColor: theme.colors.border,
-                      opacity: exists ? 0.55 : pressed ? 0.72 : 1,
-                    })}
+                      opacity: exists ? 0.55 : 1,
+                    }}
                   >
                     <ImportAvatar uri={item.avatar} title={item.title} />
                     <View style={{ flex: 1, minWidth: 0 }}>
@@ -891,6 +898,7 @@ export default function YoutubeAccountScreen() {
               </Pressable>
               <Pressable
                 disabled={selectedIds.size === 0}
+                tone="onColor"
                 onPress={importSelectedChannels}
                 style={[
                   styles.reviewImport,
@@ -913,15 +921,15 @@ export default function YoutubeAccountScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0B0812' },
   header: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 14, paddingBottom: 10 },
-  iconButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center' },
+  iconButton: { width: 40, height: 40, borderRadius: RADIUS.pill, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center' },
   title: { color: '#F5F2FF', fontSize: 18, fontWeight: '800', letterSpacing: -0.3 },
   subtitle: { color: '#8D849D', fontSize: 11, marginTop: 2 },
-  avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(124,92,255,0.25)', alignItems: 'center', justifyContent: 'center' },
+  avatar: { width: 36, height: 36, borderRadius: RADIUS.pill, backgroundColor: 'rgba(124,92,255,0.25)', alignItems: 'center', justifyContent: 'center' },
   avatarOn: { backgroundColor: '#2FB980' },
-  notice: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', backgroundColor: '#1B1427', marginHorizontal: 14, padding: 12, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: '#2B223B' },
+  notice: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', backgroundColor: '#1B1427', marginHorizontal: 14, padding: 12, borderRadius: RADIUS.card, ...CONTINUOUS_CORNER, borderWidth: StyleSheet.hairlineWidth, borderColor: '#2B223B' },
   noticeBlocked: { backgroundColor: '#2A1719', borderColor: '#63302F' },
   noticeText: { flex: 1, color: '#A99FBA', fontSize: 11.5, lineHeight: 17 },
-  webCard: { flex: 1, backgroundColor: '#FFFFFF', marginHorizontal: 14, marginTop: 10, borderRadius: 18, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth },
+  webCard: { flex: 1, backgroundColor: '#FFFFFF', marginHorizontal: 14, marginTop: 10, borderRadius: RADIUS.card, ...CONTINUOUS_CORNER, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth },
   webview: { flex: 1, backgroundColor: '#FFFFFF' },
   loadBar: {
     position: 'absolute',
@@ -929,7 +937,7 @@ const styles = StyleSheet.create({
     right: 10,
     top: 10,
     height: 34,
-    borderRadius: 17,
+    borderRadius: RADIUS.pill,
     paddingHorizontal: 12,
     flexDirection: 'row',
     alignItems: 'center',
@@ -939,7 +947,8 @@ const styles = StyleSheet.create({
   failBanner: {
     marginHorizontal: 14,
     marginTop: 10,
-    borderRadius: 14,
+    borderRadius: RADIUS.card,
+    ...CONTINUOUS_CORNER,
     borderWidth: StyleSheet.hairlineWidth,
     padding: 10,
     flexDirection: 'row',
@@ -949,7 +958,7 @@ const styles = StyleSheet.create({
   bannerButton: {
     minWidth: 50,
     height: 32,
-    borderRadius: 10,
+    borderRadius: RADIUS.control,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 10,
@@ -969,7 +978,7 @@ const styles = StyleSheet.create({
   footer: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingTop: 12 },
   status: { color: '#C9C0DA', fontSize: 11.5, lineHeight: 16 },
   count: { color: '#7C728D', fontSize: 10, marginTop: 3 },
-  importButton: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#7C5CFF', borderRadius: 14, height: 44, paddingHorizontal: 16 },
+  importButton: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#7C5CFF', borderRadius: RADIUS.control, height: 44, paddingHorizontal: 16 },
   importText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
   reviewMask: {
     flex: 1,
@@ -979,8 +988,9 @@ const styles = StyleSheet.create({
   reviewSheet: {
     width: '100%',
     maxHeight: '88%',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    borderTopLeftRadius: RADIUS.modal,
+    borderTopRightRadius: RADIUS.modal,
+    ...CONTINUOUS_CORNER,
     paddingTop: 14,
   },
   reviewHeader: {
@@ -995,7 +1005,7 @@ const styles = StyleSheet.create({
   reviewClose: {
     width: 34,
     height: 34,
-    borderRadius: 17,
+    borderRadius: RADIUS.pill,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1018,14 +1028,16 @@ const styles = StyleSheet.create({
   reviewCancel: {
     width: 88,
     height: 44,
-    borderRadius: 12,
+    borderRadius: RADIUS.control,
+    ...CONTINUOUS_CORNER,
     alignItems: 'center',
     justifyContent: 'center',
   },
   reviewImport: {
     flex: 1,
     height: 44,
-    borderRadius: 12,
+    borderRadius: RADIUS.control,
+    ...CONTINUOUS_CORNER,
     alignItems: 'center',
     justifyContent: 'center',
   },

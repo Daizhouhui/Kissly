@@ -1,11 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { TARGET_LANGUAGES } from '../../src/core/defaults';
 import { useAppStore } from '../../src/core/store';
+import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
+import { AppPressable } from '../../src/ui/app-pressable';
 import { NavHeader } from '../../src/ui/components';
 import { useAppTheme } from '../../src/ui/theme';
+
+const Pressable = AppPressable;
 
 const LEARNING_LANGUAGES = [
   { code: 'en', label: 'English', native: '英语' },
@@ -88,6 +92,7 @@ export default function LanguageSettingsScreen() {
               return (
                 <Pressable
                   key={language.code}
+                  feedback="opacity"
                   onPress={() => {
                     if (panel === 'learning') {
                       patchSettings({ learningLang: language.code });
@@ -139,7 +144,8 @@ export default function LanguageSettingsScreen() {
 
 const styles = StyleSheet.create({
   group: {
-    borderRadius: 16,
+    borderRadius: RADIUS.card,
+    ...CONTINUOUS_CORNER,
     borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
   },
@@ -154,7 +160,7 @@ const styles = StyleSheet.create({
   iconBox: {
     width: 36,
     height: 36,
-    borderRadius: 10,
+    borderRadius: RADIUS.control,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
@@ -163,7 +169,8 @@ const styles = StyleSheet.create({
   rowValue: { fontSize: 13, marginRight: 8 },
   optionRow: {
     minHeight: 58,
-    borderRadius: 14,
+    borderRadius: RADIUS.card,
+    ...CONTINUOUS_CORNER,
     paddingHorizontal: 16,
     paddingVertical: 10,
     marginBottom: 8,

@@ -5,7 +5,6 @@ import { useMemo, useEffect } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Pressable,
   RefreshControl,
   StyleSheet,
   Text,
@@ -16,7 +15,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppStore } from '../../src/core/store';
 import { formatTime, relativeTime } from '../../src/core/utils';
 import { useFeed } from '../../src/hooks/useFeed';
+import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
+import { AppPressable } from '../../src/ui/app-pressable';
 import { useAppTheme } from '../../src/ui/theme';
+
+const Pressable = AppPressable;
 
 export default function PodcastScreen() {
   const theme = useAppTheme();
@@ -73,7 +76,7 @@ export default function PodcastScreen() {
                 style={{
                   width: 42,
                   height: 42,
-                  borderRadius: 21,
+                  borderRadius: RADIUS.pill,
                   backgroundColor: theme.colors.primarySoft,
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -89,7 +92,8 @@ export default function PodcastScreen() {
                 alignItems: 'center',
                 gap: 8,
                 backgroundColor: theme.colors.card,
-                borderRadius: 16,
+                borderRadius: RADIUS.card,
+                ...CONTINUOUS_CORNER,
                 borderWidth: StyleSheet.hairlineWidth,
                 borderColor: theme.colors.border,
                 padding: 13,
@@ -121,16 +125,16 @@ export default function PodcastScreen() {
                 params: { videoId: item.videoId, title: item.title, author: item.channelTitle },
               } as any)
             }
-            style={({ pressed }) => [
+            radius={RADIUS.card}
+            style={[
               styles.card,
               {
                 backgroundColor: theme.colors.card,
                 borderColor: theme.colors.border,
-                opacity: pressed ? 0.88 : 1,
               },
             ]}
           >
-            <View style={{ width: 94, aspectRatio: 1, borderRadius: 14, overflow: 'hidden', backgroundColor: theme.colors.surfaceAlt }}>
+            <View style={{ width: 94, aspectRatio: 1, borderRadius: RADIUS.control, ...CONTINUOUS_CORNER, overflow: 'hidden', backgroundColor: theme.colors.surfaceAlt }}>
               <Image
                 source={{ uri: item.thumbnail }}
                 style={StyleSheet.absoluteFill}
@@ -155,12 +159,12 @@ export default function PodcastScreen() {
               </Text>
               {item.progress > 0.02 && item.progress < 0.92 ? (
                 <View style={{ marginTop: 8 }}>
-                  <View style={{ height: 3, borderRadius: 2, backgroundColor: theme.colors.surfaceAlt }}>
+                  <View style={{ height: 3, borderRadius: RADIUS.pill, backgroundColor: theme.colors.surfaceAlt }}>
                     <View
                       style={{
                         width: `${Math.round(item.progress * 100)}%` as any,
                         height: 3,
-                        borderRadius: 2,
+                        borderRadius: RADIUS.pill,
                         backgroundColor: theme.colors.primary,
                       }}
                     />
@@ -180,7 +184,8 @@ export default function PodcastScreen() {
                 style={{
                   width: 76,
                   height: 76,
-                  borderRadius: 24,
+                  borderRadius: RADIUS.control,
+                  ...CONTINUOUS_CORNER,
                   backgroundColor: theme.colors.primarySoft,
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -195,12 +200,14 @@ export default function PodcastScreen() {
                 订阅更多访谈、播客或课程频道，12 分钟以上的内容会自动出现在这里。
               </Text>
               <Pressable
+                tone="onColor"
                 onPress={() => router.push('/add-subscription' as any)}
                 style={{
                   marginTop: 18,
                   height: 42,
                   paddingHorizontal: 18,
-                  borderRadius: 21,
+                  borderRadius: RADIUS.control,
+                  ...CONTINUOUS_CORNER,
                   backgroundColor: theme.colors.primary,
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -229,7 +236,8 @@ const styles = StyleSheet.create({
   card: {
     flexDirection: 'row',
     gap: 12,
-    borderRadius: 18,
+    borderRadius: RADIUS.card,
+    ...CONTINUOUS_CORNER,
     borderWidth: StyleSheet.hairlineWidth,
     padding: 11,
     marginTop: 10,
@@ -240,7 +248,7 @@ const styles = StyleSheet.create({
     bottom: 6,
     width: 24,
     height: 24,
-    borderRadius: 12,
+    borderRadius: RADIUS.pill,
     backgroundColor: 'rgba(0,0,0,0.66)',
     alignItems: 'center',
     justifyContent: 'center',

@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 
 import type { ThemeAccent } from './core/types';
+import { RADIUS } from './tokens';
 
 export type ThemeMode = 'light' | 'dark';
 
@@ -29,13 +30,7 @@ export type Theme = {
     playerBg: string;
     playerSurface: string;
   };
-  radius: {
-    sm: number;
-    md: number;
-    lg: number;
-    xl: number;
-    pill: number;
-  };
+  radius: typeof RADIUS;
   space: (n: number) => number;
   shadow: {
     card: object;
@@ -137,7 +132,7 @@ export function getTheme(
     dark,
     accent,
     colors: { ...base, ...accentColors },
-    radius: { sm: 8, md: 12, lg: 16, xl: 22, pill: 999 },
+    radius: RADIUS,
     space: (n: number) => n * 4,
     shadow: {
       card: Platform.select({
