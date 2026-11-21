@@ -163,6 +163,7 @@ export type VideoMeta = {
   lengthSeconds: number;
   thumbnail: string;
   captionTracks: CaptionTrack[];
+  visitorData?: string;
 };
 
 export type PlayerPayload = {
