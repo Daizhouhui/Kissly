@@ -2,7 +2,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Linking,
   Pressable,
   ScrollView,
@@ -17,6 +16,7 @@ import { getSecret, setSecret } from '../../src/core/secrets';
 import { useAppStore } from '../../src/core/store';
 import { syncNow, testWebdav } from '../../src/core/sync';
 import { relativeTime } from '../../src/core/utils';
+import { appAlert as Alert } from '../../src/ui/app-alert';
 import { Card, NavHeader, SectionTitle, SettingSwitch } from '../../src/ui/components';
 import { useAppTheme } from '../../src/ui/theme';
 

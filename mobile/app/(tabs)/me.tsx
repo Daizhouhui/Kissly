@@ -4,7 +4,6 @@ import { router } from 'expo-router';
 import { ReactNode, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Linking,
   Modal,
   Pressable,
@@ -20,6 +19,7 @@ import { targetLabel } from '../../src/core/defaults';
 import { useAppStore } from '../../src/core/store';
 import { syncNow } from '../../src/core/sync';
 import { relativeTime } from '../../src/core/utils';
+import { appAlert as Alert } from '../../src/ui/app-alert';
 import { useAppTheme } from '../../src/ui/theme';
 
 function MeRow({

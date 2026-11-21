@@ -3,7 +3,9 @@ name: publish release version
 on:
   push:
     tags:
-      - "v*"
+      # v1.x tags publish the mobile app via mobile.yml; this workflow only
+      # handles the web project, whose versions are currently v2.x.
+      - "v2.*"
 
 jobs:
   build:

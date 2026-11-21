@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Speech from 'expo-speech';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAppStore } from '../../src/core/store';
+import { appAlert as Alert } from '../../src/ui/app-alert';
 import { NavHeader } from '../../src/ui/components';
 import { useAppTheme } from '../../src/ui/theme';
 

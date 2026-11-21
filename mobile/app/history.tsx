@@ -2,11 +2,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../src/core/store';
 import { relativeTime } from '../src/core/utils';
+import { appAlert as Alert } from '../src/ui/app-alert';
 import { ManageBar, NavHeader, SelectionCircle } from '../src/ui/components';
 import { useAppTheme } from '../src/ui/theme';
 

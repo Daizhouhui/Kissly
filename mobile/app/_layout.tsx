@@ -7,6 +7,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../src/core/store';
 import { maybeAutoSync } from '../src/core/sync';
+import { AppAlertHost } from '../src/ui/app-alert';
 import { useAppTheme } from '../src/ui/theme';
 import { YoutubeLoginProbe } from '../src/ui/youtube-login-probe';
 
@@ -55,6 +56,7 @@ export default function RootLayout() {
           <Stack.Screen name="settings/about" />
         </Stack>
         <YoutubeLoginProbe enabled={hydrated} />
+        <AppAlertHost />
       </View>
     </SafeAreaProvider>
   );
