@@ -1,12 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Linking,
+  Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -327,11 +329,44 @@ type ExtractDebug = {
   path?: string;
 };
 
+function ImportAvatar({ uri, title }: { uri?: string; title: string }) {
+  const theme = useAppTheme();
+  const [failed, setFailed] = useState(false);
+  if (!uri || failed) {
+    return (
+      <View
+        style={{
+          width: 42,
+          height: 42,
+          borderRadius: 21,
+          backgroundColor: theme.colors.primarySoft,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Text style={{ color: theme.colors.primary, fontSize: 15, fontWeight: '800' }}>
+          {(title || '?').slice(0, 1).toUpperCase()}
+        </Text>
+      </View>
+    );
+  }
+  return (
+    <Image
+      source={{ uri }}
+      style={{ width: 42, height: 42, borderRadius: 21 }}
+      contentFit="cover"
+      transition={120}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 export default function YoutubeAccountScreen() {
   const insets = useSafeAreaInsets();
   const theme = useAppTheme();
   const addSubscriptions = useAppStore((state) => state.addSubscriptions);
   const subscriptions = useAppStore((state) => state.subscriptions);
+  const setYoutubeLoginStatus = useAppStore((state) => state.setYoutubeLoginStatus);
   const webRef = useRef<any>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firstLoadRef = useRef(true);
@@ -339,9 +374,16 @@ export default function YoutubeAccountScreen() {
   const [status, setStatus] = useState('请在下方网页中登录 YouTube 账号');
   const [extracting, setExtracting] = useState(false);
   const [loggedIn, setLoggedIn] = useState(false);
+  const [loginChecked, setLoginChecked] = useState(false);
   const [blockedByGoogle, setBlockedByGoogle] = useState(false);
   const [failed, setFailed] = useState(false);
   const [lastCount, setLastCount] = useState<number | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewItems, setReviewItems] = useState<Subscription[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [reviewNote, setReviewNote] = useState('');
+  const existingIds = new Set(subscriptions.map((item) => item.channelId));
+  const importableItems = reviewItems.filter((item) => !existingIds.has(item.channelId));
 
   const clearTimer = () => {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
@@ -352,6 +394,7 @@ export default function YoutubeAccountScreen() {
     clearTimer();
     setLoading(true);
     setFailed(false);
+    setLoginChecked(false);
     timeoutRef.current = setTimeout(() => {
       // Never cover the WebView. Google's consent/login redirect chain can
       // legitimately take longer than 20 s on slow networks; hiding the page
@@ -447,27 +490,70 @@ export default function YoutubeAccountScreen() {
     }
 
     setExtracting(false);
+    const uniqueResolved = Array.from(
+      new Map(resolved.map((item) => [item.channelId, item])).values()
+    );
+    const suffix = failed > 0 ? `，${failed} 个未能识别账号` : '';
+    setLastCount(uniqueResolved.length);
+    if (uniqueResolved.length === 0) {
+      setStatus(
+        `没有读取到有效的 Channel ID（找到 ${raw.length} 个频道项${suffix}）。请重试或改用 CSV 导入。`
+      );
+      return;
+    }
+    const currentExisting = new Set(
+      useAppStore.getState().subscriptions.map((item) => item.channelId)
+    );
+    setReviewItems(uniqueResolved);
+    setSelectedIds(
+      new Set(
+        uniqueResolved
+          .filter((item) => !currentExisting.has(item.channelId))
+          .map((item) => item.channelId)
+      )
+    );
+    setReviewNote(suffix);
+    setReviewOpen(true);
+    setStatus(`读取到 ${uniqueResolved.length} 个频道，请选择要导入的频道${suffix}。`);
+  };
+
+  const toggleReviewItem = (channelId: string) => {
+    if (existingIds.has(channelId)) return;
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(channelId)) next.delete(channelId);
+      else next.add(channelId);
+      return next;
+    });
+  };
+
+  const toggleAllReviewItems = () => {
+    if (selectedIds.size >= importableItems.length) {
+      setSelectedIds(new Set());
+      return;
+    }
+    setSelectedIds(new Set(importableItems.map((item) => item.channelId)));
+  };
+
+  const importSelectedChannels = () => {
+    const currentExisting = new Set(
+      useAppStore.getState().subscriptions.map((item) => item.channelId)
+    );
+    const chosen = reviewItems.filter(
+      (item) => selectedIds.has(item.channelId) && !currentExisting.has(item.channelId)
+    );
+    if (!chosen.length) {
+      setStatus('还没有选择要导入的频道。');
+      return;
+    }
     const before = useAppStore.getState().subscriptions.length;
-    addSubscriptions(resolved);
+    addSubscriptions(chosen);
     const after = useAppStore.getState().subscriptions.length;
     const added = Math.max(0, after - before);
-    setLastCount(resolved.length);
-    const suffix = failed > 0 ? `，${failed} 个未能识别账号` : '';
+    setReviewOpen(false);
     setStatus(
-      resolved.length === 0
-        ? `没有读取到有效的 Channel ID（找到 ${raw.length} 个频道项${suffix}）。请重试或改用 CSV 导入。`
-        : `读取到 ${resolved.length} 个频道，新增 ${added} 个${suffix}。`
+      `已导入 ${chosen.length} 个频道，新增 ${added} 个${reviewNote}。`
     );
-    if (resolved.length > 0) {
-      Alert.alert(
-        '订阅已导入',
-        `读取到 ${resolved.length} 个频道，新增 ${added} 个${suffix}。已自动去重。`,
-        [
-          { text: '继续登录', style: 'cancel' },
-          { text: '回到发现页', onPress: () => router.replace('/' as any) },
-        ]
-      );
-    }
   };
 
   const onMessage = (event: WebViewMessageEvent) => {
@@ -482,7 +568,13 @@ export default function YoutubeAccountScreen() {
       return;
     }
     if (message?.type === 'page') {
-      if (typeof message.loggedIn === 'boolean') setLoggedIn(message.loggedIn);
+      if (typeof message.loggedIn === 'boolean') {
+        setLoggedIn(message.loggedIn);
+        setLoginChecked(true);
+        if (!message.blocked) {
+          setYoutubeLoginStatus(message.loggedIn ? 'loggedIn' : 'loggedOut');
+        }
+      }
       if (typeof message.blocked === 'boolean') setBlockedByGoogle(message.blocked);
       if (message.blocked) {
         clearTimer();
@@ -495,7 +587,11 @@ export default function YoutubeAccountScreen() {
     if (message?.type === 'channels') {
       clearTimer();
       setLoading(false);
-      if (typeof message.loggedIn === 'boolean') setLoggedIn(message.loggedIn);
+      if (typeof message.loggedIn === 'boolean') {
+        setLoggedIn(message.loggedIn);
+        setLoginChecked(true);
+        setYoutubeLoginStatus(message.loggedIn ? 'loggedIn' : 'loggedOut');
+      }
       void importChannels(message);
       return;
     }
@@ -514,7 +610,11 @@ export default function YoutubeAccountScreen() {
         <View style={{ flex: 1 }}>
           <Text style={[styles.title, { color: theme.colors.text }]}>YouTube 账户</Text>
           <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]} numberOfLines={1}>
-            {loggedIn ? '已检测到登录态' : '登录后可同步订阅，并使用账号播放权限'}
+            {!loginChecked
+              ? '正在检测登录状态…'
+              : loggedIn
+                ? '检测到:已登录'
+                : '检测到:未登录'}
           </Text>
         </View>
         <View
@@ -668,6 +768,144 @@ export default function YoutubeAccountScreen() {
           <Text style={styles.importText}>{extracting ? '读取中…' : '导入订阅'}</Text>
         </Pressable>
       </View>
+
+      <Modal
+        visible={reviewOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setReviewOpen(false)}
+      >
+        <View style={styles.reviewMask}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => setReviewOpen(false)}
+          />
+          <View
+            style={[
+              styles.reviewSheet,
+              {
+                backgroundColor: theme.colors.card,
+                paddingBottom: Math.max(16, insets.bottom),
+              },
+            ]}
+          >
+            <View style={styles.reviewHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.reviewTitle, { color: theme.colors.text }]}>
+                  选择要导入的频道
+                </Text>
+                <Text style={[styles.reviewSubtitle, { color: theme.colors.textTertiary }]}>
+                  {reviewItems.length} 个 · 已订阅 {reviewItems.length - importableItems.length} 个
+                  {reviewNote}
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => setReviewOpen(false)}
+                hitSlop={8}
+                style={[styles.reviewClose, { backgroundColor: theme.colors.surfaceAlt }]}
+              >
+                <Ionicons name="close" size={19} color={theme.colors.text} />
+              </Pressable>
+            </View>
+
+            <View style={[styles.reviewToolbar, { borderColor: theme.colors.border }]}>
+              <Text style={[styles.reviewSelected, { color: theme.colors.textSecondary }]}>
+                已选 {selectedIds.size} 个
+              </Text>
+              {importableItems.length ? (
+                <Pressable onPress={toggleAllReviewItems} hitSlop={8}>
+                  <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>
+                    {selectedIds.size >= importableItems.length ? '取消全选' : '全选'}
+                  </Text>
+                </Pressable>
+              ) : (
+                <Text style={{ color: theme.colors.textTertiary, fontSize: 12 }}>
+                  全部已订阅
+                </Text>
+              )}
+            </View>
+
+            <ScrollView
+              style={{ flexShrink: 1 }}
+              contentContainerStyle={{ paddingBottom: 4 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {reviewItems.map((item, index) => {
+                const exists = existingIds.has(item.channelId);
+                const selected = selectedIds.has(item.channelId);
+                return (
+                  <Pressable
+                    key={`${item.channelId}-${index}`}
+                    disabled={exists}
+                    onPress={() => toggleReviewItem(item.channelId)}
+                    style={({ pressed }) => ({
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 11,
+                      paddingHorizontal: 16,
+                      paddingVertical: 11,
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: theme.colors.border,
+                      opacity: exists ? 0.55 : pressed ? 0.72 : 1,
+                    })}
+                  >
+                    <ImportAvatar uri={item.avatar} title={item.title} />
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text
+                        numberOfLines={1}
+                        style={{ color: theme.colors.text, fontSize: 13.5, fontWeight: '700' }}
+                      >
+                        {item.title}
+                      </Text>
+                      <Text
+                        numberOfLines={1}
+                        style={{ color: theme.colors.textTertiary, fontSize: 11, marginTop: 2 }}
+                      >
+                        {item.handle || item.channelId}
+                      </Text>
+                    </View>
+                    {exists ? (
+                      <Text style={{ color: theme.colors.textTertiary, fontSize: 11 }}>
+                        已订阅
+                      </Text>
+                    ) : (
+                      <Ionicons
+                        name={selected ? 'checkbox' : 'square-outline'}
+                        size={22}
+                        color={selected ? theme.colors.primary : theme.colors.textTertiary}
+                      />
+                    )}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            <View style={[styles.reviewFooter, { borderColor: theme.colors.border }]}>
+              <Pressable
+                onPress={() => setReviewOpen(false)}
+                style={[styles.reviewCancel, { backgroundColor: theme.colors.surfaceAlt }]}
+              >
+                <Text style={{ color: theme.colors.textSecondary, fontSize: 13, fontWeight: '700' }}>
+                  取消
+                </Text>
+              </Pressable>
+              <Pressable
+                disabled={selectedIds.size === 0}
+                onPress={importSelectedChannels}
+                style={[
+                  styles.reviewImport,
+                  { backgroundColor: theme.colors.primary },
+                  selectedIds.size === 0 && { opacity: 0.45 },
+                ]}
+              >
+                <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '800' }}>
+                  {selectedIds.size ? `导入 ${selectedIds.size} 个` : '导入选中'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -733,4 +971,62 @@ const styles = StyleSheet.create({
   count: { color: '#7C728D', fontSize: 10, marginTop: 3 },
   importButton: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#7C5CFF', borderRadius: 14, height: 44, paddingHorizontal: 16 },
   importText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
+  reviewMask: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.48)',
+  },
+  reviewSheet: {
+    width: '100%',
+    maxHeight: '88%',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 14,
+  },
+  reviewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+  },
+  reviewTitle: { fontSize: 17, fontWeight: '800' },
+  reviewSubtitle: { fontSize: 11, lineHeight: 16, marginTop: 3 },
+  reviewClose: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reviewToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  reviewSelected: { fontSize: 12 },
+  reviewFooter: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  reviewCancel: {
+    width: 88,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reviewImport: {
+    flex: 1,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

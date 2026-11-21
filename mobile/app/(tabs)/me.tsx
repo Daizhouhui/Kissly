@@ -27,6 +27,7 @@ function MeRow({
   title,
   subtitle,
   value,
+  valueColor,
   onPress,
   last,
   disabled,
@@ -36,6 +37,7 @@ function MeRow({
   title: string;
   subtitle?: string;
   value?: string;
+  valueColor?: string;
   onPress?: () => void;
   last?: boolean;
   disabled?: boolean;
@@ -74,7 +76,7 @@ function MeRow({
       {value ? (
         <Text
           style={{
-            color: theme.colors.textTertiary,
+            color: valueColor ?? theme.colors.textTertiary,
             fontSize: 12.5,
             marginLeft: 8,
             maxWidth: 150,
@@ -148,6 +150,7 @@ export default function MeScreen() {
   const historyCount = useAppStore((state) => state.history.length);
   const lastSyncAt = useAppStore((state) => state.lastSyncAt);
   const syncState = useAppStore((state) => state.syncState);
+  const youtubeLoginStatus = useAppStore((state) => state.youtubeLoginStatus);
   const patchSettings = useAppStore((state) => state.patchSettings);
   const [syncing, setSyncing] = useState(false);
   const [dialog, setDialog] = useState<'title' | 'tab' | null>(null);
@@ -174,6 +177,14 @@ export default function MeScreen() {
   const tabValue =
     TAB_OPTIONS.find((option) => option.id === settings.defaultTab)?.label ?? '视频';
   const speechLabel = `系统语音 · ${settings.speechRate.toFixed(2)}x`;
+  const loginValue =
+    youtubeLoginStatus === 'loggedIn'
+      ? '已登录'
+      : youtubeLoginStatus === 'loggedOut'
+        ? '未登录'
+        : '检测中…';
+  const loginValueColor =
+    youtubeLoginStatus === 'loggedIn' ? '#2FB980' : theme.colors.textTertiary;
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
@@ -202,6 +213,8 @@ export default function MeScreen() {
             icon="person-circle-outline"
             title="账号"
             subtitle="YouTube 登录、头像与订阅同步"
+            value={loginValue}
+            valueColor={loginValueColor}
             onPress={() => router.push('/youtube-account' as any)}
             roomy
           />
