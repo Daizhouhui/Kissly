@@ -82,6 +82,7 @@ export default function ChannelScreen() {
   const [playlistItems, setPlaylistItems] = useState<VideoItem[]>([]);
   const [playlistVideosLoading, setPlaylistVideosLoading] = useState(false);
   const requestRef = useRef(0);
+  const playlistRequestRef = useRef(0);
 
   useEffect(() => {
     if (!channelId) return;
@@ -170,16 +171,21 @@ export default function ChannelScreen() {
   };
 
   const openPlaylist = async (playlist: ChannelPlaylist) => {
+    const requestId = ++playlistRequestRef.current;
     setSelectedPlaylist(playlist);
     setPlaylistItems([]);
     setPlaylistVideosLoading(true);
     try {
       const videos = await fetchPlaylistFeed(playlist.playlistId);
+      if (requestId !== playlistRequestRef.current) return;
       setPlaylistItems(videos);
     } catch {
+      if (requestId !== playlistRequestRef.current) return;
       setPlaylistItems([]);
     } finally {
-      setPlaylistVideosLoading(false);
+      if (requestId === playlistRequestRef.current) {
+        setPlaylistVideosLoading(false);
+      }
     }
   };
 

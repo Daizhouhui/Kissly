@@ -20,7 +20,8 @@ function positive(value: number | undefined): number | undefined {
  * The caller may run at any time (interval, pause, unmount, stale screen), so
  * every field is merged against the latest stored entry instead of replacing
  * it. `progress` is the furthest point and never goes backwards; `resumeAt` is
- * the last position and only moves when playback actually advanced.
+ * the last position and follows a real seek (including a rewind), while a
+ * zero-value sample from an unstarted page is ignored.
  */
 export function mergeHistoryEntry(
   previous: HistoryItem | undefined,
