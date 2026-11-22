@@ -21,11 +21,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 
-import {
-  getSettings,
-  SENTENCE_FAVORITE_LIMIT,
-  useAppStore,
-} from '@/src/core/store';
+import { getSettings, SENTENCE_FAVORITE_LIMIT, useAppStore } from '@/src/core/store';
+import { findCueIndexAt } from '@/src/core/cueIndex';
 import { getSecret } from '@/src/core/secrets';
 import {
   AiConfig,
@@ -1243,16 +1240,10 @@ export default function PlayerScreen() {
     [settings.subtitle.sentenceMode, sourceCues, translatedCues]
   );
 
-  const activeIndex = useMemo(() => {
-    if (!cues.length) return -1;
-    const t = current;
-    let latest = -1;
-    for (let i = 0; i < cues.length; i += 1) {
-      if (cues[i].start <= t + 0.12) latest = i;
-      else break;
-    }
-    return latest;
-  }, [cues, current]);
+  const activeIndex = useMemo(
+    () => findCueIndexAt(cues, current, 0.12),
+    [cues, current]
+  );
 
   const activeCue = activeIndex >= 0 ? cues[activeIndex] : null;
   const precisionCue =
