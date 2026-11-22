@@ -56,17 +56,53 @@ export function mergeSubscriptions(
 
   const orderSource =
     localOrderUpdatedAt >= remoteOrderUpdatedAt ? local : remote;
+  const localIds = new Set(local.map((item) => item.channelId));
+  const remoteIds = new Set(remote.map((item) => item.channelId));
+  const common = surviving.filter(
+    (item) => localIds.has(item.channelId) && remoteIds.has(item.channelId)
+  );
+  const newestCommonAddedAt = common.reduce(
+    (newest, item) => Math.max(newest, item.addedAt),
+    0
+  );
+  const additions: Subscription[] = [];
+  if (local.length > 0 && remote.length > 0) {
+    for (const item of surviving) {
+      const localOnly =
+        localIds.has(item.channelId) && !remoteIds.has(item.channelId);
+      // On the first sync the local list is empty, so every remote item looks
+      // new. Only treat remote-only items as additions when there is a common
+      // baseline and they are newer than it; otherwise a normal first sync
+      // would destroy the user's existing remote order.
+      const remoteOnlyNew =
+        remoteIds.has(item.channelId) &&
+        !localIds.has(item.channelId) &&
+        common.length > 0 &&
+        item.addedAt > newestCommonAddedAt;
+      if (localOnly || remoteOnlyNew) additions.push(item);
+    }
+    additions.sort(
+      (a, b) => b.addedAt - a.addedAt || a.channelId.localeCompare(b.channelId)
+    );
+  }
   const orderIds = ordered(orderSource).map((item) => item.channelId);
   const byId = new Map(surviving.map((item) => [item.channelId, item]));
-  const finalIds: string[] = [];
+  const rankedIds: string[] = [];
   for (const channelId of orderIds) {
-    if (byId.has(channelId) && !finalIds.includes(channelId)) {
-      finalIds.push(channelId);
+    if (byId.has(channelId) && !rankedIds.includes(channelId)) {
+      rankedIds.push(channelId);
       byId.delete(channelId);
     }
   }
   const rest = Array.from(byId.values()).sort((a, b) => b.addedAt - a.addedAt);
-  for (const item of rest) finalIds.push(item.channelId);
+  for (const item of rest) rankedIds.push(item.channelId);
+
+  const additionIds = additions
+    .map((item) => item.channelId)
+    .filter((channelId) => byId.has(channelId) || rankedIds.includes(channelId));
+  const finalIds = additionIds.concat(
+    rankedIds.filter((channelId) => !additionIds.includes(channelId))
+  );
 
   return {
     items: finalIds.map((channelId, index) => ({

@@ -125,4 +125,49 @@ check('the folder URL itself is encoded too', () => {
   );
 });
 
+check('a locally added channel stays at the top when the remote order is newer', () => {
+  const local = [
+    sub('C', { addedAt: 300, order: 0 }),
+    sub('A', { addedAt: 100, order: 1 }),
+  ];
+  const remote = [
+    sub('A', { addedAt: 100, order: 0 }),
+    sub('B', { addedAt: 50, order: 1 }),
+  ];
+  const merged = mergeSubscriptions(local, remote, {}, {}, 5, 10);
+  assert.deepEqual(
+    merged.items.map((item) => item.channelId),
+    ['C', 'A', 'B'],
+    'the local addition must not be pushed to the end by a newer remote order'
+  );
+});
+
+check('channels added on both devices are ordered deterministically by time', () => {
+  const local = [
+    sub('C', { addedAt: 300, order: 0 }),
+    sub('A', { addedAt: 100, order: 1 }),
+  ];
+  const remote = [
+    sub('A', { addedAt: 100, order: 0 }),
+    sub('B', { addedAt: 200, order: 1 }),
+  ];
+  const merged = mergeSubscriptions(local, remote, {}, {}, 5, 10);
+  assert.deepEqual(
+    merged.items.map((item) => item.channelId),
+    ['C', 'B', 'A']
+  );
+});
+
+check('a first sync keeps the remote order instead of sorting every item by age', () => {
+  const remote = [
+    sub('B', { addedAt: 50, order: 0 }),
+    sub('A', { addedAt: 100, order: 1 }),
+  ];
+  const merged = mergeSubscriptions([], remote, {}, {}, 0, 10);
+  assert.deepEqual(
+    merged.items.map((item) => item.channelId),
+    ['B', 'A']
+  );
+});
+
 console.log(`subscription-sync: ${count} assertions passed`);
