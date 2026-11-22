@@ -35,10 +35,16 @@ export function providerCacheScope(settings: CacheSettings): string {
 export function cueCacheKey(
   videoId: string,
   trackKey: string,
+  source: string,
   target: string,
   settings: CacheSettings
 ): string {
-  return `cues:v3:${videoId}:${trackKey}:${target}:${providerCacheScope(settings)}`;
+  // Source language is part of the contract: switching from "auto" to a
+  // concrete language (or the other way around) must not reuse the old
+  // provider's translation of the same track.
+  return `cues:v4:${videoId}:${trackKey}:${source}:${target}:${providerCacheScope(
+    settings
+  )}`;
 }
 
 export function titleCacheKey(

@@ -192,8 +192,9 @@ export async function translateCueList(
   onProgress?: CueTranslationProgress
 ): Promise<{ cues: Cue[]; provider: ProviderId }> {
   const settings = getSettings();
+  const from = options.from ?? settings.sourceLang;
   const to = options.to ?? settings.targetLang;
-  const cacheKey = cueCacheKey(videoId, trackKey, to, settings);
+  const cacheKey = cueCacheKey(videoId, trackKey, from, to, settings);
   const cached = options.ignoreCache
     ? null
     : await loadCached<{ cues: Cue[]; provider: ProviderId }>(

@@ -1675,6 +1675,7 @@ export default function PlayerScreen() {
     // engine, model or target language and comes back, retranslate instead of
     // leaving the old provider's subtitles on screen.
     settings.provider,
+    settings.sourceLang,
     settings.targetLang,
     settings.autoFallbackDeepSeek,
     settings.deepseekModel,
@@ -5027,6 +5028,7 @@ export default function PlayerScreen() {
       // source captions and every saved batch for this video, then reload.
       await clearCachedCaptions(videoId, learningLang);
       await removeKeysByPrefix(`cues:v3:${videoId}:`);
+      await removeKeysByPrefix(`cues:v4:${videoId}:`);
       setSourceCues([]);
       setTranslatedCues(null);
       setTrackKey('');

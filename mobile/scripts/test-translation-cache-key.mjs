@@ -26,11 +26,17 @@ check('the same provider and model reuse one cache scope', () => {
 });
 
 check('switching the DeepSeek model invalidates translated cues', () => {
-  const before = cueCacheKey('vid', 'en', 'zh-CN', base);
-  const after = cueCacheKey('vid', 'en', 'zh-CN', {
+  const before = cueCacheKey('vid', 'en', 'auto', 'zh-CN', base);
+  const after = cueCacheKey('vid', 'en', 'auto', 'zh-CN', {
     ...base,
     deepseekModel: 'deepseek-reasoner',
   });
+  assert.notEqual(before, after);
+});
+
+check('switching the source language invalidates translated cues', () => {
+  const before = cueCacheKey('vid', 'en', 'auto', 'zh-CN', base);
+  const after = cueCacheKey('vid', 'en', 'en', 'zh-CN', base);
   assert.notEqual(before, after);
 });
 
