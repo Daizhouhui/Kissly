@@ -144,7 +144,9 @@ export function useFeed(channelFilter = '') {
             initial = page.items;
             cursor.firstPageLoaded = true;
             cursor.continuation = page.continuation;
-            cursor.exhausted = !page.continuation && page.items.length < 30;
+            // No continuation token means there is no next page, even when the
+            // first page happens to contain a full batch of 30 videos.
+            cursor.exhausted = !page.continuation;
           } catch {
             initial = await fetchChannelFeed(sub.channelId, force);
             cursor.firstPageLoaded = false;
@@ -224,6 +226,9 @@ export function useFeed(channelFilter = '') {
             channelTitle: sub.title,
             channelAvatar: sub.avatar,
           });
+          // A refresh or channel switch bumps requestRef. A stale page must not
+          // append the previous channel's videos into the new pool.
+          if (requestId !== requestRef.current) return;
           cursor.firstPageLoaded = true;
           cursor.continuation = page.continuation;
           if (!page.continuation) cursor.exhausted = true;
@@ -245,6 +250,7 @@ export function useFeed(channelFilter = '') {
         }
       }
 
+      if (requestId !== requestRef.current) return;
       const anyLive = selected.some((sub) => {
         const cursor = cursorsRef.current.get(sub.channelId);
         return cursor && !cursor.exhausted;
