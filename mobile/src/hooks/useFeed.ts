@@ -32,7 +32,9 @@ function uniqueSorted(items: VideoItem[]): VideoItem[] {
 export function useFeed(channelFilter = '') {
   const subscriptions = useAppStore((state) => state.subscriptions);
   const translateTitlesEnabled = useAppStore(
-    (state) => state.settings.titleTranslationMode !== 'none'
+    (state) =>
+      state.settings.translateTitles &&
+      state.settings.titleTranslationMode !== 'none'
   );
   const [pool, setPool] = useState<VideoItem[]>([]);
   const [visibleCount, setVisibleCount] = useState(HOME_PAGE_SIZE);

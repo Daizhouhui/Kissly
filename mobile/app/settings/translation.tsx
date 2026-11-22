@@ -451,7 +451,7 @@ export default function TranslationSettingsScreen() {
           />
           <SettingRow
             title="翻译视频标题"
-            desc="首页列表同时显示中文标题"
+            desc="关闭后首页不再翻译标题；开启时按“我的”页选择双语或仅译文"
             value={settings.translateTitles}
             onChange={(value) => patchSettings({ translateTitles: value })}
             last
