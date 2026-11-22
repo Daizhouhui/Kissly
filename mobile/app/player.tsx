@@ -692,7 +692,13 @@ function playerBridgeScript(startAt = 0) {
           else others.push(name);
         }
       } catch(e) {}
-      return preferred.concat(others).slice(-6).reverse();
+      // Keep the newest URLs from each bucket. Concatenating first and then
+      // slicing used to drop the preferred language when YouTube requested
+      // many other timedtext tracks.
+      return preferred
+        .slice(-6)
+        .reverse()
+        .concat(others.slice(-6).reverse());
     }
 
     function getClientVersion(){
