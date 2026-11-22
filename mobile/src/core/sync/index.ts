@@ -228,8 +228,8 @@ export async function syncNow(): Promise<string> {
     const now = Date.now();
     useAppStore
       .getState()
-      .setSync('ok', `同步完成 · ${merged.items.length} 个订阅`, now);
-    return `同步完成，共 ${merged.items.length} 个订阅`;
+      .setSync('ok', `同步完成 · ${applied.items.length} 个订阅`, now);
+    return `同步完成，共 ${applied.items.length} 个订阅`;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     useAppStore.getState().setSync('error', message);

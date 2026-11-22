@@ -108,12 +108,24 @@ export class WebdavClient {
   }
 
   async ensureFolder(): Promise<void> {
-    const response = await this.request('MKCOL', this.folderUrl());
-    if ([201, 200, 204, 301, 405].includes(response.status)) return;
-    if (response.status === 401 || response.status === 403) {
-      throw new Error('WebDAV 认证失败，请检查用户名和应用密码');
+    const parts = this.folder
+      .split('/')
+      .map((part) => part.trim())
+      .filter(Boolean);
+    // WebDAV has no recursive MKCOL. A folder like "Backups/Kissly" needs its
+    // parent created first, otherwise the server answers 409 forever.
+    for (let index = 0; index < parts.length; index += 1) {
+      const folderPath = parts.slice(0, index + 1).join('/');
+      const response = await this.request(
+        'MKCOL',
+        buildWebdavUrl(this.base, folderPath)
+      );
+      if ([201, 200, 204, 301, 405].includes(response.status)) continue;
+      if (response.status === 401 || response.status === 403) {
+        throw new Error('WebDAV 认证失败，请检查用户名和应用密码');
+      }
+      throw new Error(`WebDAV 创建目录失败 (${response.status})`);
     }
-    throw new Error(`WebDAV 创建目录失败 (${response.status})`);
   }
 
   async test(): Promise<void> {
