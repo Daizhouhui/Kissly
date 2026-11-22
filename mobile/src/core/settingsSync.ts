@@ -144,7 +144,11 @@ export function mergeSettings(
   remoteStamps: SettingsStamps | undefined,
   remoteUpdatedAt: number
 ): MergedSettings {
-  const localNormalized = normalizeStamps(localStamps, localUpdatedAt);
+  const localHasStamps = !!localStamps && Object.keys(localStamps).length > 0;
+  const localNormalized = normalizeStamps(
+    localStamps,
+    localHasStamps ? 0 : localUpdatedAt
+  );
   const remoteNormalized = remote
     ? normalizeStamps(
         remoteStamps,

@@ -227,6 +227,19 @@ check('settingsFileChanged detects new values and new stamps', () => {
   assert.equal(settingsFileChanged(payload, undefined), true);
 });
 
+check('a partial local stamp map does not make untouched keys look new', () => {
+  const merged = mergeSettings(
+    { ...local, targetLang: 'zh-CN' },
+    { keepAwake: 3000 },
+    3000,
+    pickSyncedSettings({ ...remoteSettings, targetLang: 'ja' }),
+    { ...stampsForAllKeys(2000), targetLang: 2000 },
+    2000
+  );
+  assert.equal(merged.settings.targetLang, 'ja');
+  assert.equal(merged.settings.keepAwake, local.keepAwake);
+});
+
 check('a second 412 merge keeps keys written by the other device', () => {
   const first = mergeSettings(
     local,
