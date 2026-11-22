@@ -377,8 +377,13 @@ export const useAppStore = create<AppState>()(
           youtubeLoginCheckedAt: saved?.youtubeLoginCheckedAt ?? 0,
         };
       },
-      onRehydrateStorage: () => (state) => {
-        state?.setHydrated(true);
+      onRehydrateStorage: (currentState) => (state, error) => {
+        if (error) {
+          console.error('Kissly storage rehydrate failed', error);
+        }
+        // A corrupt AsyncStorage entry can make `state` undefined. Without this
+        // fallback the splash screen would stay up and the app would look dead.
+        (state ?? currentState).setHydrated(true);
       },
     }
   )
