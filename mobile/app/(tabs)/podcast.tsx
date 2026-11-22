@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../../src/core/store';
 import { formatTime, relativeTime } from '../../src/core/utils';
+import { resumeTarget, watchedFraction } from '../../src/core/watchProgress';
 import { useFeed } from '../../src/hooks/useFeed';
 import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
 import { AppPressable } from '../../src/ui/app-pressable';
@@ -28,10 +29,17 @@ export default function PodcastScreen() {
   const { items, loading, refreshing, loadingMore, hasMore, refresh, loadMore } = useFeed();
 
   const episodes = useMemo(() => {
-    const progress = new Map(history.map((item) => [item.videoId, item.progress ?? 0]));
+    const savedById = new Map(history.map((item) => [item.videoId, item]));
     return items
       .filter((item) => !item.isShort && (item.duration ?? 0) >= 12 * 60)
-      .map((item) => ({ ...item, progress: progress.get(item.videoId) ?? 0 }));
+      .map((item) => {
+        const saved = savedById.get(item.videoId);
+        return {
+          ...item,
+          saved,
+          progressFraction: saved ? watchedFraction(saved) : 0,
+        };
+      });
   }, [history, items]);
 
   useEffect(() => {
@@ -119,12 +127,18 @@ export default function PodcastScreen() {
         }
         renderItem={({ item }) => (
           <Pressable
-            onPress={() =>
+            onPress={() => {
+              const startAt = item.saved ? resumeTarget(item.saved) : 0;
               router.push({
                 pathname: '/player',
-                params: { videoId: item.videoId, title: item.title, author: item.channelTitle },
-              } as any)
-            }
+                params: {
+                  videoId: item.videoId,
+                  title: item.title,
+                  author: item.channelTitle,
+                  ...(startAt > 0 ? { startAt: String(startAt) } : {}),
+                },
+              } as any);
+            }}
             radius={RADIUS.card}
             style={[
               styles.card,
@@ -157,12 +171,12 @@ export default function PodcastScreen() {
               <Text style={{ color: theme.colors.textTertiary, fontSize: 10.5, marginTop: 5 }} numberOfLines={1}>
                 {item.channelTitle} · {formatTime(item.duration ?? 0)} · {relativeTime(item.published)}
               </Text>
-              {item.progress > 0.02 && item.progress < 0.92 ? (
+              {item.progressFraction > 0.02 && item.progressFraction < 0.92 ? (
                 <View style={{ marginTop: 8 }}>
                   <View style={{ height: 3, borderRadius: RADIUS.pill, backgroundColor: theme.colors.surfaceAlt }}>
                     <View
                       style={{
-                        width: `${Math.round(item.progress * 100)}%` as any,
+                        width: `${Math.round(item.progressFraction * 100)}%` as any,
                         height: 3,
                         borderRadius: RADIUS.pill,
                         backgroundColor: theme.colors.primary,
@@ -170,7 +184,7 @@ export default function PodcastScreen() {
                     />
                   </View>
                   <Text style={{ color: theme.colors.primary, fontSize: 9.5, marginTop: 4, fontWeight: '700' }}>
-                    已听 {Math.round(item.progress * 100)}%
+                    已听 {Math.round(item.progressFraction * 100)}%
                   </Text>
                 </View>
               ) : null}
