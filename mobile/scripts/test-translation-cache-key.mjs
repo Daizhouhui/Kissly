@@ -18,6 +18,7 @@ const base = {
   provider: 'deepseek',
   deepseekModel: 'deepseek-chat',
   siliconflowModel: 'Qwen/Qwen3.5-9B',
+  openrouterModel: 'openai/gpt-4o-mini',
   openaiBaseUrl: 'https://api.openai.com/v1',
   openaiModel: 'gpt-4o-mini',
 };
@@ -84,6 +85,20 @@ check('non-AI providers ignore model fields they never use', () => {
       deepseekModel: 'something-else',
     })
   );
+});
+
+check('switching the OpenRouter model invalidates the cache', () => {
+  const before = providerCacheScope({
+    ...base,
+    provider: 'openrouter',
+  });
+  const after = providerCacheScope({
+    ...base,
+    provider: 'openrouter',
+    openrouterModel: 'deepseek/deepseek-chat',
+  });
+  assert.notEqual(before, after);
+  assert.match(before, /^openrouter:/);
 });
 
 check('an explicit provider keeps the same cue key in auto mode', () => {

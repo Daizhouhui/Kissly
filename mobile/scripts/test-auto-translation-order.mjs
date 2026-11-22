@@ -19,7 +19,7 @@ const base = {
   provider: 'auto',
   autoFallbackDeepSeek: true,
   autoFreeOrder: ['microsoft', 'google', 'google2'],
-  autoPaidOrder: ['deepseek', 'siliconflow', 'openai'],
+  autoPaidOrder: ['deepseek', 'siliconflow', 'openrouter', 'openai'],
 };
 
 check('missing or malformed free order falls back to the defaults', () => {
@@ -42,8 +42,15 @@ check('missing or malformed free order falls back to the defaults', () => {
 
 check('paid order removes duplicates and appends missing engines', () => {
   assert.deepEqual(
-    normalizeAutoPaidOrder(['openai', 'openai', 'unknown', 'deepseek']),
-    ['openai', 'deepseek', 'siliconflow']
+    normalizeAutoPaidOrder(['openai', 'openai', 'openrouter', 'unknown', 'deepseek']),
+    ['openai', 'openrouter', 'deepseek', 'siliconflow']
+  );
+});
+
+check('an old paid order inserts OpenRouter before the old OpenAI tail', () => {
+  assert.deepEqual(
+    normalizeAutoPaidOrder(['deepseek', 'siliconflow', 'openai']),
+    ['deepseek', 'siliconflow', 'openrouter', 'openai']
   );
 });
 
@@ -63,7 +70,7 @@ check('paid engines are appended in the custom order', () => {
     buildProviderChain({
       ...base,
       autoFreeOrder: ['google', 'microsoft', 'google2'],
-      autoPaidOrder: ['openai', 'deepseek', 'siliconflow'],
+      autoPaidOrder: ['openai', 'deepseek', 'siliconflow', 'openrouter'],
     }),
     [
       'google',
@@ -72,6 +79,7 @@ check('paid engines are appended in the custom order', () => {
       'openai',
       'deepseek',
       'siliconflow',
+      'openrouter',
     ]
   );
 });
@@ -89,9 +97,9 @@ check('a manual free engine keeps the paid safety net', () => {
     buildProviderChain({
       ...base,
       provider: 'google',
-      autoPaidOrder: ['openai', 'deepseek', 'siliconflow'],
+      autoPaidOrder: ['openai', 'deepseek', 'siliconflow', 'openrouter'],
     }),
-    ['google', 'openai', 'deepseek', 'siliconflow']
+    ['google', 'openai', 'deepseek', 'siliconflow', 'openrouter']
   );
 });
 
@@ -113,6 +121,7 @@ check('auto cache lookup covers every provider, not just the current chain', () 
     'google2',
     'deepseek',
     'siliconflow',
+    'openrouter',
     'openai',
   ]);
 });

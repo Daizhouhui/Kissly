@@ -9,6 +9,7 @@ export const AUTO_FREE_PROVIDERS = [
 export const AUTO_PAID_PROVIDERS = [
   'deepseek',
   'siliconflow',
+  'openrouter',
   'openai',
 ] as const;
 
@@ -42,7 +43,19 @@ export function normalizeAutoFreeOrder(value: unknown) {
 }
 
 export function normalizeAutoPaidOrder(value: unknown) {
-  return uniqueValid(value, AUTO_PAID_PROVIDERS, AUTO_PAID_PROVIDERS);
+  const result = uniqueValid(value, AUTO_PAID_PROVIDERS, AUTO_PAID_PROVIDERS);
+  // Before OpenRouter existed, OpenAI was the last paid engine. Put the newly
+  // added engine in the product order on the first migration instead of after
+  // the old tail.
+  if (Array.isArray(value) && !value.includes('openrouter')) {
+    const routerIndex = result.indexOf('openrouter');
+    const openaiIndex = result.indexOf('openai');
+    if (openaiIndex >= 0 && routerIndex > openaiIndex) {
+      result.splice(routerIndex, 1);
+      result.splice(openaiIndex, 0, 'openrouter');
+    }
+  }
+  return result;
 }
 
 /**

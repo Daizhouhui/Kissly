@@ -11,7 +11,7 @@ export const DEFAULT_SETTINGS: Settings = {
   provider: 'auto',
   autoFallbackDeepSeek: true,
   autoFreeOrder: ['microsoft', 'google', 'google2'],
-  autoPaidOrder: ['deepseek', 'siliconflow', 'openai'],
+  autoPaidOrder: ['deepseek', 'siliconflow', 'openrouter', 'openai'],
   translateTitles: true,
   titleTranslationMode: 'bilingual',
   defaultTab: 'video',
@@ -54,6 +54,16 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   deepseekModel: 'deepseek-chat',
   siliconflowModel: 'Qwen/Qwen3.5-9B',
+  openrouterModel: 'openai/gpt-4o-mini',
+  openaiProfiles: [
+    {
+      id: 'default',
+      name: 'OpenAI 兼容',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini',
+    },
+  ],
+  openaiProfileId: 'default',
   openaiBaseUrl: 'https://api.openai.com/v1',
   openaiModel: 'gpt-4o-mini',
   requestTimeoutMs: 20000,
@@ -90,6 +100,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   google2: 'Google 备用（公共预设）',
   deepseek: 'DeepSeek',
   siliconflow: 'SiliconFlow',
+  openrouter: 'OpenRouter',
   openai: 'OpenAI 兼容',
 };
 
@@ -103,5 +114,6 @@ export const PROVIDER_HINTS: Record<string, string> = {
     'Kiss Translator 内置的公共 Google 备用预设，自动链的最后备用，也可手动选择；共享 key 可能限流或失效。',
   deepseek: '按 token 计费，质量最好，需要 API Key。',
   siliconflow: '需要 API Key，可选免费模型，适合国内网络。',
-  openai: '任意 OpenAI 兼容服务，自填 Base URL、模型和 Key。',
+  openrouter: '聚合多家模型，需要 OpenRouter API Key；可在模型名里选免费或付费模型。',
+  openai: '任意 OpenAI 兼容服务，可保存多套 Base URL、模型和 Key。',
 };

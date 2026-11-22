@@ -68,6 +68,16 @@ const BASE = {
   },
   deepseekModel: 'deepseek-chat',
   siliconflowModel: 'Qwen/Qwen3.5-9B',
+  openrouterModel: 'openai/gpt-4o-mini',
+  openaiProfiles: [
+    {
+      id: 'default',
+      name: 'OpenAI 兼容',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini',
+    },
+  ],
+  openaiProfileId: 'default',
   openaiBaseUrl: 'https://api.openai.com/v1',
   openaiModel: 'gpt-4o-mini',
   requestTimeoutMs: 20000,
@@ -181,6 +191,8 @@ check('webdav, theme and accent never travel in the payload', () => {
   assert.equal('theme' in payload, false);
   assert.equal('themeAccent' in payload, false);
   assert.equal(payload.subtitle.fontSize, 20);
+  assert.equal(payload.openaiProfiles.length, 1);
+  assert.equal(payload.openrouterModel, 'openai/gpt-4o-mini');
 });
 
 check('changedSettingKeys reports a nested subtitle edit as the top key', () => {
@@ -196,6 +208,22 @@ check('changedSettingKeys ignores equal values and reports theme', () => {
   assert.deepEqual(changedSettingKeys(local, { ...local, theme: 'light' }), [
     'theme',
   ]);
+});
+
+check('changedSettingKeys reports a new OpenAI profile as its own key', () => {
+  const next = {
+    ...local,
+    openaiProfiles: [
+      ...local.openaiProfiles,
+      {
+        id: 'work',
+        name: '公司代理',
+        baseUrl: 'https://proxy.example.com/v1',
+        model: 'gpt-4.1-mini',
+      },
+    ],
+  };
+  assert.deepEqual(changedSettingKeys(local, next), ['openaiProfiles']);
 });
 
 check('settingsFileChanged detects new values and new stamps', () => {

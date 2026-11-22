@@ -30,8 +30,10 @@ import {
   aiAnalyzeSentence,
   deepseekConfig,
   openaiConfig,
+  openrouterConfig,
   siliconflowConfig,
 } from '@/src/core/translate/ai';
+import { getActiveOpenAiKey } from '@/src/core/translate/credentials';
 import { providerDisplayName, translateCueList } from '@/src/core/translate';
 import { removeKeysByPrefix } from '@/src/core/storage';
 import { CaptionTrack, Cue, SubtitleMode } from '@/src/core/types';
@@ -2494,11 +2496,13 @@ export default function PlayerScreen() {
 
   const getConfiguredAiConfig = async (): Promise<AiConfig | null> => {
     const currentSettings = getSettings();
-    const [deepseekKey, siliconflowKey, openaiKey] = await Promise.all([
-      getSecret('deepseek'),
-      getSecret('siliconflow'),
-      getSecret('openai'),
-    ]);
+    const [deepseekKey, siliconflowKey, openrouterKey, openaiKey] =
+      await Promise.all([
+        getSecret('deepseek'),
+        getSecret('siliconflow'),
+        getSecret('openrouter'),
+        getActiveOpenAiKey(currentSettings),
+      ]);
     const candidates: Array<AiConfig | null> = [
       currentSettings.provider === 'deepseek' && deepseekKey
         ? deepseekConfig(
@@ -2511,6 +2515,13 @@ export default function PlayerScreen() {
         ? siliconflowConfig(
             siliconflowKey,
             currentSettings.siliconflowModel,
+            currentSettings.requestTimeoutMs
+          )
+        : null,
+      currentSettings.provider === 'openrouter' && openrouterKey
+        ? openrouterConfig(
+            openrouterKey,
+            currentSettings.openrouterModel,
             currentSettings.requestTimeoutMs
           )
         : null,
@@ -2536,6 +2547,13 @@ export default function PlayerScreen() {
       return siliconflowConfig(
         siliconflowKey,
         currentSettings.siliconflowModel,
+        currentSettings.requestTimeoutMs
+      );
+    }
+    if (openrouterKey) {
+      return openrouterConfig(
+        openrouterKey,
+        currentSettings.openrouterModel,
         currentSettings.requestTimeoutMs
       );
     }

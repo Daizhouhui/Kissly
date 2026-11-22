@@ -7,9 +7,10 @@ import {
   autoCacheProviders,
   buildProviderChain,
 } from './autoOrder';
-import { aiTranslate, deepseekConfig, openaiConfig, siliconflowConfig } from './ai';
+import { aiTranslate, deepseekConfig, openaiConfig, openrouterConfig, siliconflowConfig } from './ai';
 import { cueCacheKeyForProvider, titleCacheKey } from './cacheKey';
 import { pickBestCueCache } from './cacheSelection';
+import { getActiveOpenAiKey } from './credentials';
 import { googleTranslate } from './google';
 import { google2Translate } from './google2';
 import { microsoftTranslate } from './microsoft';
@@ -113,9 +114,20 @@ async function translateWithProvider(
       contextTitle
     );
   }
-  if (provider === 'openai') {
-    const key = await getSecret('openai');
+  if (provider === 'openrouter') {
+    const key = await getSecret('openrouter');
     const settings = getSettings();
+    return aiTranslate(
+      openrouterConfig(key, settings.openrouterModel, timeoutMs),
+      texts,
+      from,
+      to,
+      contextTitle
+    );
+  }
+  if (provider === 'openai') {
+    const settings = getSettings();
+    const key = await getActiveOpenAiKey(settings);
     return aiTranslate(
       openaiConfig(
         key,
@@ -157,8 +169,12 @@ export async function translateTexts(
         const key = await getSecret('siliconflow');
         if (!key) continue;
       }
+      if (provider === 'openrouter') {
+        const key = await getSecret('openrouter');
+        if (!key) continue;
+      }
       if (provider === 'openai') {
-        const key = await getSecret('openai');
+        const key = await getActiveOpenAiKey(getSettings());
         if (!key) continue;
       }
       const translated = await translateWithProvider(
@@ -206,6 +222,27 @@ export async function translateCueList(
       )
     )
   );
+  // Auto mode is free to reuse a translation made with any saved OpenAI
+  // profile, even when another profile is currently selected.
+  if (autoMode) {
+    for (const profile of settings.openaiProfiles) {
+      cacheKeys.push(
+        cueCacheKeyForProvider(
+          videoId,
+          trackKey,
+          from,
+          to,
+          {
+            ...settings,
+            openaiBaseUrl: profile.baseUrl,
+            openaiModel: profile.model,
+          },
+          'openai'
+        )
+      );
+    }
+  }
+  const uniqueCacheKeys = Array.from(new Set(cacheKeys));
 
   // Auto mode can reuse a complete translation produced earlier by any engine,
   // even one the user no longer has in the current order. Manual mode stays
@@ -213,7 +250,7 @@ export async function translateCueList(
   const cacheEntries = options.ignoreCache
     ? []
     : await Promise.all(
-        cacheKeys.map((key) =>
+        uniqueCacheKeys.map((key) =>
           loadCachedEntry<{ cues: Cue[]; provider: ProviderId }>(
             key,
             CUE_CACHE_TTL_MS
@@ -376,8 +413,10 @@ export function providerDisplayName(provider: ProviderId): string {
       return 'DeepSeek';
     case 'siliconflow':
       return 'SiliconFlow';
+    case 'openrouter':
+      return 'OpenRouter';
     case 'openai':
-      return 'OpenAI';
+      return 'OpenAI 兼容';
     default:
       return '自动';
   }

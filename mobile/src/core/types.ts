@@ -1,6 +1,17 @@
 export type AutoFreeProviderId = 'microsoft' | 'google' | 'google2';
 
-export type AutoPaidProviderId = 'deepseek' | 'siliconflow' | 'openai';
+export type AutoPaidProviderId =
+  | 'deepseek'
+  | 'siliconflow'
+  | 'openrouter'
+  | 'openai';
+
+export type OpenAiProfile = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  model: string;
+};
 
 export type ProviderId =
   | 'auto'
@@ -112,6 +123,10 @@ export type Settings = {
   webdav: WebDavConfig;
   deepseekModel: string;
   siliconflowModel: string;
+  openrouterModel: string;
+  /** Saved OpenAI-compatible endpoints; the active one mirrors the legacy fields below. */
+  openaiProfiles: OpenAiProfile[];
+  openaiProfileId: string;
   openaiBaseUrl: string;
   openaiModel: string;
   requestTimeoutMs: number;

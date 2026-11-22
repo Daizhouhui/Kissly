@@ -4,6 +4,7 @@ type CacheSettings = {
   provider: ProviderId;
   deepseekModel?: string;
   siliconflowModel?: string;
+  openrouterModel?: string;
   openaiBaseUrl?: string;
   openaiModel?: string;
 };
@@ -26,6 +27,8 @@ export function providerCacheScope(
       return `deepseek:${normalized(settings.deepseekModel)}`;
     case 'siliconflow':
       return `siliconflow:${normalized(settings.siliconflowModel)}`;
+    case 'openrouter':
+      return `openrouter:${normalized(settings.openrouterModel)}`;
     case 'openai':
       return `openai:${normalized(settings.openaiBaseUrl)}:${normalized(
         settings.openaiModel

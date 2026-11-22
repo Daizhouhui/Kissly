@@ -7,6 +7,8 @@ export type AiConfig = {
   key: string;
   model: string;
   timeoutMs: number;
+  /** Provider-specific headers merged after the shared JSON/auth headers. */
+  extraHeaders?: Record<string, string>;
 };
 
 const LANG_NAMES: Record<string, string> = {
@@ -85,6 +87,7 @@ async function chat(
           'Content-Type': 'application/json',
           Authorization: `Bearer ${config.key}`,
           Accept: 'application/json',
+          ...(config.extraHeaders ?? {}),
         },
         body: {
           model: config.model,
@@ -218,6 +221,24 @@ export function openaiConfig(
   };
 }
 
+export function openrouterConfig(
+  key: string,
+  model: string,
+  timeoutMs: number
+): AiConfig {
+  return {
+    id: 'OpenRouter',
+    url: 'https://openrouter.ai/api/v1/chat/completions',
+    key,
+    model: model || 'openai/gpt-4o-mini',
+    timeoutMs,
+    extraHeaders: {
+      'HTTP-Referer': 'https://github.com/Daizhouhui/Kissly',
+      'X-Title': 'Kissly',
+    },
+  };
+}
+
 const ANALYSIS_PROMPT = [
   '你是一名英语老师，请用简体中文分析下面这句视频对话。',
   '请按以下结构输出，语言简洁、重点明确：',
@@ -243,6 +264,7 @@ export async function aiAnalyzeSentence(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${config.key}`,
       Accept: 'application/json',
+      ...(config.extraHeaders ?? {}),
     },
     body: {
       model: config.model,
