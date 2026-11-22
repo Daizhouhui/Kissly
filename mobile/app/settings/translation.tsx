@@ -116,6 +116,7 @@ export default function TranslationSettingsScreen() {
   const [testing, setTesting] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [systemAvailable, setSystemAvailable] = useState(false);
+  const [secretsLoaded, setSecretsLoaded] = useState(false);
 
   useEffect(() => {
     Promise.all([getSecret('deepseek'), getSecret('siliconflow'), getSecret('openai')]).then(
@@ -123,6 +124,7 @@ export default function TranslationSettingsScreen() {
         setDeepseekKey(a);
         setSiliconflowKey(b);
         setOpenaiKey(c);
+        setSecretsLoaded(true);
       }
     );
   }, []);
@@ -180,6 +182,9 @@ export default function TranslationSettingsScreen() {
   };
 
   const saveKeys = async () => {
+    // Do not write the empty placeholders back over saved keys while the
+    // SecureStore reads are still in flight.
+    if (!secretsLoaded) return;
     await Promise.all([
       setSecret('deepseek', deepseekKey.trim()),
       setSecret('siliconflow', siliconflowKey.trim()),
@@ -315,8 +320,22 @@ export default function TranslationSettingsScreen() {
         title="翻译引擎"
         subtitle="免费优先，AI 兜底"
         right={
-          <Pressable onPress={saveKeys} hitSlop={8} feedback="opacity">
-            <Text style={{ color: theme.colors.primary, fontSize: 14, fontWeight: '700' }}>保存</Text>
+          <Pressable
+            onPress={saveKeys}
+            disabled={!secretsLoaded}
+            hitSlop={8}
+            feedback="opacity"
+          >
+            <Text
+              style={{
+                color: theme.colors.primary,
+                fontSize: 14,
+                fontWeight: '700',
+                opacity: secretsLoaded ? 1 : 0.45,
+              }}
+            >
+              保存
+            </Text>
           </Pressable>
         }
       />
@@ -393,7 +412,7 @@ export default function TranslationSettingsScreen() {
               />
               <Pressable
                 onPress={test}
-                disabled={testing}
+                disabled={testing || !secretsLoaded}
                 style={{
                   height: 44,
                   borderRadius: RADIUS.control,
@@ -403,7 +422,7 @@ export default function TranslationSettingsScreen() {
                   justifyContent: 'center',
                   flexDirection: 'row',
                   gap: 8,
-                  opacity: testing ? 0.6 : 1,
+                  opacity: testing || !secretsLoaded ? 0.6 : 1,
                 }}
               >
                 {testing ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
@@ -418,7 +437,7 @@ export default function TranslationSettingsScreen() {
         {provider === 'auto' || provider === 'microsoft' || provider === 'google' || provider === 'google2' || provider === 'system' ? (
           <Pressable
             onPress={test}
-            disabled={testing}
+            disabled={testing || !secretsLoaded}
             style={{
               marginTop: 18,
               height: 46,
@@ -431,7 +450,7 @@ export default function TranslationSettingsScreen() {
               justifyContent: 'center',
               flexDirection: 'row',
               gap: 8,
-              opacity: testing ? 0.65 : 1,
+              opacity: testing || !secretsLoaded ? 0.65 : 1,
             }}
           >
             {testing ? <ActivityIndicator size="small" color={theme.colors.primary} /> : <Ionicons name="pulse" size={17} color={theme.colors.primary} />}
