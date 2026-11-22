@@ -137,14 +137,6 @@ export async function translateTexts(
         ['microsoft', 'google', 'google2']
       : [requested];
 
-  if (
-    requested !== 'auto' &&
-    !chain.includes('deepseek') &&
-    !(requested === 'deepseek')
-  ) {
-    // Explicit free provider still gets the deepseek net when enabled.
-  }
-
   const tryList = [...chain];
   if (settings.autoFallbackDeepSeek && !tryList.includes('deepseek')) {
     tryList.push('deepseek');
