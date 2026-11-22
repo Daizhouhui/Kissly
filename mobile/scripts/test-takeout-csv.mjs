@@ -60,4 +60,17 @@ check('a CSV without a Channel ID column is rejected', () => {
   );
 });
 
+check('Kissly’s own export round-trips titles and handles', () => {
+  const subs = parseTakeoutCsv(
+    [
+      'channelId,title,handle,url',
+      'UCaaaaaaaaaaaaaaaaaaaaaa,"Channel A",@A,https://www.youtube.com/@A',
+      'UCbbbbbbbbbbbbbbbbbbbbbb,"Channel B",,https://www.youtube.com/channel/UCbbbbbbbbbbbbbbbbbbbbbb',
+    ].join('\n')
+  );
+  assert.equal(subs[0].title, 'Channel A');
+  assert.equal(subs[0].handle, '@A');
+  assert.equal(subs[1].title, 'Channel B');
+});
+
 console.log(`takeout-csv: ${count} assertions passed`);

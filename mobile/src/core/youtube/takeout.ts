@@ -66,8 +66,12 @@ export function parseTakeoutCsv(content: string): Subscription[] {
   );
   const header = headerIndex >= 0 ? rows[headerIndex] : rows[0];
   const idIndex = header.findIndex((cell) => /channel\s*id/i.test(cell));
-  const titleIndex = header.findIndex((cell) => /channel\s*title/i.test(cell));
-  const urlIndex = header.findIndex((cell) => /channel\s*url/i.test(cell));
+  const titleIndex = header.findIndex((cell) =>
+    /(?:channel\s*title|^title$)/i.test(cell.trim())
+  );
+  const urlIndex = header.findIndex((cell) =>
+    /(?:channel\s*url|^url$)/i.test(cell.trim())
+  );
   const groupIndex = header.findIndex((cell) => /^(?:group|分组)$/i.test(cell.trim()));
   if (idIndex < 0) throw new Error('CSV 里没有找到 Channel ID 列');
 
