@@ -4,6 +4,7 @@ import { loadCached, loadJson, saveCached, saveJson } from '../storage';
 import { Cue, ProviderId } from '../types';
 import { hashString } from '../utils';
 import { aiTranslate, deepseekConfig, openaiConfig, siliconflowConfig } from './ai';
+import { cueCacheKey, titleCacheKey } from './cacheKey';
 import { googleTranslate } from './google';
 import { google2Translate } from './google2';
 import { microsoftTranslate } from './microsoft';
@@ -37,6 +38,8 @@ const TRANSLATE_BATCH_SIZE = 8;
 const memoryTitles = new Map<string, string>();
 let titleCacheLoaded = false;
 let titleCache: Record<string, string> = {};
+/** Keep the permanent title cache bounded so AsyncStorage does not grow forever. */
+const TITLE_CACHE_LIMIT = 3000;
 
 async function ensureTitleCache() {
   if (titleCacheLoaded) return;
@@ -44,8 +47,16 @@ async function ensureTitleCache() {
   titleCache = await loadJson<Record<string, string>>('title-cache', {});
 }
 
-function titleKey(text: string, to: string, provider: ProviderId) {
-  return `${provider}|${to}|${hashString(text)}`;
+function trimTitleCache() {
+  const keys = Object.keys(titleCache);
+  if (keys.length <= TITLE_CACHE_LIMIT) return;
+  for (const key of keys.slice(0, keys.length - TITLE_CACHE_LIMIT)) {
+    delete titleCache[key];
+  }
+  const memoryKeys = Array.from(memoryTitles.keys());
+  for (const key of memoryKeys.slice(0, Math.max(0, memoryKeys.length - TITLE_CACHE_LIMIT))) {
+    memoryTitles.delete(key);
+  }
 }
 
 async function translateWithProvider(
@@ -190,8 +201,7 @@ export async function translateCueList(
 ): Promise<{ cues: Cue[]; provider: ProviderId }> {
   const settings = getSettings();
   const to = options.to ?? settings.targetLang;
-  const providerKey = settings.provider;
-  const cacheKey = `cues:v3:${videoId}:${trackKey}:${to}:${providerKey}`;
+  const cacheKey = cueCacheKey(videoId, trackKey, to, settings);
   const cached = options.ignoreCache
     ? null
     : await loadCached<{ cues: Cue[]; provider: ProviderId }>(
@@ -277,12 +287,11 @@ export async function translateTitles(
   await ensureTitleCache();
   const settings = getSettings();
   const to = options.to ?? settings.targetLang;
-  const providerKey = settings.provider;
   const missing: { index: number; text: string; key: string }[] = [];
   const output = new Array<string>(titles.length);
 
   titles.forEach((text, index) => {
-    const key = titleKey(text, to, providerKey);
+    const key = titleCacheKey(hashString(text), to, settings);
     const hit = memoryTitles.get(key) ?? titleCache[key];
     if (hit) output[index] = hit;
     else missing.push({ index, text, key });
@@ -300,6 +309,7 @@ export async function translateTitles(
     memoryTitles.set(item.key, translated);
     titleCache[item.key] = translated;
   });
+  trimTitleCache();
   await saveJson('title-cache', titleCache);
   return output;
 }

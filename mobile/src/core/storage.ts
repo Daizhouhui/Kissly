@@ -42,7 +42,12 @@ export async function loadCached<T>(
 ): Promise<T | null> {
   const entry = await loadJson<TimedValue<T> | null>(key, null);
   if (!entry || !entry.at) return null;
-  if (Date.now() - entry.at > ttlMs) return null;
+  if (Date.now() - entry.at > ttlMs) {
+    // A stale entry will never be read again. Delete it so captions, feeds and
+    // translations do not accumulate in AsyncStorage forever.
+    void removeKey(key);
+    return null;
+  }
   return entry.value;
 }
 
