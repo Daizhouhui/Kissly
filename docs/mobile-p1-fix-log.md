@@ -2,7 +2,7 @@
 
 分支：`fix/p0-batch`  
 基线：P0 批次最后提交 `4dd7c73c`  
-本轮范围：5 个 P1 问题，全部已单独提交
+本轮范围：首批 5 个 P1 问题 + 后续三批小修复与性能优化，全部已单独提交
 
 ## 总览
 
@@ -254,13 +254,58 @@ tsc --noEmit 通过
 
 ---
 
+## 第二批：稳定性与小功能
+
+| 编号 | 问题 | 提交 | 改动要点 | 验证 |
+| --- | --- | --- | --- | --- |
+| P1-6 | 任一页面渲染异常会直接白屏/闪退 | `086dfc35` | 根布局加 `ErrorBoundary`，显示错误摘要和“重试” | tsc |
+| P1-7 | 句子收藏满 500 条后静默丢最旧一条，仍提示已收藏 | `569810ee` | `toggleSentenceFavorite` 返回 `added/removed/limit`，满额时播放器明确提示 | tsc |
+| P1-8 | “翻译视频标题”开关不生效 | `8a6f6a1e` | feed 同时判断 `translateTitles` 和 `titleTranslationMode`，关闭后不再请求标题翻译 | tsc |
+| P2-1 | 设置页把微软翻译写成“微语” | `d7e80cfc` | 统一为“微软翻译”，与播放器来源标签一致 | tsc |
+
+## 第三批：弱网与长视频性能
+
+| 编号 | 问题 | 提交 | 改动要点 | 验证 |
+| --- | --- | --- | --- | --- |
+| P1-9 | 视频元数据 4 个 innerTube client 串行，弱网要等满 4 次超时 | `9abec5c7` | `racePlayerMetadata()` 并行竞速，先成功者胜出；总超时 15s | tsc |
+| P1-10 | 字幕 7 种格式串行请求，最坏要等 7 次超时 | `9abec5c7` | 7 种字幕格式并行请求，总超时 8s；仍按原优先级选第一条可用轨道 | tsc |
+| P1-11 | 每个播放 tick 线性扫描全部字幕找当前句 | `9e466ba6` | 新增 `cueIndex.ts` 二分查找，1000+ 条字幕从 O(n) 降到 O(log n) | `test-cue-index.mjs` 7 条 |
+| P1-12 | 启动只清理字幕/译文/RSS 中的一部分缓存 | `28699bd6` | 新增 `cacheExpiry.ts`，启动时按前缀统一删除过期项，坏 JSON 和旧格式保留 | `test-cache-expiry.mjs` 5 条 |
+| P1-13 | 视口外每一行字幕都创建 `Animated.Value` 并跑动画 | `6d7d14f6` | `CueFade` 拆成静态包装层 + `CueFadeAnimated`，只有视口内行挂动画 | tsc |
+
+P1-13 说明：这次只去掉离屏行的动画开销，`Text` 本身仍全部挂载；真正的窗口化（只渲染视口附近若干行）尚未做。
+
+## 第四批：导出的时间字段
+
+| 编号 | 问题 | 提交 | 改动要点 | 验证 |
+| --- | --- | --- | --- | --- |
+| P2-2 | 历史 CSV 只有 `savedAt`，会把“很久以前第一次打开”误当成最近观看 | `1e3df4c5` | 增加 `lastWatchedAt` 列，导出 `item.lastWatchedAt ?? item.savedAt` | tsc |
+
+## 全量回归
+
+```text
+watch-progress 16
+settings-sync 12
+system-language 5
+translation-cache-key 7
+youtube-login-probe-path 4
+subscription-sync 7
+transcript-scroll 4
+cache-expiry 5
+cue-index 7
+合计 67 条断言通过
+npm run typecheck 通过
+```
+
 ## 仍未处理
 
-- **P0-7 发布签名**：Android release 仍使用 debug keystore，CI 每次签名可能不同，覆盖安装可能失败。需要用户决定固定 release keystore + GitHub Secrets，或接受升级必须卸载。
-- **P1 请求串行超时**：`getVideoMeta` 4 个 client 串行、`fetchCaptionCues` 7 个格式串行，弱网下仍可能很久。下一步建议并行竞速 + 总超时。
-- **P1 长视频渲染**：`player.tsx` 仍是单文件大组件，1000+ 条字幕全部挂载，逐帧 `setCurrent` 触发全量重渲染。需要字幕窗口化和二分查找。
-- **P1 句子收藏 500 条静默截断**：超出后丢最旧，仍提示“已收藏”。可以加“收藏已满”提示或改成显式上限。
-- **P2 文案/显示不一致**：例如“微软翻译/微语”等，属于低风险清理。
+- **P0-7 发布签名**：Android release 仍使用 debug keystore，CI 每次签名可能不同，覆盖安装可能失败。需要用户决定固定 release keystore + GitHub Secrets，或接受升级必须卸载。按用户要求，未自动构建/发布 Release。
+- **长视频真正的窗口化**：当前只做了当前句二分查找、离屏行动画静态化、请求并行和缓存清理；1000～2000 条字幕的 `Text` 仍全部挂载，逐帧 `setCurrent` 仍会让整个播放器组件重渲染。要进一步优化需要把字幕列表拆成独立 memo 组件并按视口窗口渲染，属于结构性改动，建议单独一轮做并配真机性能对比。
+- **iOS 系统翻译的未知语言回退**：JS 层已不再传 `auto`，但 `SystemTranslateModule.swift` 的 `normalizeLanguage` 仍会把空值/`auto` 回退成英语；未知语言在 iOS 上仍可能落到英语。Windows 环境无法编译 iOS，暂不改。
+- **历史 120 条上限**：`recordHistory` 仍用 `.slice(0, 120)` 静默截断，属于产品容量选择；如需保留更多历史，需要同时评估 AsyncStorage 体积和历史页加载性能。
+- **死代码/半成品**：`fetchTranslatedCaptionCues`、`clearChannelVideoCache`、`updateSubscription`、`setSubscriptions`、`PlayerPayload`、`originalTiming`、播客 Tab 的音频模式、订阅分组 UI、语速/音调仅试听生效、`interfaceLang` 仅展示。这些不是当前可复现 bug，未在本轮删除或补全。
+- **CI 只构建 arm64-v8a**，不覆盖 32 位设备；本地 `mobile/android` 是旧生成物，versionCode/versionName 低于 `app.json`，直接本地打包会版本降级。
+- **GitHub Actions 尚未实际运行**：`fix/p0-batch` 的 push 不会自动触发工作流，需要到 Actions 页面手动选分支、选 `android` 运行一次。
 
 ## 本轮提交
 
@@ -270,4 +315,13 @@ tsc --noEmit 通过
 d5286f91 fix(sync): encode WebDAV paths and apply 412 merge results
 5cc92f9a ci: run typecheck and unit tests before building
 941b7109 fix(player): honor subtitle position, background and transcript settings
+086dfc35 fix(app): add a root error boundary with retry
+569810ee fix(favorites): stop silently evicting the oldest saved sentence
+8a6f6a1e fix(feed): wire the title translation switch to the feed
+d7e80cfc fix(copy): label Microsoft translation correctly
+9abec5c7 perf(youtube): race player clients and caption formats in parallel
+9e466ba6 perf(player): binary search the active subtitle cue
+28699bd6 fix(cache): prune expired caption and feed caches on startup
+6d7d14f6 perf(player): keep off-screen subtitle rows static
+1e3df4c5 fix(export): include the last watched time in history csv
 ```
