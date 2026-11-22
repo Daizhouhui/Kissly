@@ -14,8 +14,15 @@ import java.util.concurrent.TimeUnit
 class SystemTranslateModule : Module() {
   private fun normalizeLanguage(tag: String): String {
     val normalized = tag.trim().lowercase().replace('_', '-')
-    if (normalized.isEmpty() || normalized == "auto") return TranslateLanguage.ENGLISH
-    return TranslateLanguage.fromLanguageTag(normalized) ?: TranslateLanguage.ENGLISH
+    if (normalized.isEmpty() || normalized == "auto") {
+      throw IllegalArgumentException(
+        "系统翻译需要明确的源语言，不能使用 auto。请改用 Microsoft、Google 或 DeepSeek。"
+      )
+    }
+    // Never fall back to English: that silently translates Japanese or Korean
+    // captions with an English model and produces garbage.
+    return TranslateLanguage.fromLanguageTag(normalized)
+      ?: throw IllegalArgumentException("系统翻译不支持语言：$tag")
   }
 
   private fun translatorFor(from: String, to: String): Translator {

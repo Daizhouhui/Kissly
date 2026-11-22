@@ -3,6 +3,8 @@ import {
   prepareSystemTranslation,
   systemTranslate,
 } from '../../../modules/kissly-system-translate';
+import { getSettings } from '../store';
+import { resolveSystemSource } from './language';
 
 export { isSystemTranslationAvailable };
 
@@ -14,11 +16,13 @@ export async function systemTranslateTexts(
   _timeoutMs: number
 ): Promise<string[]> {
   if (!texts.length) return [];
-  const source = from === 'auto' ? 'en' : from;
+  const settings = getSettings();
+  const source = resolveSystemSource(from, settings.learningLang);
   return systemTranslate(texts, source, to);
 }
 
 export async function prepareSystemLanguagePack(from: string, to: string) {
-  const source = from === 'auto' ? 'en' : from;
+  const settings = getSettings();
+  const source = resolveSystemSource(from, settings.learningLang);
   await prepareSystemTranslation(source, to);
 }
