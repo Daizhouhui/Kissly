@@ -47,6 +47,7 @@ import {
 } from '@/src/core/youtube/captionCache';
 import { parseCaptionText } from '@/src/core/youtube/parse';
 import { fontWeightFor, fontFamilyFor, sentenceCues } from '@/src/ui/subtitleStyle';
+import { pageScrollTarget, shouldPageJump } from '@/src/ui/transcriptScroll';
 import { appAlert as Alert } from '@/src/ui/app-alert';
 import { AppPressable, AppPressableProps } from '@/src/ui/app-pressable';
 import { RipplePressable } from '@/src/ui/ripple-pressable';
@@ -1224,6 +1225,10 @@ export default function PlayerScreen() {
   const hideVideo = settings.subtitle.hideVideo;
   const hideTitle = settings.subtitle.hideTitle ?? true;
   const scrollMode = settings.subtitle.scrollMode;
+  const showOnVideo = settings.subtitle.showOnVideo ?? true;
+  const transcriptVisible = settings.subtitle.transcript ?? true;
+  const subtitlePosition = settings.subtitle.position ?? 'bottom';
+  const subtitleBackground = settings.subtitle.backgroundOpacity ?? 0.55;
   const learningLang = settings.learningLang;
   const originalFont = fontFamilyFor(settings.subtitle.originalFont, 'source');
   const translationFont = fontFamilyFor(settings.subtitle.translationFont, 'translation');
@@ -1716,6 +1721,20 @@ export default function PlayerScreen() {
     if (!followingTranscriptRef.current) return false;
     const y = cueOffsets.current[activeIndex];
     if (typeof y !== 'number') return false;
+    if (scrollMode === 'page') {
+      const height = transcriptHeightRef.current;
+      const nextY = cueOffsets.current[activeIndex + 1] ?? y + 80;
+      if (
+        !shouldPageJump(y, nextY, transcriptScrollRef.current, height)
+      ) {
+        return false;
+      }
+      scrollRef.current?.scrollTo({
+        y: pageScrollTarget(y),
+        animated,
+      });
+      return true;
+    }
     scrollRef.current?.scrollTo({ y, animated });
     return true;
   };
@@ -3065,13 +3084,21 @@ export default function PlayerScreen() {
         </>
       ) : null}
 
-      {activeCue ? (
+      {showOnVideo && activeCue ? (
         <View
           style={[
             styles.landSubWrap,
-            {
-              bottom: controlsVisible ? Math.max(28, insets.bottom + 18) : Math.max(20, insets.bottom + 12),
-            },
+            subtitlePosition === 'top'
+              ? {
+                  top: controlsVisible
+                    ? Math.max(56, insets.top + 44)
+                    : Math.max(18, insets.top + 12),
+                }
+              : {
+                  bottom: controlsVisible
+                    ? Math.max(28, insets.bottom + 18)
+                    : Math.max(20, insets.bottom + 12),
+                },
           ]}
           pointerEvents="none"
         >
@@ -3079,9 +3106,10 @@ export default function PlayerScreen() {
             style={[
               styles.landSubBox,
               {
-                backgroundColor: controlsVisible
-                  ? 'rgba(16,13,24,0.6)'
-                  : 'rgba(0,0,0,0.28)',
+                backgroundColor:
+                  subtitleBackground > 0
+                    ? `rgba(16,13,24,${subtitleBackground})`
+                    : 'transparent',
               },
             ]}
           >
@@ -3249,12 +3277,11 @@ export default function PlayerScreen() {
                     );
                   }
                   if (index === activeIndex && followingTranscriptRef.current) {
-                    const y = event.nativeEvent.layout.y;
                     const animated = transcriptInitializedRef.current;
                     transcriptInitializedRef.current = true;
                     requestAnimationFrame(() => {
                       if (followingTranscriptRef.current) {
-                        scrollRef.current?.scrollTo({ y, animated });
+                        scrollTranscriptToActive(animated);
                       }
                     });
                   }
@@ -3766,7 +3793,7 @@ export default function PlayerScreen() {
                   </View>
                 </View>
               ) : null}
-              {transcript}
+              {transcriptVisible ? transcript : null}
             </>
           )}
           {controls}
