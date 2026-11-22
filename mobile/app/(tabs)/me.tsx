@@ -253,7 +253,7 @@ export default function MeScreen() {
           <MeRow
             icon="globe-outline"
             title="语言设置"
-            value={`English · ${targetLabel(settings.targetLang)}`}
+            value={`${targetLabel(settings.learningLang)} · ${targetLabel(settings.targetLang)}`}
             onPress={() => router.push('/settings/language' as any)}
           />
           <MeRow

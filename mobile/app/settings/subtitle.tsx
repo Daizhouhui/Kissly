@@ -13,8 +13,8 @@ const Pressable = AppPressable;
 
 const MODES: { value: SubtitleMode; label: string; hint: string }[] = [
   { value: 'bilingual', label: '双语', hint: '原文 + 译文' },
-  { value: 'original', label: '仅原文', hint: '只看英文' },
-  { value: 'translation', label: '仅译文', hint: '只看中文' },
+  { value: 'original', label: '仅原文', hint: '只看原文' },
+  { value: 'translation', label: '仅译文', hint: '只看译文' },
 ];
 
 export default function SubtitleSettingsScreen() {
