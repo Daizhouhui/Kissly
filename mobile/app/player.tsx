@@ -1671,6 +1671,17 @@ export default function PlayerScreen() {
     initialTitle,
     learningLang,
     captionReloadToken,
+    // The player opens settings on top of itself. When the user changes the
+    // engine, model or target language and comes back, retranslate instead of
+    // leaving the old provider's subtitles on screen.
+    settings.provider,
+    settings.targetLang,
+    settings.autoFallbackDeepSeek,
+    settings.deepseekModel,
+    settings.siliconflowModel,
+    settings.openaiBaseUrl,
+    settings.openaiModel,
+    settings.requestTimeoutMs,
   ]);
 
   useEffect(() => {
