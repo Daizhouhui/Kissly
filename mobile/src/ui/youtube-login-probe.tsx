@@ -4,6 +4,7 @@ import { AppState, Platform, StyleSheet, View } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 
 import { useAppStore } from '../core/store';
+import { isAllowedYoutubeProbeUrl } from './youtube-login-probe-url';
 import { shouldProbeYoutubeLogin } from './youtube-login-probe-path';
 
 const LOGIN_PROBE_URL = 'https://m.youtube.com/feed/channels?hl=zh-CN';
@@ -119,14 +120,7 @@ export function YoutubeLoginProbe({ enabled }: { enabled: boolean }) {
         }}
         onMessage={onMessage}
         onShouldStartLoadWithRequest={(request: any) => {
-          const url = String(request.url || '');
-          return (
-            url.startsWith('about:') ||
-            url.includes('youtube.com') ||
-            url.includes('google.com') ||
-            url.includes('gstatic.com') ||
-            url.includes('googleusercontent.com')
-          );
+          return isAllowedYoutubeProbeUrl(String(request.url || ''));
         }}
         injectedJavaScript={LOGIN_CHECK_SCRIPT}
       />
