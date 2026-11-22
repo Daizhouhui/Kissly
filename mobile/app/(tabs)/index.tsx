@@ -20,6 +20,7 @@ import { useAppStore } from '../../src/core/store';
 import { DiscoverLayout, VideoItem } from '../../src/core/types';
 import { relativeTime } from '../../src/core/utils';
 import {
+  inContinueWatching,
   remainingSeconds,
   resumeTarget,
   watchedFraction,
@@ -99,12 +100,12 @@ export default function HomeScreen() {
     useFeed(channelFilter);
 
   const progressMap = useMemo(
-    () => new Map(history.map((item) => [item.videoId, item.progress ?? 0])),
+    () => new Map(history.map((item) => [item.videoId, watchedFraction(item)])),
     [history]
   );
 
   const watching = useMemo(
-    () => history.filter((item) => (item.progress ?? 0) > 0.02 && (item.progress ?? 0) < 0.92),
+    () => history.filter(inContinueWatching),
     [history]
   );
 

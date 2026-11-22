@@ -76,6 +76,20 @@ export function watchedFraction(
   return Math.max(0, Math.min(1, resumeAtOf(item) / duration));
 }
 
+/**
+ * Whether the feed should offer this video in "continue watching".
+ *
+ * Eligibility must follow the current resume point, not the furthest progress:
+ * after rewinding a nearly finished video, `progress` can stay above 92% while
+ * the user is actually back near the beginning and wants to continue.
+ */
+export function inContinueWatching(
+  item: Pick<HistoryItem, 'progress' | 'resumeAt' | 'duration'>
+): boolean {
+  const fraction = watchedFraction(item);
+  return fraction > 0.02 && fraction < 0.92;
+}
+
 /** Remaining minutes for the continue card; null when duration is unknown. */
 export function remainingSeconds(
   item: Pick<HistoryItem, 'progress' | 'resumeAt' | 'duration'>

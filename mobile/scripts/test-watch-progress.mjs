@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 
 import {
+  inContinueWatching,
   mergeHistoryEntry,
   parseStartAt,
   remainingSeconds,
@@ -45,6 +46,21 @@ assert.equal(watchedFraction({ progress: 0.5, duration: undefined }), 0.5);
 assert.equal(watchedFraction({ progress: 0.9, resumeAt: 120, duration: 1_200 }), 0.1);
 assert.equal(remainingSeconds({ progress: 0.9, resumeAt: 120, duration: 1_200 }), 1_080);
 
+// "Continue watching" follows the current resume point too: a video once
+// watched to 95% but rewound to 10% must still be offered.
+assert.equal(
+  inContinueWatching({ progress: 0.95, resumeAt: 120, duration: 1_200 }),
+  true
+);
+assert.equal(
+  inContinueWatching({ progress: 1, resumeAt: 1_200, duration: 1_200 }),
+  false
+);
+assert.equal(
+  inContinueWatching({ progress: 0, resumeAt: 0, duration: 1_200 }),
+  false
+);
+
 // Resume target: never land in the last three seconds.
 assert.equal(resumeTarget({ progress: 0.99, resumeAt: 1_198, duration: 1_200 }), 0);
 assert.equal(resumeTarget({ progress: 0.5, resumeAt: 600, duration: 1_200 }), 600);
@@ -58,4 +74,4 @@ assert.equal(parseStartAt('0'), 0);
 assert.equal(parseStartAt('abc'), 0);
 assert.equal(parseStartAt('-5'), 0);
 
-console.log('watch-progress: 16 assertions passed');
+console.log('watch-progress: 19 assertions passed');
