@@ -123,7 +123,7 @@ function Group({ children, first }: { children: ReactNode; first?: boolean }) {
 function providerLabel(provider: string) {
   const labels: Record<string, string> = {
     auto: '自动 · 免费优先',
-    microsoft: '微语',
+    microsoft: '微软翻译',
     google: 'Google',
     google2: 'Google 备用',
     deepseek: 'DeepSeek',
