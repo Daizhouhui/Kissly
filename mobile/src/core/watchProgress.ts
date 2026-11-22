@@ -85,6 +85,15 @@ export function remainingSeconds(
   return Math.max(0, duration - resumeAtOf(item));
 }
 
+ /**
+ * Route params arrive as strings. Anything not a usable second value becomes 0.
+ */
+export function parseStartAt(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 1) return 0;
+  return parsed;
+}
+
 /**
  * Start position to hand to the player.
  * Avoid resuming in the last three seconds, which would land on the end screen.

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import {
   mergeHistoryEntry,
+  parseStartAt,
   remainingSeconds,
   resumeAtOf,
   resumeTarget,
@@ -51,4 +52,10 @@ assert.equal(resumeTarget({ progress: 0.5, resumeAt: 600, duration: 1_200 }), 60
 // Missing duration falls back to the stored fraction for geometry.
 assert.equal(resumeAtOf({ progress: 0.5, duration: undefined }), 0);
 
-console.log('watch-progress: 12 assertions passed');
+// Route params are strings; only a usable second value survives.
+assert.equal(parseStartAt('120'), 120);
+assert.equal(parseStartAt('0'), 0);
+assert.equal(parseStartAt('abc'), 0);
+assert.equal(parseStartAt('-5'), 0);
+
+console.log('watch-progress: 16 assertions passed');

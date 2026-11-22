@@ -109,6 +109,7 @@ export default function HomeScreen() {
   );
 
   const continueItem = watching[0];
+  const continueResume = continueItem ? resumeTarget(continueItem) : 0;
   const continueFraction = continueItem ? watchedFraction(continueItem) : 0;
   const continueRemaining = continueItem ? remainingSeconds(continueItem) : null;
 
@@ -304,7 +305,12 @@ export default function HomeScreen() {
           onPress={() =>
             router.push({
               pathname: '/player',
-              params: { videoId: continueItem.videoId, title: continueItem.title, author: continueItem.author },            } as any)
+              params: {
+                videoId: continueItem.videoId,
+                title: continueItem.title,
+                author: continueItem.author,
+                ...(continueResume > 0 ? { startAt: String(continueResume) } : {}),
+              },            } as any)
           }
           feedback="ripple"
           radius={RADIUS.card}

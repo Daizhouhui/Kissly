@@ -33,6 +33,7 @@ import {
 import { providerDisplayName, translateCueList } from '@/src/core/translate';
 import { removeKeysByPrefix } from '@/src/core/storage';
 import { CaptionTrack, Cue, SubtitleMode } from '@/src/core/types';
+import { parseStartAt } from '@/src/core/watchProgress';
 import {
   captionQualityScore,
   fetchCaptionCues,
@@ -156,11 +157,12 @@ max-width:none!important;max-height:none!important;min-height:0!important;paddin
 video{object-fit:contain!important;background:#000!important;}
 `;
 
-function playerBridgeScript() {
+function playerBridgeScript(startAt = 0) {
   return `
 (function(){
   try {
     var previous = window.__kissBridge;
+    var requestedStart = ${JSON.stringify(Math.max(0, Number(startAt) || 0))};
     if (previous) previous.alive = false;
     if (previous && previous.timer) clearInterval(previous.timer);
     if (previous && previous.cssTimer) clearInterval(previous.cssTimer);
@@ -176,7 +178,13 @@ function playerBridgeScript() {
       cssTimer: null,
       qualityTimer: null,
       startTimer: null,
-      videoRef: null
+      videoRef: null,
+      startAt: requestedStart,
+      startApplied:
+        requestedStart <= 0 ||
+        (previous &&
+          previous.startAt === requestedStart &&
+          !!previous.startApplied)
     };
     function injectCss(){
       try {
@@ -290,6 +298,20 @@ function playerBridgeScript() {
       bridge.frameReady = true;
       send({ type: 'ready' });
     }
+    function applyStart(v){
+      if (bridge.startApplied) return;
+      if (!v || v.readyState < 1) return;
+      var duration = Number(v.duration) || 0;
+      var target = Math.max(0, Number(bridge.startAt) || 0);
+      if (duration > 0) target = Math.min(target, Math.max(0, duration - 1));
+      try {
+        if (Math.abs((Number(v.currentTime) || 0) - target) > 0.5) {
+          v.currentTime = target;
+        }
+        bridge.startApplied = true;
+        report();
+      } catch(e) {}
+    }
     function maybeStart(v){
       // Never let YouTube autoplay before the first video frame is available.
       // Audio and subtitles must not run ahead of the visible picture.
@@ -322,6 +344,7 @@ function playerBridgeScript() {
         clearTimeout(bridge.startTimer);
         bridge.startTimer = null;
       }
+      applyStart(v);
       if (v.paused || v.ended) {
         try {
           var result = v.play();
@@ -356,6 +379,7 @@ function playerBridgeScript() {
         if (bindTries < 14) setTimeout(bind, 700);
         return;
       }
+      applyStart(v);
       if (bridge.videoRef !== v) {
         bridge.videoRef = v;
         bridge.frameReady = false;
@@ -1083,10 +1107,20 @@ function sentenceFavoriteId(videoId: string, start: number) {
 }
 
 export default function PlayerScreen() {
-  const params = useLocalSearchParams<{ videoId?: string; title?: string; author?: string }>();
+  const params = useLocalSearchParams<{
+    videoId?: string;
+    title?: string;
+    author?: string;
+    startAt?: string;
+  }>();
   const videoId = String(params.videoId ?? '');
   const initialTitle = String(params.title ?? '');
   const initialAuthor = String(params.author ?? '');
+  const initialStartAt = useMemo(
+    () => parseStartAt(params.startAt),
+    [params.startAt]
+  );
+  const startAtRef = useRef(initialStartAt);
   const insets = useSafeAreaInsets();
   const theme = useAppTheme();
   const windowSize = useWindowDimensions();
@@ -1681,6 +1715,21 @@ export default function PlayerScreen() {
     if (!playing) persistProgressRef.current();
   }, [playing]);
 
+  // Safety net for builds where setting currentTime before the first frame is
+  // ignored: after ready, if playback still sits near 0, seek once.
+  useEffect(() => {
+    if (!ready || !initialStartAt) return;
+    const timer = setTimeout(() => {
+      const state = progressRef.current;
+      if (state.ad) return;
+      if (state.current >= initialStartAt - 2) return;
+      webRef.current?.injectJavaScript(
+        `window.__kiss && window.__kiss.seek(${initialStartAt}); true;`
+      );
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [ready, initialStartAt]);
+
   useEffect(() => {
     followingTranscriptRef.current = true;
     setFollowingTranscript(true);
@@ -2159,6 +2208,7 @@ export default function PlayerScreen() {
     setAdShowing(false);
     setPlaying(false);
     setCurrent(0);
+    startAtRef.current = Math.max(0, progressRef.current.current);
     setVideoLoading(true);
     armVideoLoadingFallback();
     webRef.current?.reload();
@@ -2539,7 +2589,7 @@ export default function PlayerScreen() {
           sharedCookiesEnabled
           thirdPartyCookiesEnabled
           userAgent={WATCH_UA}
-          injectedJavaScript={playerBridgeScript()}
+          injectedJavaScript={playerBridgeScript(startAtRef.current)}
           onMessage={handleMessage}
           onLoadStart={() => {
             webReadyRef.current = false;
@@ -2548,7 +2598,7 @@ export default function PlayerScreen() {
             armVideoLoadingFallback();
           }}
           onLoadEnd={() => {
-            send(playerBridgeScript());
+            send(playerBridgeScript(startAtRef.current));
             armVideoLoadingFallback();
           }}
           onError={() => {

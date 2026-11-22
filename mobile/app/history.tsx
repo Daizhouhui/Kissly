@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../src/core/store';
 import { relativeTime } from '../src/core/utils';
+import { resumeTarget } from '../src/core/watchProgress';
 import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
 import { appAlert as Alert } from '../src/ui/app-alert';
 import { AppPressable } from '../src/ui/app-pressable';
@@ -128,9 +129,15 @@ export default function HistoryScreen() {
                     toggleSelection(item.videoId);
                     return;
                   }
+                  const startAt = resumeTarget(item);
                   router.push({
                     pathname: '/player',
-                    params: { videoId: item.videoId, title: item.title, author: item.author },
+                    params: {
+                      videoId: item.videoId,
+                      title: item.title,
+                      author: item.author,
+                      ...(startAt > 0 ? { startAt: String(startAt) } : {}),
+                    },
                   } as any);
                 }}
                 style={styles.row}
