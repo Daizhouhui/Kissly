@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../src/core/store';
 import { VideoItem } from '../src/core/types';
+import { resumeTarget } from '../src/core/watchProgress';
 import { fetchChannelDescription } from '../src/core/youtube/channel';
 import {
   ChannelPlaylist,
@@ -56,9 +57,14 @@ export default function ChannelScreen() {
   const subscribers = String(params.subscribers ?? '');
   const videos = String(params.videos ?? '');
   const subscriptions = useAppStore((state) => state.subscriptions);
+  const history = useAppStore((state) => state.history);
   const addSubscription = useAppStore((state) => state.addSubscription);
   const removeSubscription = useAppStore((state) => state.removeSubscription);
   const subscribed = subscriptions.some((sub) => sub.channelId === channelId);
+  const savedById = useMemo(
+    () => new Map(history.map((item) => [item.videoId, item])),
+    [history]
+  );
 
   const [items, setItems] = useState<VideoItem[]>([]);
   const [visible, setVisible] = useState(PAGE);
@@ -194,6 +200,20 @@ export default function ChannelScreen() {
     }
   };
 
+  const openVideo = (item: VideoItem) => {
+    const saved = savedById.get(item.videoId);
+    const startAt = saved ? resumeTarget(saved) : 0;
+    router.push({
+      pathname: '/player',
+      params: {
+        videoId: item.videoId,
+        title: item.title,
+        author: title,
+        ...(startAt > 0 ? { startAt: String(startAt) } : {}),
+      },
+    } as any);
+  };
+
   const latestItems = [...items].sort((a, b) => b.published - a.published);
   const popularItems = [...items].sort(
     (a, b) => (b.viewCount ?? 0) - (a.viewCount ?? 0) || b.published - a.published
@@ -268,10 +288,7 @@ export default function ChannelScreen() {
             onPress={() => {
               const first = latestItems[0];
               if (!first) return;
-              router.push({
-                pathname: '/player',
-                params: { videoId: first.videoId, title: first.title, author: title },
-              } as any);
+              openVideo(first);
             }}
             disabled={!latestItems[0]}
             tone="onColor"
@@ -398,12 +415,7 @@ export default function ChannelScreen() {
         renderItem={({ item }) => (
           <VideoCard
             item={{ ...item, channelAvatar: avatar || item.channelAvatar }}
-            onPress={() =>
-              router.push({
-                pathname: '/player',
-                params: { videoId: item.videoId, title: item.title, author: title },
-              } as any)
-            }
+            onPress={() => openVideo(item)}
           />
         )}
         onEndReached={tab === 'latest' ? loadMore : undefined}
@@ -484,10 +496,7 @@ export default function ChannelScreen() {
                     item={{ ...item, channelAvatar: avatar || item.channelAvatar }}
                     onPress={() => {
                       setSelectedPlaylist(null);
-                      router.push({
-                        pathname: '/player',
-                        params: { videoId: item.videoId, title: item.title, author: title },
-                      } as any);
+                      openVideo(item);
                     }}
                   />
                 ))
