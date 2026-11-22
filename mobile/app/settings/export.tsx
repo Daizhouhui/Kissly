@@ -77,7 +77,15 @@ export default function ExportScreen() {
 
   const exportHistory = async () => {
     const rows = [
-      ['videoId', 'title', 'author', 'progress', 'duration', 'savedAt'],
+      [
+        'videoId',
+        'title',
+        'author',
+        'progress',
+        'duration',
+        'savedAt',
+        'lastWatchedAt',
+      ],
       ...history.map((item) => [
         item.videoId,
         item.title,
@@ -85,6 +93,7 @@ export default function ExportScreen() {
         item.progress ?? 0,
         item.duration ?? 0,
         new Date(item.savedAt).toISOString(),
+        new Date(item.lastWatchedAt ?? item.savedAt).toISOString(),
       ]),
     ];
     await shareText(
