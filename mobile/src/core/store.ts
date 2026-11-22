@@ -3,7 +3,8 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 import { DEFAULT_SETTINGS } from './defaults';
-import { FavoriteItem, SentenceFavorite, Settings, Subscription } from './types';
+import { HistoryItem, FavoriteItem, SentenceFavorite, Settings, Subscription } from './types';
+import { HistoryPatch, mergeHistoryEntry } from './watchProgress';
 
 type DeepPartial<T> = {
   [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K];
@@ -56,7 +57,7 @@ type AppState = {
   subscriptionOrderUpdatedAt: number;
   favorites: FavoriteItem[];
   sentenceFavorites: SentenceFavorite[];
-  history: FavoriteItem[];
+  history: HistoryItem[];
   lastSyncAt: number;
   syncState: SyncState;
   syncMessage: string;
@@ -83,7 +84,7 @@ type AppState = {
   toggleSentenceFavorite: (item: SentenceFavorite) => boolean;
   removeSentenceFavorite: (id: string) => void;
   removeSentenceFavorites: (ids: string[]) => void;
-  recordHistory: (item: FavoriteItem) => void;
+  recordHistory: (item: HistoryPatch) => void;
   removeHistory: (videoIds: string[]) => void;
   clearHistory: () => void;
   setSync: (state: SyncState, message?: string, at?: number) => void;
@@ -241,8 +242,14 @@ export const useAppStore = create<AppState>()(
       },
       recordHistory: (item) =>
         set((state) => {
-          const others = state.history.filter((entry) => entry.videoId !== item.videoId);
-          return { history: [item, ...others].slice(0, 120) };
+          const previous = state.history.find(
+            (entry) => entry.videoId === item.videoId
+          );
+          const merged = mergeHistoryEntry(previous, item, Date.now());
+          const others = state.history.filter(
+            (entry) => entry.videoId !== item.videoId
+          );
+          return { history: [merged, ...others].slice(0, 120) };
         }),
       removeHistory: (videoIds) => {
         const targets = new Set(videoIds);

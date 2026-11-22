@@ -149,7 +149,7 @@ export default function HistoryScreen() {
                     {item.author || 'YouTube'}
                   </Text>
                   <Text style={{ color: theme.colors.textTertiary, fontSize: 10.5, marginTop: 4 }}>
-                    打开于 {relativeTime(item.savedAt)}
+                    最近观看 {relativeTime(item.lastWatchedAt ?? item.savedAt)}
                   </Text>
                 </View>
                 {manage ? (

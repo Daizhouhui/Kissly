@@ -19,6 +19,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppStore } from '../../src/core/store';
 import { DiscoverLayout, VideoItem } from '../../src/core/types';
 import { relativeTime } from '../../src/core/utils';
+import {
+  remainingSeconds,
+  resumeTarget,
+  watchedFraction,
+} from '../../src/core/watchProgress';
 import { useFeed } from '../../src/hooks/useFeed';
 import { CONTINUOUS_CORNER, innerRadius, RADIUS } from '../../src/tokens';
 import { AppPressable } from '../../src/ui/app-pressable';
@@ -104,6 +109,8 @@ export default function HomeScreen() {
   );
 
   const continueItem = watching[0];
+  const continueFraction = continueItem ? watchedFraction(continueItem) : 0;
+  const continueRemaining = continueItem ? remainingSeconds(continueItem) : null;
 
   const visible = useMemo(() => {
     return items.filter((item) => {
@@ -297,8 +304,7 @@ export default function HomeScreen() {
           onPress={() =>
             router.push({
               pathname: '/player',
-              params: { videoId: continueItem.videoId, title: continueItem.title, author: continueItem.author },
-            } as any)
+              params: { videoId: continueItem.videoId, title: continueItem.title, author: continueItem.author },            } as any)
           }
           feedback="ripple"
           radius={RADIUS.card}
@@ -338,7 +344,7 @@ export default function HomeScreen() {
               <View style={{ width: 48, height: 3, borderRadius: RADIUS.pill, backgroundColor: theme.colors.borderStrong }}>
                 <View
                   style={{
-                    width: `${Math.max(6, Math.round((continueItem.progress ?? 0) * 100))}%` as any,
+                    width: `${Math.max(6, Math.round(continueFraction * 100))}%` as any,
                     height: 3,
                     borderRadius: RADIUS.pill,
                     backgroundColor: theme.colors.primary,
@@ -346,7 +352,9 @@ export default function HomeScreen() {
                 />
               </View>
               <Text style={{ color: theme.colors.textSecondary, fontSize: 9.5 }}>
-                剩 {Math.max(1, Math.round(((1 - (continueItem.progress ?? 0)) * (continueItem.duration ?? 0)) / 60))} 分钟
+                {continueRemaining == null
+                  ? '继续观看'
+                  : `剩 ${Math.max(1, Math.round(continueRemaining / 60))} 分钟`}
               </Text>
             </View>
           </View>

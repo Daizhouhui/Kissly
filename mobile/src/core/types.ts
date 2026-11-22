@@ -186,6 +186,22 @@ export type FavoriteItem = {
   duration?: number;
 };
 
+export type HistoryItem = {
+  videoId: string;
+  title: string;
+  author: string;
+  thumbnail?: string;
+  /** First time this video entered history; never rewritten. */
+  savedAt: number;
+  /** Last time progress was accepted; drives "最近观看". */
+  lastWatchedAt: number;
+  /** Furthest watched fraction, monotonic. */
+  progress: number;
+  /** Last playback position in seconds. */
+  resumeAt?: number;
+  duration?: number;
+};
+
 export type SentenceFavorite = {
   /** Stable per video + cue start time. */
   id: string;

@@ -1101,8 +1101,13 @@ export default function PlayerScreen() {
   const webRef = useRef<any>(null);
   const scrollRef = useRef<any>(null);
   const cueOffsets = useRef<Record<number, number>>({});
-  const recordedRef = useRef(false);
-  const progressRef = useRef({ current: 0, duration: 0 });
+  const progressRef = useRef({
+    current: 0,
+    duration: 0,
+    ad: false,
+    lastDuration: 0,
+  });
+  const persistProgressRef = useRef<() => void>(() => {});
   const webReadyRef = useRef(false);
   const webCaptionRequestRef = useRef<{
     resolve: (cues: Cue[]) => void;
@@ -1639,20 +1644,32 @@ export default function PlayerScreen() {
     if (!videoId) return;
     const persist = () => {
       const state = progressRef.current;
-      if (!state.duration) return;
-      const previous = useAppStore
-        .getState()
-        .history.find((entry) => entry.videoId === videoId);
+      if (!state.duration || state.ad) return;
+      // Do not create/reset an entry before playback actually moved. This is
+      // what used to wipe the previous resume point on a quick peek.
+      if (state.current < 1) return;
+      const durationChanged =
+        state.lastDuration > 0 &&
+        Math.abs(state.duration - state.lastDuration) / state.duration > 0.2;
+      if (durationChanged) {
+        // Ads and quality switches temporarily change the element duration.
+        // Skip one sample instead of recording a bogus fraction.
+        state.lastDuration = state.duration;
+        return;
+      }
+      state.lastDuration = state.duration;
       recordHistory({
         videoId,
         title: metaTitle || initialTitle || videoId,
         author: metaAuthor || initialAuthor,
         thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-        savedAt: previous?.savedAt ?? Date.now(),
         progress: Math.max(0, Math.min(1, state.current / state.duration)),
+        resumeAt: state.current,
         duration: state.duration,
+        lastWatchedAt: Date.now(),
       });
     };
+    persistProgressRef.current = persist;
     const timer = setInterval(persist, 15000);
     return () => {
       clearInterval(timer);
@@ -1661,18 +1678,8 @@ export default function PlayerScreen() {
   }, [videoId, metaTitle, metaAuthor, initialAuthor, initialTitle, recordHistory]);
 
   useEffect(() => {
-    if (recordedRef.current) return;
-    recordedRef.current = true;
-    const thumb = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-    recordHistory({
-      videoId,
-      title: metaTitle || initialTitle || videoId,
-      author: metaAuthor || initialAuthor,
-      thumbnail: thumb,
-      savedAt: Date.now(),
-      progress: 0,
-    });
-  }, [videoId, metaTitle, metaAuthor, initialAuthor, initialTitle, recordHistory]);
+    if (!playing) persistProgressRef.current();
+  }, [playing]);
 
   useEffect(() => {
     followingTranscriptRef.current = true;
@@ -2130,7 +2137,10 @@ export default function PlayerScreen() {
         setDuration(message.duration);
       }
       if (typeof message.playing === 'boolean') setPlaying(message.playing);
-      if (typeof message.ad === 'boolean') setAdShowing(message.ad);
+      if (typeof message.ad === 'boolean') {
+        progressRef.current.ad = message.ad;
+        setAdShowing(message.ad);
+      }
       if (message.quality) setQuality(String(message.quality));
       if (message.ready) setReady(true);
       if (message.ready) webReadyRef.current = true;
