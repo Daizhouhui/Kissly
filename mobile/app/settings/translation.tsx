@@ -14,6 +14,7 @@ import { getSecret, setSecret } from '../../src/core/secrets';
 import { useAppStore } from '../../src/core/store';
 import { ProviderId } from '../../src/core/types';
 import { testTranslation } from '../../src/core/translate';
+import { UnsupportedSystemLanguageError } from '../../src/core/translate/language';
 import {
   isSystemTranslationAvailable,
   prepareSystemLanguagePack,
@@ -165,7 +166,9 @@ export default function TranslationSettingsScreen() {
                 Alert.alert('语言包已就绪', '系统内置翻译已启用，可以离线翻译字幕。');
               } catch (error) {
                 Alert.alert(
-                  '语言包下载失败',
+                  error instanceof UnsupportedSystemLanguageError
+                    ? '无法启用系统翻译'
+                    : '语言包下载失败',
                   error instanceof Error ? error.message : String(error)
                 );
               } finally {

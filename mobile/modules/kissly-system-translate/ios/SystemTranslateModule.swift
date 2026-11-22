@@ -3,6 +3,29 @@ import Foundation
 import MLKitTranslate
 
 public class SystemTranslateModule: Module {
+  /// ML Kit Translate's supported base codes. Keeping the check here as well
+  /// as in JS prevents a malformed synced setting from reaching the native
+  /// enum and failing with an opaque platform error.
+  private static let supportedLanguageCodes: Set<String> = [
+    "af", "ar", "be", "bg", "bn", "ca", "cs", "cy", "da", "de",
+    "el", "en", "eo", "es", "et", "fa", "fi", "fr", "ga", "gl",
+    "gu", "he", "hi", "hr", "ht", "hu", "id", "is", "it", "ja",
+    "ka", "kn", "ko", "lt", "lv", "mk", "mr", "ms", "mt", "nl",
+    "no", "pl", "pt", "ro", "ru", "sk", "sl", "sq", "sv", "sw",
+    "ta", "te", "th", "tl", "tr", "uk", "ur", "vi", "zh",
+  ]
+
+  private static let languageAliases: [String: String] = [
+    "iw": "he",
+    "in": "id",
+    "ji": "yi",
+    "jw": "jv",
+    "fil": "tl",
+    "nb": "no",
+    "nn": "no",
+    "cmn": "zh",
+  ]
+
   private func normalizeLanguage(_ tag: String, field: String) throws -> TranslateLanguage {
     let normalized = tag.trimmingCharacters(in: .whitespacesAndNewlines)
       .replacingOccurrences(of: "_", with: "-")
@@ -20,7 +43,18 @@ public class SystemTranslateModule: Module {
     // typed enum and does not provide the `fromLanguageTag` helper shown in
     // some online docs. It expects the base ISO-639 code (e.g. `en`, `zh`).
     let base = normalized.split(separator: "-").first.map(String.init) ?? normalized
-    return TranslateLanguage(rawValue: base)
+    let canonical = Self.languageAliases[base.lowercased()] ?? base.lowercased()
+    guard Self.supportedLanguageCodes.contains(canonical) else {
+      throw NSError(
+        domain: "KisslySystemTranslate",
+        code: 2,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "系统翻译不支持\(field)语言“\(tag)”，请改用微软/谷歌，或在设置中选择系统翻译支持的语言。"
+        ]
+      )
+    }
+    return TranslateLanguage(rawValue: canonical)
   }
 
   private func makeTranslator(from: String, to: String) throws -> Translator {
