@@ -13,7 +13,7 @@
 | P0-1 | 观看进度被清零/倒退，历史时间被覆盖 | `33dffed8` | 已修复 | 16 条断言通过 |
 | P0-2 | “继续观看”从 0 开始，进度条与续播点对不上 | `cd91da60` | 已修复 | 16 条断言 + 桥脚本语法 |
 | P0-3 | 句子收藏点进去永远从视频开头播 | `b8600662` | 已修复 | 16 条断言 + typecheck |
-| P0-4 | WebDAV 设置同步整文件覆盖，412 重试丢数据 | `aa1dbcff` | 已修复 | 11 条断言 + typecheck |
+| P0-4 | WebDAV 设置同步整文件覆盖，412 重试丢数据 | `aa1dbcff` + `d49051f6` | 已修复 | 12 条断言 + typecheck |
 | P0-5 | 系统翻译把 `auto` 当英语，非英语字幕翻错 | `a64fb017` | 已修复（Android） | 5 条断言 + typecheck |
 | P0-6 | 播放器强制 1080p，弱网卡顿/加载慢 | `b8c9db73` | 已修复 | 桥脚本语法 + typecheck |
 | P0-7 | Release 用 debug 签名，覆盖安装失败 | 未改代码 | 阻塞：缺 keystore | 配置审查 |
@@ -242,10 +242,10 @@ tsc --noEmit 通过
 ### 自动化验证
 
 ```text
-settings-sync: 11 assertions passed
+settings-sync: 12 assertions passed
 ```
 
-覆盖：不同 key 各自保留、同 key 新者胜、v1 兼容、旧本地无 stamps 时远端较新值生效、v2 缺 key 不覆盖本地、敏感/外观字段不上传、嵌套 `subtitle` 改动识别、412 二次合并保留对方新 key。
+覆盖：不同 key 各自保留、同 key 新者胜、v1 兼容、旧本地无 stamps 时远端较新值生效、v2 缺 key 不覆盖本地、部分本地 stamps 不把未改 key 当成新值、敏感/外观字段不上传、嵌套 `subtitle` 改动识别、412 二次合并保留对方新 key。
 
 ### 真机验收步骤
 
@@ -306,6 +306,7 @@ settings-sync: 11 assertions passed
 ```text
 system-language: 5 assertions passed
 tsc --noEmit 通过
+:kissly-system-translate:compileDebugKotlin BUILD SUCCESSFUL
 ```
 
 覆盖：`auto` 用字幕语言、空值用字幕语言、明确语言优先、缺学习语言回退英语、空格清理。
@@ -322,7 +323,7 @@ tsc --noEmit 通过
 ### 风险与遗留
 
 - iOS `SystemTranslateModule.swift` 的 `normalizeLanguage` 仍会把 `auto` 回退成 `.english`；JS 层已经保证不传 `auto`，但未知语言在 iOS 上仍可能回退。当前环境没有 macOS/Xcode，未改 Swift，也未编译验证，记为遗留。
-- Android 端本次只做了 Kotlin 静态修改，未单独跑 Gradle 编译；会在模拟器/真机安装时一起验证。
+- Android 端已跑 `:kissly-system-translate:compileDebugKotlin`，`BUILD SUCCESSFUL`；完整 APK 未构建，真机安装后再验证实际语言包下载与翻译结果。
 
 ---
 
@@ -399,11 +400,74 @@ tsc --noEmit 通过
 
 ---
 
-## 设备端验收环境说明
+## 网页端实测（Chrome + Node.js）
 
-- 自动化测试不依赖 Android 设备，已全部通过。
-- 设备端本轮尝试使用本机 Android 模拟器/LDPlayer（只通过 `adb` 操作，不控制你的默认桌面），但当前 Android SDK 的 `system-images/android-36.1/google_apis_playstore/x86_64` 目录为空、没有 `sdkmanager`；LDPlayer 实例未启动。设备端结果会在跑通后补到本文件。
-- 你的真机验收按上面每条的步骤执行即可；重点看 P0-1/2（进度与续播）、P0-3（句子跳转）、P0-6（弱网首帧）。
+按你的要求，不改动/不控制默认桌面，也不启动模拟器。能在网页端复现的部分已经实测，结果如下。
+
+### Chrome：播放器桥脚本（P0-2 / P0-6）
+
+用 Chrome 打开本地测试页：真实的 `<video>` 元素 + `MediaRecorder` 生成约 2.4 秒的测试视频 + 伪造 YouTube `movie_player` 接口（记录所有清晰度调用），注入 `player.tsx` 里**原样提取**的桥脚本，`startAt=1`。
+
+实测输出：
+
+```json
+{
+  "duration": 2.411,
+  "seekedTime": 1.2937,
+  "startApplied": true,
+  "qualityCalls": [],
+  "readyMessages": 1,
+  "lastTime": {
+    "current": 2.411,
+    "duration": 2.411,
+    "quality": "hd720",
+    "ad": false
+  },
+  "checks": [
+    ["startAt seeks near 1s", true],
+    ["did not start at 0", true],
+    ["startApplied flag", true],
+    ["no forced 1080p calls", true],
+    ["reports actual quality", true],
+    ["ready reported once", true]
+  ]
+}
+```
+
+结论（Chrome 页面 `document.title = "pass"`，6 项断言全过）：
+
+- 注入后 300ms 播放位置是 `1.2904`（从 1 秒开始并正常前进），不是 0，`startApplied=true`；P0-2 的定位逻辑在真实浏览器视频元素上生效。
+- 播放超过 3 秒后 `qualityCalls=[]`。旧代码会在 `playing` 后 1.8 秒调用 `setPlaybackQualityRange('hd1080','hd1080')`，现在已经完全没有调用；P0-6 生效。
+- `report` 消息里的 `quality` 是 `hd720`，角标可以显示 YouTube 实际清晰度，而不是写死 `HD1080`。
+- 局限：测试页用的是合成视频和伪 YouTube player，覆盖不了真实 YouTube DOM、广告插入、WebView 生命周期与弱网码率切换；这些仍需真机。
+
+### Node.js
+
+```text
+watch-progress: 16 assertions passed
+settings-sync: 12 assertions passed
+system-language: 5 assertions passed
+bridge syntax OK, chars= 30587
+tsc --noEmit 通过
+```
+
+- P0-1：进度合并、续播点、结尾归零等纯逻辑已覆盖；持久化和 UI 定时器仍需真机。
+- P0-4：按 key 合并、v1 兼容、412 二次合并等纯逻辑已覆盖；真实 WebDAV ETag/网络请求仍需设备或双端联调。
+- P0-5：`auto → 字幕语言` 解析已覆盖；ML Kit 语言包与原生代码必须 Android 真机。
+
+### 网页端测不了、需要你真机实测的项
+
+| 编号 | 为什么网页端测不了 | 真机要重点看 |
+| --- | --- | --- |
+| P0-1 | AsyncStorage 持久化、退后台/杀进程、播放器卸载时序都发生在 RN 原生侧 | 退出重进进度不归零、历史时间不被覆盖 |
+| P0-2 | 真实 YouTube WebView 的 DOM、广告、重新加载后的 `currentTime` 重置 | 点“继续观看”从正确位置开始；切后台回来不跳 0 |
+| P0-3 | expo-router 路由参数和原生页面跳转 | 句子收藏点进去从该句开始 |
+| P0-4 | 真实 WebDAV 的 ETag/412、两台设备并发、AsyncStorage 迁移 | 两端各改不同设置后都保留；只改主题不覆盖对方 |
+| P0-5 | ML Kit 语言包下载、Google Play 服务、非英语字幕 | 日语/韩语字幕翻成中文，不是英文乱码；下载对应语言包 |
+| P0-6 | 真实网络码率、首帧时间、YouTube 自适应清晰度 | 弱网首帧变快，角标显示 AUTO 或实际清晰度 |
+| P0-7 | 需要构建/发布 Release，且缺 keystore | 暂不测；等你决定签名方案 |
+
+> 请你在手机上按上面每条的“真机验收步骤”操作，重点先验 P0-1/2（进度与续播）和 P0-6（弱网首帧）。P0-7 需要你先决定 release keystore 方案，我不会自动构建或发布 Release。
 
 ## 提交清单
 
@@ -412,6 +476,8 @@ tsc --noEmit 通过
 cd91da60 fix(player): resume from the stored position via startAt
 b8600662 fix(favorites): open a saved sentence at its cue time
 aa1dbcff fix(sync): merge settings per key instead of whole-file overwrite
+d49051f6 fix(sync): treat missing per-key stamps as untouched
 a64fb017 fix(translate): use the real caption language for system translation
 b8c9db73 fix(player): let YouTube pick the quality instead of forcing 1080p
 ```
+
