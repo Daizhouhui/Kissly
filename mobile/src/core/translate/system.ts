@@ -18,6 +18,11 @@ export async function systemTranslateTexts(
   if (!texts.length) return [];
   const settings = getSettings();
   const source = resolveSystemSource(from, settings.learningLang);
+  // The user may enable system translation and later change the learning or
+  // target language. Download the pack for the current pair instead of failing
+  // with a missing-model error. Auto never selects `system`, so this cannot
+  // pull a large pack during a silent free-provider fallback.
+  await prepareSystemTranslation(source, to);
   return systemTranslate(texts, source, to);
 }
 
