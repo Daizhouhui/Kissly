@@ -4,11 +4,12 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { StatusBar } from 'expo-status-bar';
-import { router, useLocalSearchParams } from 'expo-router';
-import { ReactNode, forwardRef, useEffect, useMemo, useRef, useState } from 'react';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { ReactNode, forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
+  AppState,
   BackHandler,
   FlatList,
   Platform,
@@ -193,13 +194,31 @@ function playerBridgeScript(startAt = 0) {
     if (previous && previous.cssTimer) clearInterval(previous.cssTimer);
     if (previous && previous.startTimer) clearTimeout(previous.startTimer);
     if (previous && previous.pauseAtTimer) clearInterval(previous.pauseAtTimer);
+    var storedIntent = '';
+    var storedIntentUrl = '';
+    try {
+      storedIntent = window.sessionStorage.getItem('kiss-play-intent') || '';
+      storedIntentUrl = window.sessionStorage.getItem('kiss-play-url') || '';
+    } catch(e) {}
+    var inheritedIntent = previous
+      ? (previous.playIntent === 'play' || previous.playIntent === 'pause'
+          ? previous.playIntent
+          : (previous.wantPlay && !previous.userPaused ? 'play' : 'pause'))
+      : '';
+    var storedIntentApplies = !previous && storedIntentUrl === location.href;
+    var initialIntent = inheritedIntent ||
+      (storedIntentApplies && storedIntent === 'pause' ? 'pause' : 'play');
     var bridge = window.__kissBridge = {
       mode: 'mobile-watch',
       alive: true,
-      wantPlay: previous ? previous.wantPlay : true,
-      userPaused: previous ? previous.userPaused : false,
+      // There is exactly one authority for playback: the user's intent.
+      // Rotation, buffering and WebView reloads may change the real <video>
+      // state, but they must never rewrite this intent.
+      playIntent: initialIntent,
+      pauseReason: previous ? String(previous.pauseReason || '') : '',
       frameReady: false,
-      hasStarted: previous ? !!previous.hasStarted : false,
+      orientationAt: 0,
+      audioStrikes: 0,
       timer: null,
       cssTimer: null,
       startTimer: null,
@@ -312,10 +331,74 @@ function playerBridgeScript(startAt = 0) {
     function isFrameReady(v){
       return !!(v && v.readyState >= 2 && v.videoWidth > 0);
     }
+    function persistPlayIntent(){
+      try {
+        window.sessionStorage.setItem('kiss-play-intent', bridge.playIntent);
+        window.sessionStorage.setItem('kiss-play-url', location.href);
+      } catch(e) {}
+    }
+    function setPlayIntent(next, reason){
+      bridge.playIntent = next ? 'play' : 'pause';
+      bridge.pauseReason = String(reason || '');
+      persistPlayIntent();
+    }
+    function clearStartTimer(){
+      if (bridge.startTimer) {
+        clearTimeout(bridge.startTimer);
+        bridge.startTimer = null;
+      }
+    }
+    function requestPlayerPlay(v){
+      var p = getPlayer();
+      var current = v || getVideo();
+      // YouTube's own player state and the raw <video> state can disagree
+      // after Android rotates the activity. Drive both so YouTube does not
+      // immediately pause a video that was started behind its back.
+      try { if (p && typeof p.playVideo === 'function') p.playVideo(); } catch(e) {}
+      try {
+        if (current && (current.paused || current.ended)) {
+          var result = current.play();
+          if (result && result.catch) result.catch(function(){});
+        }
+      } catch(e) {}
+    }
+    function requestPlayerPause(v){
+      var p = getPlayer();
+      var current = v || getVideo();
+      try { if (p && typeof p.pauseVideo === 'function') p.pauseVideo(); } catch(e) {}
+      try { if (current && !current.paused) current.pause(); } catch(e) {}
+    }
+    function playNow(reason, immediate){
+      clearPauseAt();
+      clearStartTimer();
+      setPlayIntent(true, reason || 'user');
+      var v = getVideo();
+      if (v) {
+        try { v.__kissUserPaused = false; } catch(e) {}
+      }
+      if (v && immediate !== false) requestPlayerPlay(v);
+      if (v) maybeStart(v);
+      scheduleAudio(260);
+      setTimeout(ensureAudio, 1000);
+      setTimeout(report, 80);
+      return true;
+    }
+    function pauseNow(reason){
+      clearPauseAt();
+      clearStartTimer();
+      setPlayIntent(false, reason || 'user');
+      var v = getVideo();
+      if (v) {
+        try { v.__kissUserPaused = true; } catch(e) {}
+        requestPlayerPause(v);
+      }
+      setTimeout(report, 80);
+      return true;
+    }
     function announceReady(v){
       if (!isFrameReady(v) || bridge.frameReady) return;
       bridge.frameReady = true;
-      send({ type: 'ready' });
+      send({ type: 'ready', playing: bridge.playIntent === 'play' });
     }
     function applyStart(v){
       if (bridge.startApplied) return;
@@ -332,51 +415,30 @@ function playerBridgeScript(startAt = 0) {
       } catch(e) {}
     }
     function maybeStart(v){
-      // Never let YouTube autoplay before the first video frame is available.
-      // Audio and subtitles must not run ahead of the visible picture.
-      if (!bridge.alive || !v || bridge.userPaused || !bridge.wantPlay) return;
+      // The old first-frame gate paused an already playing video whenever a
+      // rotation briefly reported readyState/videoWidth as zero. That gate is
+      // gone. Here we only move the video toward the user's intent; we never
+      // pause it just because its frame metadata is temporarily incomplete.
+      if (!bridge.alive || !v || bridge.playIntent !== 'play') return;
       announceReady(v);
       if (!isFrameReady(v)) {
-        // If a slow network never reaches loadeddata, avoid a permanently
-        // stuck play button. This is a fallback only; normal playback waits
-        // for the first frame.
+        // Slow network fallback: do not leave the player stuck if loadeddata
+        // never arrives. This never changes playback intent.
         if (!bridge.startTimer) {
           bridge.startTimer = setTimeout(function(){
             bridge.startTimer = null;
             var current = getVideo();
-            if (
-              current &&
-              !bridge.userPaused &&
-              bridge.wantPlay &&
-              (current.paused || current.ended)
-            ) {
-              try {
-                var fallback = current.play();
-                if (fallback && fallback.catch) fallback.catch(function(){});
-              } catch(e) {}
+            if (current && bridge.playIntent === 'play' && (current.paused || current.ended)) {
+              requestPlayerPlay(current);
             }
           }, 4500);
         }
         return;
       }
-      if (bridge.startTimer) {
-        clearTimeout(bridge.startTimer);
-        bridge.startTimer = null;
-      }
+      clearStartTimer();
       applyStart(v);
-      if (!v.paused && isFrameReady(v)) {
-        // A video that is already playing with a decoded frame has definitely
-        // started; do not let a later orientation re-enter the first-frame gate.
-        bridge.hasStarted = true;
-      }
       if (v.paused || v.ended) {
-        // From this point the user has seen playback. A later orientation or
-        // player re-render must not be treated as a first-frame autoplay.
-        bridge.hasStarted = true;
-        try {
-          var result = v.play();
-          if (result && result.catch) result.catch(function(){});
-        } catch(e) {}
+        requestPlayerPlay(v);
       }
       scheduleAudio(250);
     }
@@ -402,6 +464,7 @@ function playerBridgeScript(startAt = 0) {
       }
     }
     function report(){
+      if (!bridge.alive) return;
       var v = getVideo();
       var p = getPlayer();
       if (!v) return;
@@ -414,13 +477,83 @@ function playerBridgeScript(startAt = 0) {
         duration: Number(v.duration) || 0,
         bufferedStart: buffer.start,
         bufferedEnd: buffer.end,
-        playing: !v.paused && !v.ended,
+        // React mirrors intent, not the raw video flag. A rotation can make
+        // the raw flag flap for a few frames while the user still wants play.
+        playing: bridge.playIntent === 'play' && !v.ended,
+        actualPlaying: !v.paused && !v.ended,
+        pauseReason: bridge.pauseReason,
         ready: isFrameReady(v),
         rate: v.playbackRate,
         quality: quality,
         ad: isAdShowing()
       });
     }
+    function installVideoEvents(v){
+      if (v.__kissEventRouter) return;
+      v.__kissEventRouter = true;
+      var names = [
+        'timeupdate','play','playing','pause','durationchange',
+        'loadedmetadata','seeking','seeked','ratechange','ended',
+        'volumechange','error','loadeddata','canplay'
+      ];
+      for (var i = 0; i < names.length; i += 1) {
+        (function(name){
+          v.addEventListener(name, function(){
+            // The router always forwards to the current bridge. A script
+            // re-injection therefore cannot leave stale listeners speaking
+            // for the previous playback state machine.
+            var active = window.__kissBridge;
+            if (!active || !active.alive || active.videoRef !== v) return;
+            if (name === 'loadeddata' || name === 'canplay') {
+              if (typeof active.onVideoReady === 'function') {
+                active.onVideoReady(v);
+              }
+              return;
+            }
+            if (typeof active.onVideoEvent === 'function') {
+              active.onVideoEvent(name, v);
+            }
+          });
+        })(names[i]);
+      }
+    }
+    bridge.onVideoReady = function(v){
+      if (!bridge.alive || bridge.videoRef !== v) return;
+      announceReady(v);
+      maybeStart(v);
+    };
+    bridge.onVideoEvent = function(name, v){
+      if (!bridge.alive || bridge.videoRef !== v) return;
+      if (name === 'ended') {
+        setPlayIntent(false, 'ended');
+        report();
+        return;
+      }
+      if (name === 'pause' && bridge.playIntent === 'play' && bridge.orientationAt) {
+        // Only rescue a pause that happened inside the short rotation window.
+        // A later pause may be the user or YouTube itself.
+        if (Date.now() - bridge.orientationAt < 5000) {
+          scheduleReconcile(180);
+        }
+      }
+      if (name === 'playing') {
+        bridge.audioStrikes = 0;
+        scheduleAudio(180);
+        setTimeout(ensureAudio, 900);
+      } else if (name === 'loadedmetadata') {
+        scheduleAudio(180);
+      } else if (name === 'volumechange') {
+        if (v.muted && bridge.audioStrikes < 6) {
+          bridge.audioStrikes += 1;
+          scheduleAudio(120);
+        } else if (!v.muted) {
+          bridge.audioStrikes = 0;
+        }
+      } else if (name === 'error') {
+        send({ type:'problem', reason:'video-error', code: v.error ? v.error.code : 0 });
+      }
+      report();
+    };
     var bindTries = 0;
     function bind(){
       if (!bridge.alive) return;
@@ -434,61 +567,20 @@ function playerBridgeScript(startAt = 0) {
       if (bridge.videoRef !== v) {
         bridge.videoRef = v;
         bridge.frameReady = false;
-        if (bridge.startTimer) {
-          clearTimeout(bridge.startTimer);
-          bridge.startTimer = null;
-        }
+        clearStartTimer();
       }
-      if (!bridge.hasStarted && !isFrameReady(v) && !v.paused) {
-        // Gate only the very first autoplay before a decoded frame exists.
-        // After playback has started, a rotation can briefly report
-        // readyState/videoWidth as 0; pausing there caused an endless
-        // play-then-pause loop when the user returned from fullscreen.
-        try { v.pause(); } catch(e) {}
+      if (bridge.playIntent === 'play') {
+        try { v.__kissUserPaused = false; } catch(e) {}
+      } else {
+        try { v.__kissUserPaused = true; } catch(e) {}
       }
-      if (!v.__kissBound) {
-        v.__kissBound = true;
-        ['timeupdate','play','playing','pause','ended','durationchange','loadedmetadata','seeking','seeked','ratechange'].forEach(function(name){
-          v.addEventListener(name, report);
-        });
-        v.addEventListener('playing', function(){
-          scheduleAudio(180);
-          setTimeout(ensureAudio, 900);
-        });
-        v.addEventListener('loadedmetadata', function(){
-          scheduleAudio(180);
-        });
-        var audioStrikes = 0;
-        v.addEventListener('volumechange', function(){
-          if (v.muted && audioStrikes < 6) {
-            audioStrikes++;
-            scheduleAudio(120);
-          } else if (!v.muted) {
-            audioStrikes = 0;
-          }
-        });
-        v.addEventListener('error', function(){
-          send({ type:'problem', reason:'video-error', code: v.error ? v.error.code : 0 });
-        });
-        try { v.playsInline = true; } catch(e) {}
-        try { v.preload = 'auto'; } catch(e) {}
-        report();
-      }
-      bridge.userPaused = bridge.userPaused || !!v.__kissUserPaused;
-      if (v.__kissReadyBridge !== bridge) {
-        v.__kissReadyBridge = bridge;
-        var markReady = function(){
-          if (v.__kissReadyBridge !== bridge) return;
-          announceReady(v);
-          maybeStart(v);
-        };
-        v.addEventListener('loadeddata', markReady);
-        v.addEventListener('canplay', markReady);
-      }
-      if (isFrameReady(v)) {
-        announceReady(v);
-        maybeStart(v);
-      }
+      installVideoEvents(v);
+      try { v.playsInline = true; } catch(e) {}
+      try { v.preload = 'auto'; } catch(e) {}
+      report();
+      // Always let the state machine decide. It waits for the first frame but
+      // never pauses a video that is already playing or already has intent.
+      maybeStart(v);
       if (!bridge.timer) {
         bridge.timer = setInterval(report, 900);
       }
@@ -944,54 +1036,63 @@ function playerBridgeScript(startAt = 0) {
       bridge.pauseAtSawBeforeEnd = false;
     }
 
+    function reconcilePlayback(reason){
+      if (!bridge.alive || bridge.playIntent !== 'play') return true;
+      var v = getVideo();
+      if (!v) return true;
+      if (v.ended) {
+        setPlayIntent(false, 'ended');
+        report();
+        return true;
+      }
+      // Only restore the user's play intent. Never touch pauseAt here: a
+      // blind-listening boundary must survive a fullscreen rotation.
+      if (v.paused) requestPlayerPlay(v);
+      maybeStart(v);
+      announceReady(v);
+      scheduleAudio(180);
+      setTimeout(report, 80);
+      return true;
+    }
+
     window.__kiss = {
       play: function(){
-        clearPauseAt();
-        bridge.userPaused = false;
-        bridge.wantPlay = true;
-        bridge.hasStarted = true;
-        var v = getVideo();
-        if (v) v.__kissUserPaused = false;
-        maybeStart(v);
-        scheduleAudio(260);
-        setTimeout(ensureAudio, 1000);
-        return true;
+        return playNow('user');
       },
       pause: function(){
-        clearPauseAt();
-        bridge.userPaused = true;
-        bridge.wantPlay = false;
-        if (bridge.startTimer) {
-          clearTimeout(bridge.startTimer);
-          bridge.startTimer = null;
-        }
-        var v = getVideo();
-        if (v) {
-          v.__kissUserPaused = true;
-          try { v.pause(); } catch(e) {}
-        }
-        return true;
+        return pauseNow('user');
+      },
+      setPlaying: function(playing){
+        return playing ? playNow('user') : pauseNow('user');
       },
       resume: function(){
-        if (bridge.userPaused) return true;
-        bridge.wantPlay = true;
-        var v = getVideo();
-        if (!v) return true;
-        maybeStart(v);
-        scheduleAudio(180);
-        setTimeout(report, 80);
+        return reconcilePlayback('orientation');
+      },
+      reconcile: function(){
+        return reconcilePlayback('reconcile');
+      },
+      orientation: function(){
+        bridge.orientationAt = Date.now();
         return true;
       },
+      resetForEntry: function(){
+        return playNow('entry', false);
+      },
+      pauseForScreen: function(){
+        var result = pauseNow('screen');
+        // A screen exit is a fresh-entry boundary. Do not let a pause from
+        // this video leak into the next player instance through sessionStorage.
+        try {
+          window.sessionStorage.removeItem('kiss-play-intent');
+          window.sessionStorage.removeItem('kiss-play-url');
+        } catch(e) {}
+        return result;
+      },
       toggle: function(){
-        var v = getVideo();
-        if (!v) return true;
-        if (v.paused || v.ended) {
-          window.__kiss.play();
-        } else {
-          window.__kiss.pause();
+        if (bridge.playIntent === 'play') {
+          return pauseNow('user');
         }
-        setTimeout(report, 80);
-        return true;
+        return playNow('user');
       },
       seek: function(seconds){
         clearPauseAt();
@@ -1008,7 +1109,7 @@ function playerBridgeScript(startAt = 0) {
         clearPauseAt();
         bridge.pauseAtTarget = target;
         bridge.pauseAtTimer = setInterval(function(){
-          if (!bridge.alive || bridge.userPaused || !bridge.wantPlay) {
+          if (!bridge.alive || bridge.playIntent !== 'play') {
             clearPauseAt();
             return;
           }
@@ -1016,6 +1117,8 @@ function playerBridgeScript(startAt = 0) {
           if (!v) return;
           if (v.ended) {
             clearPauseAt();
+            setPlayIntent(false, 'ended');
+            report();
             return;
           }
           var now = Number(v.currentTime) || 0;
@@ -1026,12 +1129,7 @@ function playerBridgeScript(startAt = 0) {
             bridge.pauseAtSawBeforeEnd = true;
           }
           if (now < target) return;
-          clearPauseAt();
-          bridge.userPaused = true;
-          bridge.wantPlay = false;
-          v.__kissUserPaused = true;
-          try { v.pause(); } catch(e) {}
-          report();
+          pauseNow('boundary');
         }, 16);
         return true;
       },
@@ -1130,11 +1228,10 @@ function playerBridgeScript(startAt = 0) {
       if (!bridge.alive) return;
       if (location.href !== lastHref) {
         lastHref = location.href;
-        bridge.userPaused = false;
-        bridge.wantPlay = true;
+        setPlayIntent(true, 'navigation');
         bridge.frameReady = false;
-        bridge.hasStarted = false;
         bridge.videoRef = null;
+        clearStartTimer();
         bridge.captionBusy = false;
         bridge.captionFinish = null;
         bridge.captionVideoId = '';
@@ -1147,6 +1244,29 @@ function playerBridgeScript(startAt = 0) {
       bindTries = 0;
       setTimeout(bind, 400);
     }, true);
+    function scheduleReconcile(delay){
+      setTimeout(function(){
+        if (!bridge.alive) return;
+        reconcilePlayback('orientation');
+      }, delay);
+    }
+    window.addEventListener('orientationchange', function(){
+      // Android can pause the WebView while the activity rotates. The intent
+      // is authoritative, so restore it after the new layout settles.
+      bridge.orientationAt = Date.now();
+      scheduleReconcile(320);
+      scheduleReconcile(1000);
+    });
+    function reconcileWhenVisible(){
+      if (document.hidden) return;
+      scheduleReconcile(80);
+      scheduleReconcile(600);
+    }
+    document.addEventListener('visibilitychange', function(){
+      if (!document.hidden) reconcileWhenVisible();
+    });
+    window.addEventListener('pageshow', reconcileWhenVisible);
+    window.addEventListener('focus', reconcileWhenVisible);
     setTimeout(function(){
       var v=getVideo();
       var p=getPlayer();
@@ -1262,6 +1382,11 @@ export default function PlayerScreen() {
   const [videoLoading, setVideoLoading] = useState(true);
   const videoLoadingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [playing, setPlaying] = useState(false);
+  const playingRef = useRef(false);
+  const mirrorPlaying = (value: boolean) => {
+    playingRef.current = value;
+    setPlaying(value);
+  };
   const [adShowing, setAdShowing] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [current, setCurrent] = useState(0);
@@ -1982,40 +2107,67 @@ export default function PlayerScreen() {
   const scheduleOrientationResume = () => {
     clearOrientationResume();
     // Android WebView can lose its playing state while the activity rotates
-    // or the window briefly loses focus. Re-check the real <video> element a
-    // few times after the new layout settles instead of trusting stale React
-    // state.
+    // or the window briefly loses focus. The bridge owns the play intent, so
+    // these retries only ask it to reconcile; they never decide from React's
+    // possibly stale `playing` flag.
     [450, 1200, 2400].forEach((delay) => {
       orientationResumeTimers.current.push(
         setTimeout(() => {
           webRef.current?.injectJavaScript(
-            'window.__kiss && window.__kiss.resume(); window.__kiss && window.__kiss.audio(); true;'
+            'window.__kiss && window.__kiss.reconcile(); window.__kiss && window.__kiss.audio(); true;'
           );
         }, delay)
       );
     });
   };
 
+  useFocusEffect(
+    useCallback(() => {
+      const timer = setTimeout(() => {
+        webRef.current?.injectJavaScript(
+          'window.__kiss && window.__kiss.resetForEntry(); true;'
+        );
+      }, 0);
+      return () => {
+        clearTimeout(timer);
+        webRef.current?.injectJavaScript(
+          'window.__kiss && window.__kiss.pauseForScreen(); true;'
+        );
+      };
+    }, [])
+  );
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') scheduleOrientationResume();
+    });
+    return () => sub.remove();
+  }, []);
+
   const exitFullscreen = async () => {
-    const wasPlaying = playing;
+    webRef.current?.injectJavaScript(
+      'window.__kiss && window.__kiss.orientation(); true;'
+    );
     try {
       await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
     } catch {}
     setFullscreen(false);
     setControlsVisible(true);
-    if (wasPlaying) scheduleOrientationResume();
+    scheduleOrientationResume();
   };
 
   const handleFullscreen = async () => {
     setControlsVisible(true);
-    const wasPlaying = playing;
+    webRef.current?.injectJavaScript(
+      'window.__kiss && window.__kiss.orientation(); true;'
+    );
     try {
       if (landscape || fullscreen) {
         await exitFullscreen();
       } else {
         await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
         setFullscreen(true);
-        if (wasPlaying) scheduleOrientationResume();
+        scheduleOrientationResume();
       }
     } catch {}
   };
@@ -2045,6 +2197,9 @@ export default function PlayerScreen() {
           clearTimeout(precisionTimerRef.current);
           precisionTimerRef.current = null;
         }
+        webRef.current?.injectJavaScript(
+          'window.__kiss && window.__kiss.pauseAt(-1); true;'
+        );
         return true;
       }
       if (fullscreen || landscape) {
@@ -2080,10 +2235,14 @@ export default function PlayerScreen() {
   };
 
   const togglePlay = () => {
-    // Let the WebView decide from the real <video> state. The React `playing`
-    // flag can lag behind after an orientation change and would otherwise send
-    // a second pause when the user taps play.
-    send('window.__kiss && window.__kiss.toggle(); true;');
+    // Send the next intent explicitly instead of asking the bridge to toggle
+    // the raw <video>. Raw state and React state can disagree for a moment
+    // after rotation, which used to make the first tap pause a playing video.
+    const next = !playingRef.current;
+    mirrorPlaying(next);
+    send(
+      `window.__kiss && window.__kiss.setPlaying(${next ? 'true' : 'false'}); true;`
+    );
     setBlocked(false);
   };
 
@@ -2140,7 +2299,7 @@ export default function PlayerScreen() {
     }
     if (playing) {
       send('window.__kiss && window.__kiss.pause(); true;');
-      setPlaying(false);
+      mirrorPlaying(false);
       setBlocked(false);
       return;
     }
@@ -2158,7 +2317,7 @@ export default function PlayerScreen() {
     }
     send('window.__kiss && window.__kiss.play(); true;');
     armPrecisionPause(precisionCue);
-    setPlaying(true);
+    mirrorPlaying(true);
     setBlocked(false);
   };
 
@@ -2228,7 +2387,7 @@ export default function PlayerScreen() {
     seekTo(target.start + 0.02);
     send('window.__kiss && window.__kiss.play(); true;');
     armPrecisionPause(target);
-    setPlaying(true);
+    mirrorPlaying(true);
   };
 
   const applyRate = (value: number) => {
@@ -2263,7 +2422,7 @@ export default function PlayerScreen() {
       repeatTimerRef.current = setTimeout(() => {
         seekTo(activeCue.start + 0.01);
         send('window.__kiss && window.__kiss.play(); true;');
-        setPlaying(true);
+        mirrorPlaying(true);
         setRepeatPass((value) => value + 1);
         repeatBusyRef.current = false;
       }, pauseMs);
@@ -2275,7 +2434,7 @@ export default function PlayerScreen() {
       jumpCue(1);
     } else {
       send('window.__kiss && window.__kiss.pause(); true;');
-      setPlaying(false);
+      mirrorPlaying(false);
     }
   }, [activeCue, blindMode, current, loopSentence, playing, repeatPass, settings.subtitle.autoNext, settings.subtitle.repeatCount, settings.subtitle.repeatInterval]);
 
@@ -2287,7 +2446,7 @@ export default function PlayerScreen() {
     blindGuardRef.current = guardKey;
 
     send('window.__kiss && window.__kiss.pause(); true;');
-    setPlaying(false);
+    mirrorPlaying(false);
 
     if (precisionPass < listeningRepeatCount) {
       precisionTimerRef.current = setTimeout(() => {
@@ -2295,7 +2454,7 @@ export default function PlayerScreen() {
         setPrecisionPass((value) => value + 1);
         send('window.__kiss && window.__kiss.play(); true;');
         armPrecisionPause(precisionCue);
-        setPlaying(true);
+        mirrorPlaying(true);
       }, listeningRepeatInterval * 1000);
       return;
     }
@@ -2339,6 +2498,7 @@ export default function PlayerScreen() {
       setReady(true);
       setVideoLoading(false);
       setVideoProblem('');
+      if (typeof message.playing === 'boolean') mirrorPlaying(message.playing);
       return;
     }
     if (message.type === 'caption-payload') {
@@ -2408,7 +2568,7 @@ export default function PlayerScreen() {
         progressRef.current.bufferedEnd = message.bufferedEnd;
         setBufferedEnd(message.bufferedEnd);
       }
-      if (typeof message.playing === 'boolean') setPlaying(message.playing);
+      if (typeof message.playing === 'boolean') mirrorPlaying(message.playing);
       if (typeof message.ad === 'boolean') {
         progressRef.current.ad = message.ad;
         setAdShowing(message.ad);
@@ -2429,7 +2589,7 @@ export default function PlayerScreen() {
     setVideoProblem('');
     setReady(false);
     setAdShowing(false);
-    setPlaying(false);
+    mirrorPlaying(false);
     setCurrent(0);
     startAtRef.current = Math.max(0, progressRef.current.current);
     setVideoLoading(true);
@@ -2515,7 +2675,7 @@ export default function PlayerScreen() {
     seekTo(target.start + 0.02);
     if (!playing) {
       send('window.__kiss && window.__kiss.play(); true;');
-      setPlaying(true);
+      mirrorPlaying(true);
     }
     armPrecisionPause(target);
   };
