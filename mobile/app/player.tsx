@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Animated,
   BackHandler,
+  FlatList,
   Platform,
   ScrollView,
   Share,
@@ -48,7 +49,6 @@ import {
 } from '@/src/core/youtube/captionCache';
 import { parseCaptionText } from '@/src/core/youtube/parse';
 import { fontWeightFor, fontFamilyFor, sentenceCues } from '@/src/ui/subtitleStyle';
-import { pageScrollTarget, shouldPageJump } from '@/src/ui/transcriptScroll';
 import { appAlert as Alert } from '@/src/ui/app-alert';
 import { AppPressable, AppPressableProps } from '@/src/ui/app-pressable';
 import { RipplePressable } from '@/src/ui/ripple-pressable';
@@ -1148,7 +1148,11 @@ export default function PlayerScreen() {
   const recordHistory = useAppStore((state) => state.recordHistory);
   const webRef = useRef<any>(null);
   const scrollRef = useRef<any>(null);
-  const cueOffsets = useRef<Record<number, number>>({});
+  const pendingScrollRef = useRef<{
+    index: number;
+    viewPosition: number;
+    attempts: number;
+  } | null>(null);
   const progressRef = useRef({
     current: 0,
     duration: 0,
@@ -1238,8 +1242,6 @@ export default function PlayerScreen() {
   const repeatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const precisionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const repeatBusyRef = useRef(false);
-  const transcriptScrollRef = useRef(0);
-  const transcriptHeightRef = useRef(0);
   const followingTranscriptRef = useRef(true);
   const transcriptInitializedRef = useRef(false);
   const [followingTranscript, setFollowingTranscript] = useState(true);
@@ -1280,6 +1282,23 @@ export default function PlayerScreen() {
     () => findCueIndexAt(cues, current, 0.12),
     [cues, current]
   );
+  const transcriptViewabilityConfig = useRef({
+    minimumViewTime: 80,
+    itemVisiblePercentThreshold: 20,
+  }).current;
+  const onTranscriptViewableItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: Array<{ index?: number | null }> }) => {
+      const indices = viewableItems
+        .map((item) => (typeof item.index === 'number' ? item.index : -1))
+        .filter((index) => index >= 0);
+      const first = indices.length ? Math.min(...indices) : -1;
+      const last = indices.length ? Math.max(...indices) : -1;
+      const currentRange = visibleCueRangeRef.current;
+      if (currentRange.first === first && currentRange.last === last) return;
+      visibleCueRangeRef.current = { first, last };
+      setVisibleCueRange({ first, last });
+    }
+  ).current;
 
   const activeCue = activeIndex >= 0 ? cues[activeIndex] : null;
   const precisionCue =
@@ -1760,32 +1779,65 @@ export default function PlayerScreen() {
     transcriptInitializedRef.current = false;
   }, [videoId, trackKey]);
 
-  const scrollTranscriptToActive = (animated = true) => {
-    if (!followingTranscriptRef.current) return false;
-    const y = cueOffsets.current[activeIndex];
-    if (typeof y !== 'number') return false;
-    if (scrollMode === 'page') {
-      const height = transcriptHeightRef.current;
-      const nextY = cueOffsets.current[activeIndex + 1] ?? y + 80;
-      if (
-        !shouldPageJump(y, nextY, transcriptScrollRef.current, height)
-      ) {
-        return false;
-      }
-      scrollRef.current?.scrollTo({
-        y: pageScrollTarget(y),
-        animated,
+  const scrollToCueIndex = (
+    index: number,
+    animated = true,
+    viewPosition = 0.38
+  ) => {
+    if (index < 0) return;
+    pendingScrollRef.current = { index, viewPosition, attempts: 0 };
+    scrollRef.current?.scrollToIndex({ index, animated, viewPosition });
+  };
+
+  const handleScrollToIndexFailed = (info: any) => {
+    const pending = pendingScrollRef.current;
+    if (!pending || pending.attempts >= 2) return;
+    pending.attempts += 1;
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollToOffset({
+        offset: Math.max(0, Number(info.averageItemLength || 0) * pending.index),
+        animated: false,
       });
-      return true;
+      setTimeout(() => {
+        scrollRef.current?.scrollToIndex({
+          index: pending.index,
+          animated: true,
+          viewPosition: pending.viewPosition,
+        });
+      }, 160);
+    });
+  };
+
+  const scrollTranscriptToActive = (animated = true) => {
+    if (activeIndex < 0 || !followingTranscriptRef.current) return false;
+    const view = visibleCueRangeRef.current;
+    const activeVisible =
+      view.first >= 0 &&
+      activeIndex >= view.first &&
+      activeIndex <= view.last;
+    if (scrollMode === 'page' && activeVisible) {
+      transcriptInitializedRef.current = true;
+      return false;
     }
-    scrollRef.current?.scrollTo({ y, animated });
+    scrollToCueIndex(
+      activeIndex,
+      animated,
+      scrollMode === 'page' ? 0.08 : 0.38
+    );
     return true;
   };
 
-  const maybeResumeTranscriptFollow = (offsetY: number) => {
+  const maybeResumeTranscriptFollow = () => {
     if (followingTranscriptRef.current) return;
-    const activeY = cueOffsets.current[activeIndex];
-    if (typeof activeY !== 'number' || Math.abs(offsetY - activeY) > 24) return;
+    const view = visibleCueRangeRef.current;
+    if (
+      activeIndex < 0 ||
+      view.first < 0 ||
+      activeIndex < view.first ||
+      activeIndex > view.last
+    ) {
+      return;
+    }
     followingTranscriptRef.current = true;
     setFollowingTranscript(true);
   };
@@ -1811,7 +1863,7 @@ export default function PlayerScreen() {
       }, delay)
     );
     return () => timers.forEach((timer) => clearTimeout(timer));
-  }, [activeIndex, trackKey]);
+  }, [activeIndex, scrollMode, trackKey]);
 
   useEffect(() => {
     return () => {
@@ -1993,12 +2045,7 @@ export default function PlayerScreen() {
     setFollowingTranscript(true);
     transcriptInitializedRef.current = true;
     seekTo(cue.start);
-    setTimeout(() => {
-      const y = cueOffsets.current[index];
-      if (typeof y === 'number') {
-        scrollRef.current?.scrollTo({ y, animated: true });
-      }
-    }, 80);
+    setTimeout(() => scrollToCueIndex(index, true, 0.22), 80);
   };
 
   const previewSeekAt = (locationX: number) => {
@@ -3231,195 +3278,168 @@ export default function PlayerScreen() {
     </View>
   ) : null;
 
-  const updateVisibleCueRange = (offset: number) => {
-    const height = transcriptHeightRef.current;
-    const offsets = cueOffsets.current;
-    if (!height || !cues.length) return;
-    const top = Math.max(0, offset - 24);
-    const bottom = offset + height + 24;
-    let first = -1;
-    let last = -1;
-    for (let index = 0; index < cues.length; index += 1) {
-      const y = offsets[index];
-      if (typeof y !== 'number') continue;
-      const rowBottom = offsets[index + 1] ?? y + 80;
-      if (rowBottom > top) {
-        first = index;
-        break;
-      }
-    }
-    if (first >= 0) {
-      for (let index = first; index < cues.length; index += 1) {
-        const y = offsets[index];
-        if (typeof y !== 'number') continue;
-        if (y > bottom) break;
-        last = index;
-      }
-    }
-    const current = visibleCueRangeRef.current;
-    if (current.first === first && current.last === last) return;
-    visibleCueRangeRef.current = { first, last };
-    setVisibleCueRange({ first, last });
+  const renderTranscriptCue = (cue: Cue, index: number) => {
+    const active = index === activeIndex;
+    const past = index < activeIndex;
+    const visible =
+      index >= visibleCueRange.first && index <= visibleCueRange.last;
+    const saved = active
+      ? sentenceFavorites.some(
+          (fav) => fav.id === sentenceFavoriteId(videoId, cue.start)
+        )
+      : false;
+    return (
+      <View style={styles.cue}>
+        {active ? (
+          <View style={styles.cueHeader}>
+            <Pressable
+              onPress={() => seekFromTranscript(cue, index)}
+              hitSlop={6}
+              accessibilityLabel="跳到本句"
+            >
+              <Text style={[styles.cueTime, { color: theme.colors.textTertiary }]}>
+                {formatTime(cue.start)}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => toggleCueFavorite(cue)}
+              hitSlop={8}
+              accessibilityLabel={saved ? '取消收藏这句' : '收藏这句'}
+              style={styles.cueHeart}
+            >
+              <Ionicons
+                name={saved ? 'heart' : 'heart-outline'}
+                size={22}
+                color={saved ? theme.colors.primary : theme.colors.textTertiary}
+              />
+            </Pressable>
+          </View>
+        ) : null}
+        <Pressable onPress={() => seekFromTranscript(cue, index)}>
+          <CueFade
+            active={active}
+            paused={!playing}
+            visible={visible}
+            past={past}
+          >
+            {showOriginal ? (
+              <Text
+                style={[
+                  styles.cueOriginal,
+                  {
+                    color: active ? theme.colors.primary : theme.colors.text,
+                    fontSize: Math.max(14, fontSize),
+                    lineHeight: transcriptOriginalLineHeight,
+                    fontFamily: originalFont,
+                    fontWeight: originalWeight,
+                  },
+                  active && { fontWeight: '800' },
+                ]}
+              >
+                {cue.text}
+              </Text>
+            ) : null}
+            {showTranslation && cue.translation ? (
+              <Text
+                style={[
+                  styles.cueTranslation,
+                  {
+                    color: theme.colors.textSecondary,
+                    fontSize: Math.max(12, fontSize - (showOriginal ? 3 : 0)),
+                    lineHeight: transcriptTranslationLineHeight,
+                    marginTop: showOriginal ? 10 : 0,
+                    fontFamily: translationFont,
+                    fontWeight: translationWeight,
+                  },
+                  active && {
+                    color: showOriginal
+                      ? theme.colors.text
+                      : theme.colors.primary,
+                  },
+                ]}
+              >
+                {cue.translation}
+              </Text>
+            ) : null}
+            {showTranslation && !cue.translation && translationPending ? (
+              <CueTranslationSkeleton
+                text={cue.text}
+                color={theme.colors.border}
+                height={Math.max(
+                  9,
+                  Math.round(
+                    Math.max(12, fontSize - (showOriginal ? 3 : 0)) * 0.62
+                  )
+                )}
+                marginTop={showOriginal ? 10 : 0}
+                opacity={active ? 1 : past ? 0.5 : 0.38}
+              />
+            ) : null}
+          </CueFade>
+        </Pressable>
+      </View>
+    );
   };
 
   const transcript = (
     <View style={styles.transcriptWrap}>
-      <ScrollView
+      <FlatList
         ref={scrollRef}
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 10, paddingBottom: 240 }}
+        data={cues}
+        keyExtractor={(cue, index) => `${cue.start}-${index}`}
+        renderItem={({ item, index }) => renderTranscriptCue(item, index)}
+        extraData={`${activeIndex}|${playing}|${visibleCueRange.first}|${visibleCueRange.last}`}
+        initialNumToRender={12}
+        maxToRenderPerBatch={10}
+        updateCellsBatchingPeriod={40}
+        windowSize={5}
+        removeClippedSubviews={false}
+        contentContainerStyle={{
+          paddingHorizontal: 14,
+          paddingTop: 10,
+          paddingBottom: 240,
+          flexGrow: cues.length === 0 ? 1 : 0,
+        }}
         showsVerticalScrollIndicator={false}
         alwaysBounceVertical
-        scrollEventThrottle={16}
-        onScroll={(event) => {
-          const offset = event.nativeEvent.contentOffset.y;
-          transcriptScrollRef.current = offset;
-          updateVisibleCueRange(offset);
-        }}
         onScrollBeginDrag={() => {
+          pendingScrollRef.current = null;
           followingTranscriptRef.current = false;
           setFollowingTranscript(false);
         }}
-        onMomentumScrollEnd={(event) => {
-          maybeResumeTranscriptFollow(event.nativeEvent.contentOffset.y);
+        onMomentumScrollEnd={() => {
+          maybeResumeTranscriptFollow();
         }}
         onContentSizeChange={() => {
-          updateVisibleCueRange(transcriptScrollRef.current);
           if (!followingTranscriptRef.current || transcriptInitializedRef.current) return;
           requestAnimationFrame(() => scrollTranscriptToActive(false));
         }}
-        onLayout={(event) => {
-          transcriptHeightRef.current = event.nativeEvent.layout.height;
-          requestAnimationFrame(() =>
-            updateVisibleCueRange(transcriptScrollRef.current)
-          );
+        onLayout={() => {
           if (!followingTranscriptRef.current) return;
           requestAnimationFrame(() => scrollTranscriptToActive(false));
         }}
-      >
-        {cues.length === 0 ? (
+        onViewableItemsChanged={onTranscriptViewableItemsChanged}
+        viewabilityConfig={transcriptViewabilityConfig}
+        onScrollToIndexFailed={handleScrollToIndexFailed}
+        ListEmptyComponent={
           <View style={styles.emptyTranscript}>
-            <Ionicons name="document-text-outline" size={34} color={theme.colors.textTertiary} />
-            <Text style={[styles.emptyTranscriptText, { color: theme.colors.textSecondary }]}>
+            <Ionicons
+              name="document-text-outline"
+              size={34}
+              color={theme.colors.textTertiary}
+            />
+            <Text
+              style={[
+                styles.emptyTranscriptText,
+                { color: theme.colors.textSecondary },
+              ]}
+            >
               {status || '这个视频还没有可用字幕'}
             </Text>
           </View>
-        ) : (
-          cues.map((cue, index) => {
-            const active = index === activeIndex;
-            const past = index < activeIndex;
-            const visible =
-              index >= visibleCueRange.first && index <= visibleCueRange.last;
-            const saved = active
-              ? sentenceFavorites.some((fav) => fav.id === sentenceFavoriteId(videoId, cue.start))
-              : false;
-            return (
-              <View
-                key={`${cue.start}-${index}`}
-                onLayout={(event) => {
-                  cueOffsets.current[index] = event.nativeEvent.layout.y;
-                  if (index === activeIndex) {
-                    requestAnimationFrame(() =>
-                      updateVisibleCueRange(transcriptScrollRef.current)
-                    );
-                  }
-                  if (index === activeIndex && followingTranscriptRef.current) {
-                    const animated = transcriptInitializedRef.current;
-                    transcriptInitializedRef.current = true;
-                    requestAnimationFrame(() => {
-                      if (followingTranscriptRef.current) {
-                        scrollTranscriptToActive(animated);
-                      }
-                    });
-                  }
-                }}
-                style={styles.cue}
-              >
-                {active ? (
-                  <View style={styles.cueHeader}>
-                    <Pressable
-                      onPress={() => seekFromTranscript(cue, index)}
-                      hitSlop={6}
-                      accessibilityLabel="跳到本句"
-                    >
-                      <Text style={[styles.cueTime, { color: theme.colors.textTertiary }]}>
-                        {formatTime(cue.start)}
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => toggleCueFavorite(cue)}
-                      hitSlop={8}
-                      accessibilityLabel={saved ? '取消收藏这句' : '收藏这句'}
-                      style={styles.cueHeart}
-                    >
-                      <Ionicons
-                        name={saved ? 'heart' : 'heart-outline'}
-                        size={22}
-                        color={saved ? theme.colors.primary : theme.colors.textTertiary}
-                      />
-                    </Pressable>
-                  </View>
-                ) : null}
-                <Pressable onPress={() => seekFromTranscript(cue, index)}>
-                  <CueFade
-                    active={active}
-                    paused={!playing}
-                    visible={visible}
-                    past={past}
-                  >
-                  {showOriginal ? (
-                    <Text
-                      style={[
-                        styles.cueOriginal,
-                        {
-                          color: active
-                            ? theme.colors.primary
-                            : theme.colors.text,
-                          fontSize: Math.max(14, fontSize),
-                          lineHeight: transcriptOriginalLineHeight,
-                          fontFamily: originalFont,
-                          fontWeight: originalWeight,
-                        },
-                        active && { fontWeight: '800' },
-                      ]}
-                    >
-                      {cue.text}
-                    </Text>
-                  ) : null}
-                  {showTranslation && cue.translation ? (
-                    <Text
-                      style={[
-                        styles.cueTranslation,
-                        {
-                          color: theme.colors.textSecondary,
-                          fontSize: Math.max(12, fontSize - (showOriginal ? 3 : 0)),
-                          lineHeight: transcriptTranslationLineHeight,
-                          marginTop: showOriginal ? 10 : 0,
-                          fontFamily: translationFont,
-                          fontWeight: translationWeight,
-                        },
-                        active && { color: showOriginal ? theme.colors.text : theme.colors.primary },
-                      ]}
-                    >
-                      {cue.translation}
-                    </Text>
-                  ) : null}
-                  {showTranslation && !cue.translation && translationPending ? (
-                    <CueTranslationSkeleton
-                      text={cue.text}
-                      color={theme.colors.border}
-                      height={Math.max(9, Math.round(Math.max(12, fontSize - (showOriginal ? 3 : 0)) * 0.62))}
-                      marginTop={showOriginal ? 10 : 0}
-                      opacity={active ? 1 : past ? 0.5 : 0.38}
-                    />
-                  ) : null}
-                  </CueFade>
-                </Pressable>
-              </View>
-            );
-          })
-        )}
-      </ScrollView>
+        }
+      />
       {!followingTranscript && activeCue ? (
         <Pressable
           onPress={resumeTranscriptFollow}
