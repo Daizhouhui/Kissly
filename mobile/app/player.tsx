@@ -192,6 +192,7 @@ function playerBridgeScript(startAt = 0) {
       wantPlay: previous ? previous.wantPlay : true,
       userPaused: previous ? previous.userPaused : false,
       frameReady: false,
+      hasStarted: previous ? !!previous.hasStarted : false,
       timer: null,
       cssTimer: null,
       startTimer: null,
@@ -353,7 +354,15 @@ function playerBridgeScript(startAt = 0) {
         bridge.startTimer = null;
       }
       applyStart(v);
+      if (!v.paused && isFrameReady(v)) {
+        // A video that is already playing with a decoded frame has definitely
+        // started; do not let a later orientation re-enter the first-frame gate.
+        bridge.hasStarted = true;
+      }
       if (v.paused || v.ended) {
+        // From this point the user has seen playback. A later orientation or
+        // player re-render must not be treated as a first-frame autoplay.
+        bridge.hasStarted = true;
         try {
           var result = v.play();
           if (result && result.catch) result.catch(function(){});
@@ -396,9 +405,11 @@ function playerBridgeScript(startAt = 0) {
           bridge.startTimer = null;
         }
       }
-      if (!isFrameReady(v) && !v.paused) {
-        // Some YouTube builds autoplay before the first frame is decoded.
-        // Hold the picture until loadeddata so audio cannot lead the video.
+      if (!bridge.hasStarted && !isFrameReady(v) && !v.paused) {
+        // Gate only the very first autoplay before a decoded frame exists.
+        // After playback has started, a rotation can briefly report
+        // readyState/videoWidth as 0; pausing there caused an endless
+        // play-then-pause loop when the user returned from fullscreen.
         try { v.pause(); } catch(e) {}
       }
       if (!v.__kissBound) {
@@ -894,6 +905,7 @@ function playerBridgeScript(startAt = 0) {
       play: function(){
         bridge.userPaused = false;
         bridge.wantPlay = true;
+        bridge.hasStarted = true;
         var v = getVideo();
         if (v) v.__kissUserPaused = false;
         maybeStart(v);
@@ -1035,6 +1047,7 @@ function playerBridgeScript(startAt = 0) {
         bridge.userPaused = false;
         bridge.wantPlay = true;
         bridge.frameReady = false;
+        bridge.hasStarted = false;
         bridge.videoRef = null;
         bridge.captionBusy = false;
         bridge.captionFinish = null;
