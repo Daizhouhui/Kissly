@@ -10,7 +10,7 @@ function check(name, fn) {
 }
 
 check('global cache clear covers every disposable cache family', () => {
-  for (const prefix of ['captions:', 'cues:', 'feed:', 'title-cache']) {
+  for (const prefix of ['captions:', 'cues:', 'feed:', 'title-cache', 'video-meta:']) {
     assert.ok(GLOBAL_CACHE_PREFIXES.includes(prefix), prefix);
   }
 });

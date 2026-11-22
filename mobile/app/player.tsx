@@ -50,6 +50,10 @@ import {
   saveCachedCaptions,
 } from '@/src/core/youtube/captionCache';
 import { parseCaptionText } from '@/src/core/youtube/parse';
+import {
+  loadCachedVideoInfo,
+  saveVideoInfo,
+} from '@/src/core/youtube/videoInfoCache';
 import { fontWeightFor, fontFamilyFor, sentenceCues } from '@/src/ui/subtitleStyle';
 import { appAlert as Alert } from '@/src/ui/app-alert';
 import { AppPressable, AppPressableProps } from '@/src/ui/app-pressable';
@@ -376,16 +380,40 @@ function playerBridgeScript(startAt = 0) {
       }
       scheduleAudio(250);
     }
+    function bufferedRange(v){
+      var current = Number(v && v.currentTime) || 0;
+      try {
+        var ranges = v.buffered;
+        if (!ranges || !ranges.length) return { start: current, end: current };
+        var start = current;
+        var end = current;
+        for (var i = 0; i < ranges.length; i += 1) {
+          var rangeStart = Number(ranges.start(i));
+          var rangeEnd = Number(ranges.end(i));
+          if (!isFinite(rangeStart) || !isFinite(rangeEnd)) continue;
+          if (rangeStart <= current + 0.5 && rangeEnd >= current - 0.5) {
+            if (rangeEnd > end) end = rangeEnd;
+            if (rangeStart < start || start === current) start = rangeStart;
+          }
+        }
+        return { start: start, end: end };
+      } catch(e) {
+        return { start: current, end: current };
+      }
+    }
     function report(){
       var v = getVideo();
       var p = getPlayer();
       if (!v) return;
       var quality = '';
       try { quality = p && p.getPlaybackQuality ? p.getPlaybackQuality() : ''; } catch(e) {}
+      var buffer = bufferedRange(v);
       send({
         type: 'time',
         current: Number(v.currentTime) || 0,
         duration: Number(v.duration) || 0,
+        bufferedStart: buffer.start,
+        bufferedEnd: buffer.end,
         playing: !v.paused && !v.ended,
         ready: isFrameReady(v),
         rate: v.playbackRate,
@@ -1214,6 +1242,8 @@ export default function PlayerScreen() {
   const progressRef = useRef({
     current: 0,
     duration: 0,
+    bufferedStart: 0,
+    bufferedEnd: 0,
     ad: false,
     lastDuration: 0,
   });
@@ -1236,6 +1266,8 @@ export default function PlayerScreen() {
   const [blocked, setBlocked] = useState(false);
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [bufferedStart, setBufferedStart] = useState(0);
+  const [bufferedEnd, setBufferedEnd] = useState(0);
   const [quality, setQuality] = useState('');
   const [videoProblem, setVideoProblem] = useState('');
   const [fullscreen, setFullscreen] = useState(false);
@@ -1630,14 +1662,24 @@ export default function PlayerScreen() {
         setSourceCues(cached.cues);
         setMetaTitle(initialTitle);
         setMetaAuthor(initialAuthor);
-        void getVideoMeta(videoId)
-          .then((meta) => {
+        void (async () => {
+          const info = await loadCachedVideoInfo(videoId);
+          if (cancelled) return;
+          if (info) {
+            setMetaTitle(info.title || initialTitle);
+            setMetaAuthor(info.author || initialAuthor);
+            setMetaChannelId(info.channelId ?? '');
+            if (info.channelId) return;
+          }
+          try {
+            const meta = await getVideoMeta(videoId);
             if (cancelled) return;
             setMetaTitle(meta.title || initialTitle);
             setMetaAuthor(meta.author || initialAuthor);
             setMetaChannelId(meta.channelId ?? '');
-          })
-          .catch(() => {});
+            void saveVideoInfo(videoId, meta);
+          } catch {}
+        })();
         await translate(
           cached.cues,
           cached.trackKey,
@@ -1654,6 +1696,7 @@ export default function PlayerScreen() {
         setMetaTitle(meta.title || initialTitle);
         setMetaAuthor(meta.author || initialAuthor);
         setMetaChannelId(meta.channelId ?? '');
+        void saveVideoInfo(videoId, meta);
         const tracks = pickCaptionTracks(
           meta.captionTracks,
           learningLang.startsWith('en') ? 'en' : learningLang
@@ -2357,6 +2400,14 @@ export default function PlayerScreen() {
         progressRef.current.duration = message.duration;
         setDuration(message.duration);
       }
+      if (typeof message.bufferedStart === 'number') {
+        progressRef.current.bufferedStart = message.bufferedStart;
+        setBufferedStart(message.bufferedStart);
+      }
+      if (typeof message.bufferedEnd === 'number') {
+        progressRef.current.bufferedEnd = message.bufferedEnd;
+        setBufferedEnd(message.bufferedEnd);
+      }
       if (typeof message.playing === 'boolean') setPlaying(message.playing);
       if (typeof message.ad === 'boolean') {
         progressRef.current.ad = message.ad;
@@ -2789,6 +2840,10 @@ export default function PlayerScreen() {
             webReadyRef.current = false;
             setReady(false);
             setVideoLoading(true);
+            setBufferedStart(0);
+            setBufferedEnd(0);
+            progressRef.current.bufferedStart = 0;
+            progressRef.current.bufferedEnd = 0;
             armVideoLoadingFallback();
           }}
           onLoadEnd={() => {
@@ -2912,6 +2967,15 @@ export default function PlayerScreen() {
     </View>
   );
 
+  const bufferStartRatio = duration
+    ? Math.max(0, Math.min(1, bufferedStart / duration))
+    : 0;
+  const bufferEndRatio = duration
+    ? Math.max(0, Math.min(1, bufferedEnd / duration))
+    : 0;
+  const bufferLeft = bufferStartRatio * progressWidth;
+  const bufferWidth = Math.max(0, (bufferEndRatio - bufferStartRatio) * progressWidth);
+
   const progress = (
     <View
       style={styles.progressTouch}
@@ -2930,6 +2994,15 @@ export default function PlayerScreen() {
       onResponderTerminationRequest={() => false}
     >
       <View style={[styles.progressRail, { backgroundColor: theme.colors.surfaceAlt }]}>
+        <View
+          style={[
+            styles.progressBuffer,
+            {
+              left: bufferLeft,
+              width: bufferWidth,
+            },
+          ]}
+        />
         <View
           style={[
             styles.progressFill,
@@ -3200,6 +3273,15 @@ export default function PlayerScreen() {
                 onResponderTerminationRequest={() => false}
               >
                 <View style={styles.landProgressRail}>
+                  <View
+                    style={[
+                      styles.landProgressBuffer,
+                      {
+                        left: bufferLeft,
+                        width: bufferWidth,
+                      },
+                    ]}
+                  />
                   <View
                     style={[
                       styles.landProgressFill,
@@ -5447,6 +5529,7 @@ const styles = StyleSheet.create({
   controls: { backgroundColor: '#120E1B', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#241C33', paddingHorizontal: 18, paddingTop: 6 },
   progressTouch: { height: 22, justifyContent: 'center' },
   progressRail: { height: 4, ...radiusStyle(RADIUS.pill), backgroundColor: '#2B2340', overflow: 'hidden' },
+  progressBuffer: { position: 'absolute', top: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.22)' },
   progressFill: { height: '100%', ...radiusStyle(RADIUS.pill), backgroundColor: '#446B5B' },
   progressThumb: {
     position: 'absolute',
@@ -5594,6 +5677,7 @@ const styles = StyleSheet.create({
   },
   landProgressTouch: { flex: 1, height: 28, justifyContent: 'center', minWidth: 80 },
   landProgressRail: { height: 4, ...radiusStyle(RADIUS.pill), backgroundColor: 'rgba(255,255,255,0.28)', overflow: 'hidden' },
+  landProgressBuffer: { position: 'absolute', top: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.42)' },
   landProgressFill: { height: '100%', backgroundColor: '#FFFFFF' },
   landIconButton: {
     width: 40,

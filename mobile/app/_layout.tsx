@@ -31,6 +31,7 @@ export default function RootLayout() {
       { prefix: 'cues:v3:', ttlMs: 30 * day },
       { prefix: 'cues:v4:', ttlMs: 30 * day },
       { prefix: 'feed:', ttlMs: 10 * 60 * 1000 },
+      { prefix: 'video-meta:', ttlMs: 7 * day },
     ]).catch(() => {});
     maybeAutoSync().catch(() => {});
   }, [hydrated]);

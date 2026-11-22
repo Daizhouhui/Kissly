@@ -235,7 +235,7 @@ export default function AboutScreen() {
       const removed = await clearGlobalCaches();
       Alert.alert(
         '缓存已清除',
-        `已清理 ${removed} 项字幕、翻译和订阅流缓存。\n\n历史、收藏、订阅、设置和账号数据都没有改动。`
+        `已清理 ${removed} 项字幕、翻译、订阅流和视频信息缓存。\n\n历史、收藏、订阅、设置和账号数据都没有改动。`
       );
     } catch (error) {
       Alert.alert(
@@ -251,7 +251,7 @@ export default function AboutScreen() {
     if (maintenance) return;
     Alert.alert(
       '清除缓存？',
-      '会删除字幕、翻译、订阅流和标题的临时缓存，下次打开视频会重新加载。\n\n不会删除历史、收藏、订阅、设置或账号数据。',
+      '会删除字幕、翻译、订阅流、标题和视频信息的临时缓存，下次打开视频会重新加载。\n\n不会删除历史、收藏、订阅、设置或账号数据。',
       [
         { text: '取消', style: 'cancel' },
         {
@@ -331,7 +331,7 @@ export default function AboutScreen() {
           <Row
             icon="trash-outline"
             title="清除缓存"
-            subtitle="字幕、翻译、订阅流临时文件"
+            subtitle="字幕、翻译、订阅流、视频信息临时文件"
             value={maintenance === 'cache' ? '清理中…' : undefined}
             onPress={confirmClearCache}
           />
