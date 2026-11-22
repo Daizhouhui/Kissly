@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
+import { usePathname } from 'expo-router';
 import { AppState, Platform, StyleSheet, View } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 
 import { useAppStore } from '../core/store';
+import { shouldProbeYoutubeLogin } from './youtube-login-probe-path';
 
 const LOGIN_PROBE_URL = 'https://m.youtube.com/feed/channels?hl=zh-CN';
 const LOGIN_PROBE_TTL_MS = 3 * 60 * 60 * 1000;
@@ -43,6 +45,7 @@ true;
 const AnyWebView: any = WebView;
 
 export function YoutubeLoginProbe({ enabled }: { enabled: boolean }) {
+  const pathname = usePathname();
   const status = useAppStore((state) => state.youtubeLoginStatus);
   const checkedAt = useAppStore((state) => state.youtubeLoginCheckedAt);
   const setYoutubeLoginStatus = useAppStore((state) => state.setYoutubeLoginStatus);
@@ -59,7 +62,7 @@ export function YoutubeLoginProbe({ enabled }: { enabled: boolean }) {
   }, []);
 
   useEffect(() => {
-    if (!enabled || Platform.OS === 'web') {
+    if (!enabled || Platform.OS === 'web' || !shouldProbeYoutubeLogin(pathname)) {
       setActive(false);
       return;
     }
@@ -68,7 +71,7 @@ export function YoutubeLoginProbe({ enabled }: { enabled: boolean }) {
       return;
     }
     setActive(true);
-  }, [enabled, foregroundAt, status, checkedAt]);
+  }, [enabled, foregroundAt, pathname, status, checkedAt]);
 
   useEffect(() => {
     if (!active) return;
