@@ -166,7 +166,6 @@ function playerBridgeScript(startAt = 0) {
     if (previous) previous.alive = false;
     if (previous && previous.timer) clearInterval(previous.timer);
     if (previous && previous.cssTimer) clearInterval(previous.cssTimer);
-    if (previous && previous.qualityTimer) clearInterval(previous.qualityTimer);
     if (previous && previous.startTimer) clearTimeout(previous.startTimer);
     var bridge = window.__kissBridge = {
       mode: 'mobile-watch',
@@ -176,7 +175,6 @@ function playerBridgeScript(startAt = 0) {
       frameReady: false,
       timer: null,
       cssTimer: null,
-      qualityTimer: null,
       startTimer: null,
       videoRef: null,
       startAt: requestedStart,
@@ -280,15 +278,6 @@ function playerBridgeScript(startAt = 0) {
     function scheduleAudio(delay){
       if (audioFixTimer) clearTimeout(audioFixTimer);
       audioFixTimer = setTimeout(function(){ ensureAudio(); }, delay || 250);
-    }
-    function setQuality(){
-      try {
-        var p = getPlayer();
-        if (p && p.setPlaybackQualityRange) {
-          p.setPlaybackQualityRange('hd1080','hd1080');
-          if (p.setPlaybackQuality) p.setPlaybackQuality('hd1080');
-        }
-      } catch(e) {}
     }
     function isFrameReady(v){
       return !!(v && v.readyState >= 2 && v.videoWidth > 0);
@@ -401,15 +390,6 @@ function playerBridgeScript(startAt = 0) {
         v.addEventListener('playing', function(){
           scheduleAudio(180);
           setTimeout(ensureAudio, 900);
-          // Keep the first frame on auto quality so it appears quickly, then
-          // upgrade to 1080p only after playback has started.
-          if (!v.__kissQualityStarted) {
-            v.__kissQualityStarted = true;
-            setTimeout(setQuality, 1800);
-          }
-          if (!bridge.qualityTimer) {
-            bridge.qualityTimer = setInterval(setQuality, 5000);
-          }
         });
         v.addEventListener('loadedmetadata', function(){
           scheduleAudio(180);
@@ -444,9 +424,6 @@ function playerBridgeScript(startAt = 0) {
       if (isFrameReady(v)) {
         announceReady(v);
         maybeStart(v);
-      }
-      if (!bridge.qualityTimer && !v.paused) {
-        bridge.qualityTimer = setInterval(setQuality, 5000);
       }
       if (!bridge.timer) {
         bridge.timer = setInterval(report, 900);
@@ -938,7 +915,6 @@ function playerBridgeScript(startAt = 0) {
       rate: function(rate){ var v=getVideo(); try{ if(v)v.playbackRate=Number(rate)||1; }catch(e){}; return true; },
       mute: function(muted){ var v=getVideo(); try{ if(v)v.muted=!!muted; }catch(e){}; return true; },
       audio: function(){ ensureAudio(); return true; },
-      quality: function(){ setQuality(); return true; },
       captions: function(lang, tracks, videoId){
         if (bridge.captionBusy) return true;
         bridge.captionBusy = true;
@@ -2678,7 +2654,7 @@ export default function PlayerScreen() {
       {!landscape && !hideVideo && !blindMode && !adShowing && nativeVideo && controlsVisible ? (
         <View style={styles.qualityChip} pointerEvents="none">
           <Text style={styles.qualityChipText}>
-            {quality ? quality.toUpperCase() : 'HD1080'} · 优先
+            {quality ? quality.toUpperCase() : 'AUTO'} · 自适应
           </Text>
         </View>
       ) : null}
