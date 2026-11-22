@@ -275,11 +275,12 @@ tsc --noEmit 通过
 
 P1-13 说明：这次只去掉离屏行的动画开销，`Text` 本身仍全部挂载；真正的窗口化（只渲染视口附近若干行）尚未做。
 
-## 第四批：导出的时间字段
+## 第四批：导出时间与历史上限说明
 
 | 编号 | 问题 | 提交 | 改动要点 | 验证 |
 | --- | --- | --- | --- | --- |
 | P2-2 | 历史 CSV 只有 `savedAt`，会把“很久以前第一次打开”误当成最近观看 | `1e3df4c5` | 增加 `lastWatchedAt` 列，导出 `item.lastWatchedAt ?? item.savedAt` | tsc |
+| P2-3 | 历史超过 120 条后旧记录静默消失 | `25e0517a` | 抽出 `HISTORY_LIMIT`，历史页到达上限时明确显示“更早的记录会自动清理” | tsc |
 
 ## 全量回归
 
@@ -302,7 +303,7 @@ npm run typecheck 通过
 - **P0-7 发布签名**：Android release 仍使用 debug keystore，CI 每次签名可能不同，覆盖安装可能失败。需要用户决定固定 release keystore + GitHub Secrets，或接受升级必须卸载。按用户要求，未自动构建/发布 Release。
 - **长视频真正的窗口化**：当前只做了当前句二分查找、离屏行动画静态化、请求并行和缓存清理；1000～2000 条字幕的 `Text` 仍全部挂载，逐帧 `setCurrent` 仍会让整个播放器组件重渲染。要进一步优化需要把字幕列表拆成独立 memo 组件并按视口窗口渲染，属于结构性改动，建议单独一轮做并配真机性能对比。
 - **iOS 系统翻译的未知语言回退**：JS 层已不再传 `auto`，但 `SystemTranslateModule.swift` 的 `normalizeLanguage` 仍会把空值/`auto` 回退成英语；未知语言在 iOS 上仍可能落到英语。Windows 环境无法编译 iOS，暂不改。
-- **历史 120 条上限**：`recordHistory` 仍用 `.slice(0, 120)` 静默截断，属于产品容量选择；如需保留更多历史，需要同时评估 AsyncStorage 体积和历史页加载性能。
+- **历史保留条数**：已达到上限时会明确提示“更早的记录会自动清理”，但仍然是 120 条产品上限；如需保留更多历史，需要同时评估 AsyncStorage 体积和历史页加载性能。
 - **死代码/半成品**：`fetchTranslatedCaptionCues`、`clearChannelVideoCache`、`updateSubscription`、`setSubscriptions`、`PlayerPayload`、`originalTiming`、播客 Tab 的音频模式、订阅分组 UI、语速/音调仅试听生效、`interfaceLang` 仅展示。这些不是当前可复现 bug，未在本轮删除或补全。
 - **CI 只构建 arm64-v8a**，不覆盖 32 位设备；本地 `mobile/android` 是旧生成物，versionCode/versionName 低于 `app.json`，直接本地打包会版本降级。
 - **GitHub Actions 尚未实际运行**：`fix/p0-batch` 的 push 不会自动触发工作流，需要到 Actions 页面手动选分支、选 `android` 运行一次。
