@@ -38,15 +38,30 @@ export default function WebdavSettingsScreen() {
   const [enabled, setEnabled] = useState(settings.webdav.enabled);
   const [testing, setTesting] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [passwordLoaded, setPasswordLoaded] = useState(
+    Boolean(settings.webdav.password)
+  );
 
   useEffect(() => {
-    if (settings.webdav.password) return;
+    if (settings.webdav.password) {
+      setPasswordLoaded(true);
+      return;
+    }
+    let active = true;
     getSecret('webdavPassword').then((value) => {
+      if (!active) return;
       if (value) setPassword(value);
+      setPasswordLoaded(true);
     });
+    return () => {
+      active = false;
+    };
   }, [settings.webdav.password]);
 
   const persist = async () => {
+    // Saving before the SecureStore read completes would overwrite the stored
+    // password with the empty initial input.
+    if (!passwordLoaded) return;
     await setSecret('webdavPassword', password);
     patchSettings({
       webdav: {
@@ -100,13 +115,23 @@ export default function WebdavSettingsScreen() {
         right={
           <Pressable
             feedback="opacity"
+            disabled={!passwordLoaded}
             onPress={async () => {
               await persist();
               Alert.alert('已保存', 'WebDAV 配置已保存。');
             }}
             hitSlop={8}
           >
-            <Text style={{ color: theme.colors.primary, fontSize: 14, fontWeight: '700' }}>保存</Text>
+            <Text
+              style={{
+                color: theme.colors.primary,
+                fontSize: 14,
+                fontWeight: '700',
+                opacity: passwordLoaded ? 1 : 0.45,
+              }}
+            >
+              保存
+            </Text>
           </Pressable>
         }
       />
@@ -183,7 +208,7 @@ export default function WebdavSettingsScreen() {
 
           <Pressable
             onPress={test}
-            disabled={testing}
+            disabled={testing || !passwordLoaded}
             style={{
               height: 44,
               borderRadius: RADIUS.control,
@@ -193,7 +218,7 @@ export default function WebdavSettingsScreen() {
               justifyContent: 'center',
               flexDirection: 'row',
               gap: 8,
-              opacity: testing ? 0.6 : 1,
+              opacity: testing || !passwordLoaded ? 0.6 : 1,
             }}
           >
             {testing ? <ActivityIndicator size="small" color={theme.colors.primary} /> : <Ionicons name="pulse" size={16} color={theme.colors.primary} />}
@@ -268,7 +293,7 @@ export default function WebdavSettingsScreen() {
         <Pressable
           tone="onColor"
           onPress={runSync}
-          disabled={syncing}
+          disabled={syncing || !passwordLoaded}
           style={{
             marginTop: 20,
             height: 52,
@@ -279,7 +304,7 @@ export default function WebdavSettingsScreen() {
             justifyContent: 'center',
             flexDirection: 'row',
             gap: 8,
-            opacity: syncing ? 0.7 : 1,
+            opacity: syncing || !passwordLoaded ? 0.7 : 1,
           }}
         >
           {syncing ? <ActivityIndicator color="#fff" /> : <Ionicons name="sync" size={18} color="#fff" />}
