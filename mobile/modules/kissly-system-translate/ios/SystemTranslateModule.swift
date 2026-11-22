@@ -1,12 +1,20 @@
 import ExpoModulesCore
+import Foundation
 import MLKitTranslate
 
 public class SystemTranslateModule: Module {
-  private func normalizeLanguage(_ tag: String) -> TranslateLanguage {
+  private func normalizeLanguage(_ tag: String, field: String) throws -> TranslateLanguage {
     let normalized = tag.trimmingCharacters(in: .whitespacesAndNewlines)
       .replacingOccurrences(of: "_", with: "-")
     if normalized.isEmpty || normalized.lowercased() == "auto" {
-      return .english
+      throw NSError(
+        domain: "KisslySystemTranslate",
+        code: 1,
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "系统翻译需要明确的\(field)语言，不能使用 auto 或空值。"
+        ]
+      )
     }
     // ML Kit's iOS header exposes TranslateLanguage as an NSString-backed
     // typed enum and does not provide the `fromLanguageTag` helper shown in
@@ -15,9 +23,9 @@ public class SystemTranslateModule: Module {
     return TranslateLanguage(rawValue: base)
   }
 
-  private func makeTranslator(from: String, to: String) -> Translator {
-    let source = normalizeLanguage(from)
-    let target = normalizeLanguage(to)
+  private func makeTranslator(from: String, to: String) throws -> Translator {
+    let source = try normalizeLanguage(from, field: "源")
+    let target = try normalizeLanguage(to, field: "目标")
     return Translator.translator(
       options: TranslatorOptions(sourceLanguage: source, targetLanguage: target)
     )
@@ -58,27 +66,35 @@ public class SystemTranslateModule: Module {
     AsyncFunction("isAvailable") { true }
 
     AsyncFunction("prepare") { (from: String, to: String, promise: Promise) in
-      let translator = self.makeTranslator(from: from, to: to)
-      translator.downloadModelIfNeeded { error in
-        if let error = error {
-          promise.reject("ERR_SYSTEM_MODEL", error.localizedDescription)
-        } else {
-          promise.resolve(true)
+      do {
+        let translator = try self.makeTranslator(from: from, to: to)
+        translator.downloadModelIfNeeded { error in
+          if let error = error {
+            promise.reject("ERR_SYSTEM_MODEL", error.localizedDescription)
+          } else {
+            promise.resolve(true)
+          }
         }
+      } catch {
+        promise.reject("ERR_SYSTEM_LANGUAGE", error.localizedDescription)
       }
     }
 
     AsyncFunction("translate") { (texts: [String], from: String, to: String, promise: Promise) in
-      let source = self.normalizeLanguage(from)
-      let target = self.normalizeLanguage(to)
-      if source == target {
-        promise.resolve(texts)
-        return
+      do {
+        let source = try self.normalizeLanguage(from, field: "源")
+        let target = try self.normalizeLanguage(to, field: "目标")
+        if source == target {
+          promise.resolve(texts)
+          return
+        }
+        let translator = try self.makeTranslator(from: from, to: to)
+        // The explicit prepare call owns downloading the model. Auto fallback
+        // must fail fast instead of silently pulling a large language pack.
+        self.translateSequentially(translator, texts, 0, [], promise)
+      } catch {
+        promise.reject("ERR_SYSTEM_LANGUAGE", error.localizedDescription)
       }
-      let translator = self.makeTranslator(from: from, to: to)
-      // The explicit prepare call owns downloading the model. Auto fallback
-      // must fail fast instead of silently pulling a large language pack.
-      self.translateSequentially(translator, texts, 0, [], promise)
     }
   }
 }
