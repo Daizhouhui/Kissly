@@ -67,7 +67,24 @@ const radiusStyle = (radius: number) => ({
   ...CONTINUOUS_CORNER,
 });
 
-function CueFade({
+function CueFade(props: {
+  active: boolean;
+  paused: boolean;
+  visible: boolean;
+  past: boolean;
+  children: ReactNode;
+}) {
+  if (!props.visible) {
+    return (
+      <View style={{ opacity: props.past ? 0.6 : 0.4 }}>
+        {props.children}
+      </View>
+    );
+  }
+  return <CueFadeAnimated {...props} />;
+}
+
+function CueFadeAnimated({
   active,
   paused,
   visible,
