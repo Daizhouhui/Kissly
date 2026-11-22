@@ -6,6 +6,7 @@ import { View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../src/core/store';
+import { pruneExpiredCaches } from '../src/core/storage';
 import { maybeAutoSync } from '../src/core/sync';
 import { AppAlertHost } from '../src/ui/app-alert';
 import { ErrorBoundary } from '../src/ui/error-boundary';
@@ -24,6 +25,12 @@ export default function RootLayout() {
     SplashScreen.hideAsync().catch(() => {});
     if (bootstrapped.current) return;
     bootstrapped.current = true;
+    const day = 24 * 60 * 60 * 1000;
+    pruneExpiredCaches([
+      { prefix: 'captions:v2:', ttlMs: 30 * day },
+      { prefix: 'cues:v3:', ttlMs: 30 * day },
+      { prefix: 'feed:', ttlMs: 10 * 60 * 1000 },
+    ]).catch(() => {});
     maybeAutoSync().catch(() => {});
   }, [hydrated]);
 
