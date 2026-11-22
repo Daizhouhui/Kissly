@@ -1,4 +1,4 @@
-import { WebDavConfig } from '../types';
+import type { WebDavConfig } from '../types';
 
 function utf8ToBase64(value: string): string {
   const chars =
@@ -36,6 +36,28 @@ function utf8ToBase64(value: string): string {
   return output;
 }
 
+export function encodeWebdavPath(value: string): string {
+  return value
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+}
+
+export function buildWebdavUrl(
+  base: string,
+  folder: string,
+  path = ''
+): string {
+  const root = base.replace(/\/+$/, '');
+  const folderPath = encodeWebdavPath(
+    (folder || 'Kissly').replace(/^\/+|\/+$/g, '')
+  );
+  const clean = path.replace(/^\/+/, '');
+  return clean
+    ? `${root}/${folderPath}/${encodeWebdavPath(clean)}`
+    : `${root}/${folderPath}`;
+}
+
 export class WebdavClient {
   private base: string;
   private auth: string;
@@ -48,12 +70,11 @@ export class WebdavClient {
   }
 
   private url(path: string): string {
-    const clean = path.replace(/^\/+/, '');
-    return `${this.base}/${this.folder}/${clean}`;
+    return buildWebdavUrl(this.base, this.folder, path);
   }
 
   private folderUrl(): string {
-    return `${this.base}/${this.folder}`;
+    return buildWebdavUrl(this.base, this.folder);
   }
 
   private async request(
