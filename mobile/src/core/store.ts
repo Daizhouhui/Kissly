@@ -9,6 +9,10 @@ import {
   stampsForAllKeys,
 } from './settingsSync';
 import type { SettingsStamps } from './settingsSync';
+import {
+  normalizeAutoFreeOrder,
+  normalizeAutoPaidOrder,
+} from './translate/autoOrder';
 import { HistoryItem, FavoriteItem, SentenceFavorite, Settings, Subscription } from './types';
 import { HistoryPatch, mergeHistoryEntry } from './watchProgress';
 
@@ -32,6 +36,18 @@ function deepMerge<T>(base: T, patch: unknown): T {
     }
   }
   return result as T;
+}
+
+/**
+ * Order arrays arrive from AsyncStorage and WebDAV. Always repair them before
+ * they reach the translator or the reorder controls.
+ */
+function normalizeSettings(settings: Settings): Settings {
+  return {
+    ...settings,
+    autoFreeOrder: normalizeAutoFreeOrder(settings.autoFreeOrder),
+    autoPaidOrder: normalizeAutoPaidOrder(settings.autoPaidOrder),
+  };
 }
 
 export type SyncState = 'idle' | 'syncing' | 'ok' | 'error';
@@ -132,7 +148,7 @@ export const useAppStore = create<AppState>()(
       setHydrated: (value) => set({ hydrated: value }),
       patchSettings: (patch) =>
         set((state) => {
-          const next = deepMerge(state.settings, patch);
+          const next = normalizeSettings(deepMerge(state.settings, patch));
           const now = Date.now();
           const stamps = { ...state.settingsStamps };
           let touchedSyncedKey = false;
@@ -164,7 +180,7 @@ export const useAppStore = create<AppState>()(
       replaceSettings: (settings, updatedAt, stamps) => {
         const at = updatedAt ?? Date.now();
         set({
-          settings: deepMerge(DEFAULT_SETTINGS, settings),
+          settings: normalizeSettings(deepMerge(DEFAULT_SETTINGS, settings)),
           settingsStamps: stamps ? { ...stamps } : stampsForAllKeys(at),
           settingsUpdatedAt: at,
         });
@@ -353,7 +369,9 @@ export const useAppStore = create<AppState>()(
             (saved?.settings as { designVersion?: number } | undefined)
               ?.designVersion ?? 0
           ) || 0;
-        const mergedSettings = deepMerge(DEFAULT_SETTINGS, saved?.settings);
+        const mergedSettings = normalizeSettings(
+          deepMerge(DEFAULT_SETTINGS, saved?.settings)
+        );
         // 1.x shipped with a blue iOS-like palette, 1.2 used violet. Move
         // installs that still carry the untouched default onto the Android
         // reference sage palette exactly once.

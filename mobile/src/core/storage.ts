@@ -49,10 +49,12 @@ export async function removeKeysByPrefixes(prefixes: string[]): Promise<number> 
 
 export type TimedValue<T> = { at: number; value: T };
 
-export async function loadCached<T>(
+export type LoadedCacheEntry<T> = { at: number; value: T };
+
+export async function loadCachedEntry<T>(
   key: string,
   ttlMs: number
-): Promise<T | null> {
+): Promise<LoadedCacheEntry<T> | null> {
   const entry = await loadJson<TimedValue<T> | null>(key, null);
   if (!entry || !entry.at) return null;
   if (Date.now() - entry.at > ttlMs) {
@@ -61,7 +63,15 @@ export async function loadCached<T>(
     void removeKey(key);
     return null;
   }
-  return entry.value;
+  return { at: entry.at, value: entry.value };
+}
+
+export async function loadCached<T>(
+  key: string,
+  ttlMs: number
+): Promise<T | null> {
+  const entry = await loadCachedEntry<T>(key, ttlMs);
+  return entry?.value ?? null;
 }
 
 export async function saveCached<T>(key: string, value: T): Promise<void> {

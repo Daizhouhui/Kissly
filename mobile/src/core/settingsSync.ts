@@ -11,6 +11,8 @@ export const SYNCED_SETTING_KEYS = [
   'interfaceLang',
   'provider',
   'autoFallbackDeepSeek',
+  'autoFreeOrder',
+  'autoPaidOrder',
   'translateTitles',
   'titleTranslationMode',
   'defaultTab',

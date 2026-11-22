@@ -9,10 +9,14 @@ import {
   View,
 } from 'react-native';
 
-import { PROVIDER_HINTS } from '../../src/core/defaults';
+import { PROVIDER_HINTS, PROVIDER_LABELS } from '../../src/core/defaults';
 import { getSecret, setSecret } from '../../src/core/secrets';
 import { useAppStore } from '../../src/core/store';
-import { ProviderId } from '../../src/core/types';
+import {
+  AutoFreeProviderId,
+  AutoPaidProviderId,
+  ProviderId,
+} from '../../src/core/types';
 import { testTranslation } from '../../src/core/translate';
 import { UnsupportedSystemLanguageError } from '../../src/core/translate/language';
 import {
@@ -40,7 +44,7 @@ const FREE: Engine[] = [
   {
     id: 'auto',
     title: '自动',
-    desc: '微软 → 谷歌 → Google 备用',
+    desc: '已缓存优先 · 免费/付费顺序可调',
     icon: 'flash',
     color: '#7C5CFF',
     badge: '推荐',
@@ -184,6 +188,26 @@ export default function TranslationSettingsScreen() {
     patchSettings({ provider: id });
   };
 
+  const moveFree = (id: AutoFreeProviderId, delta: number) => {
+    const order = useAppStore.getState().settings.autoFreeOrder;
+    const index = order.indexOf(id);
+    const target = index + delta;
+    if (index < 0 || target < 0 || target >= order.length) return;
+    const next = [...order];
+    [next[index], next[target]] = [next[target], next[index]];
+    patchSettings({ autoFreeOrder: next });
+  };
+
+  const movePaid = (id: AutoPaidProviderId, delta: number) => {
+    const order = useAppStore.getState().settings.autoPaidOrder;
+    const index = order.indexOf(id);
+    const target = index + delta;
+    if (index < 0 || target < 0 || target >= order.length) return;
+    const next = [...order];
+    [next[index], next[target]] = [next[target], next[index]];
+    patchSettings({ autoPaidOrder: next });
+  };
+
   const saveKeys = async () => {
     // Do not write the empty placeholders back over saved keys while the
     // SecureStore reads are still in flight.
@@ -198,7 +222,10 @@ export default function TranslationSettingsScreen() {
   };
 
   const test = async () => {
-    const target = provider === 'auto' ? 'microsoft' : provider;
+    const target =
+      provider === 'auto'
+        ? (settings.autoFreeOrder[0] ?? 'microsoft')
+        : provider;
     setTesting(true);
     try {
       // The test must use the key currently typed in the field, not the one
@@ -463,11 +490,79 @@ export default function TranslationSettingsScreen() {
           </Pressable>
         ) : null}
 
+        <SectionTitle title="自动模式顺序" />
+        <Text
+          style={{
+            color: theme.colors.textTertiary,
+            fontSize: 11.5,
+            lineHeight: 18,
+            marginTop: -2,
+            marginBottom: 10,
+            paddingHorizontal: 4,
+          }}
+        >
+          自动模式会先查已缓存字幕；没有缓存时按下面顺序尝试，未填 Key 的引擎自动跳过。用箭头调整优先级。
+        </Text>
+        <Card style={{ paddingVertical: 6, paddingHorizontal: 10 }}>
+          <Text
+            style={{
+              color: theme.colors.textSecondary,
+              fontSize: 12,
+              fontWeight: '700',
+              paddingVertical: 6,
+              paddingHorizontal: 4,
+            }}
+          >
+            免费引擎
+          </Text>
+          {settings.autoFreeOrder.map((id, index) => (
+            <ProviderOrderRow
+              key={id}
+              label={PROVIDER_LABELS[id] ?? id}
+              index={index}
+              total={settings.autoFreeOrder.length}
+              onUp={() => moveFree(id, -1)}
+              onDown={() => moveFree(id, 1)}
+              last={index === settings.autoFreeOrder.length - 1}
+            />
+          ))}
+        </Card>
+        <Card
+          style={{
+            paddingVertical: 6,
+            paddingHorizontal: 10,
+            marginTop: 10,
+          }}
+        >
+          <Text
+            style={{
+              color: theme.colors.textSecondary,
+              fontSize: 12,
+              fontWeight: '700',
+              paddingVertical: 6,
+              paddingHorizontal: 4,
+            }}
+          >
+            付费引擎（仅在“免费失败自动用付费引擎”开启时尝试）
+          </Text>
+          {settings.autoPaidOrder.map((id, index) => (
+            <ProviderOrderRow
+              key={id}
+              label={PROVIDER_LABELS[id] ?? id}
+              index={index}
+              total={settings.autoPaidOrder.length}
+              onUp={() => movePaid(id, -1)}
+              onDown={() => movePaid(id, 1)}
+              last={index === settings.autoPaidOrder.length - 1}
+            />
+          ))}
+        </Card>
+
         <SectionTitle title="翻译策略" />
         <Card style={{ paddingVertical: 4 }}>
           <SettingRow
-            title="免费失败自动用 DeepSeek"
-            desc="仅在已填写 DeepSeek Key 时生效"
+            title="免费失败自动用付费引擎"
+            desc="按上面的付费顺序尝试；未填写 Key 的引擎会跳过"
             value={settings.autoFallbackDeepSeek}
             onChange={(value) => patchSettings({ autoFallbackDeepSeek: value })}
           />
@@ -523,6 +618,114 @@ function Field({
         }}
       />
     </View>
+  );
+}
+
+function ProviderOrderRow({
+  label,
+  index,
+  total,
+  onUp,
+  onDown,
+  last,
+}: {
+  label: string;
+  index: number;
+  total: number;
+  onUp: () => void;
+  onDown: () => void;
+  last?: boolean;
+}) {
+  const theme = useAppTheme();
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        paddingVertical: 8,
+        borderBottomWidth: last ? 0 : StyleSheet.hairlineWidth,
+        borderBottomColor: theme.colors.border,
+      }}
+    >
+      <View
+        style={{
+          width: 22,
+          height: 22,
+          borderRadius: RADIUS.pill,
+          backgroundColor: theme.colors.surfaceAlt,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Text
+          style={{
+            color: theme.colors.textSecondary,
+            fontSize: 10,
+            fontWeight: '700',
+          }}
+        >
+          {index + 1}
+        </Text>
+      </View>
+      <Text
+        numberOfLines={1}
+        style={{ flex: 1, color: theme.colors.text, fontSize: 13, fontWeight: '600' }}
+      >
+        {label}
+      </Text>
+      <OrderArrow
+        direction="up"
+        label={`${label} 上移`}
+        disabled={index === 0}
+        onPress={onUp}
+      />
+      <OrderArrow
+        direction="down"
+        label={`${label} 下移`}
+        disabled={index === total - 1}
+        onPress={onDown}
+      />
+    </View>
+  );
+}
+
+function OrderArrow({
+  direction,
+  label,
+  disabled,
+  onPress,
+}: {
+  direction: 'up' | 'down';
+  label: string;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  const theme = useAppTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      disabled={disabled}
+      hitSlop={6}
+      feedback="opacity"
+      onPress={onPress}
+      style={{
+        width: 30,
+        height: 30,
+        borderRadius: RADIUS.control,
+        backgroundColor: theme.colors.surfaceAlt,
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: disabled ? 0.35 : 1,
+      }}
+    >
+      <Ionicons
+        name={direction === 'up' ? 'chevron-up' : 'chevron-down'}
+        size={17}
+        color={theme.colors.textSecondary}
+      />
+    </Pressable>
   );
 }
 

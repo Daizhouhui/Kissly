@@ -1,10 +1,15 @@
 import { getSecret } from '../secrets';
 import { getSettings } from '../store';
-import { loadCached, loadJson, saveCached, saveJson } from '../storage';
+import { loadCachedEntry, loadJson, saveCached, saveJson } from '../storage';
 import { Cue, ProviderId } from '../types';
 import { hashString } from '../utils';
+import {
+  autoCacheProviders,
+  buildProviderChain,
+} from './autoOrder';
 import { aiTranslate, deepseekConfig, openaiConfig, siliconflowConfig } from './ai';
-import { cueCacheKey, titleCacheKey } from './cacheKey';
+import { cueCacheKeyForProvider, titleCacheKey } from './cacheKey';
+import { pickBestCueCache } from './cacheSelection';
 import { googleTranslate } from './google';
 import { google2Translate } from './google2';
 import { microsoftTranslate } from './microsoft';
@@ -135,22 +140,11 @@ export async function translateTexts(
   const from = options.from ?? settings.sourceLang;
   const to = options.to ?? settings.targetLang;
   const timeout = settings.requestTimeoutMs;
-  const requested = settings.provider;
 
-  const chain: ProviderId[] =
-    requested === 'auto'
-      ? // Auto stays on free providers in a predictable order. Google2 is the
-        // last-resort built-in preset; DeepSeek is appended separately when enabled.
-        ['microsoft', 'google', 'google2']
-      : [requested];
-
-  const tryList = [...chain];
-  if (settings.autoFallbackDeepSeek && !tryList.includes('deepseek')) {
-    tryList.push('deepseek');
-  }
-  if (requested === 'deepseek' && !tryList.includes('deepseek')) {
-    tryList.unshift('deepseek');
-  }
+  // Auto uses the user's free order, then the paid order when fallback is
+  // enabled. Manual free engines keep the same paid safety net; manual paid
+  // engines never switch to another provider behind the user's back.
+  const tryList = buildProviderChain(settings);
 
   let lastError: unknown = null;
   for (const provider of tryList) {
@@ -201,32 +195,35 @@ export async function translateCueList(
   const settings = getSettings();
   const from = options.from ?? settings.sourceLang;
   const to = options.to ?? settings.targetLang;
-  const cacheKey = cueCacheKey(videoId, trackKey, from, to, settings);
-  const cached = options.ignoreCache
-    ? null
-    : await loadCached<{ cues: Cue[]; provider: ProviderId }>(
-        cacheKey,
-        CUE_CACHE_TTL_MS
-      );
-
-  // A cached list may be partial: batches saved before the user closed the
-  // player. Reuse every line that still matches this exact cue.
-  const translations = cues.map(() => '');
-  let provider: ProviderId | null = null;
-  if (
-    cached?.cues?.length === cues.length &&
-    cached.cues.every(
-      (cue, index) =>
-        Math.abs(cue.start - cues[index].start) < 0.002 &&
-        Math.abs(cue.end - cues[index].end) < 0.002 &&
-        cue.text === cues[index].text
+  const autoMode = settings.provider === 'auto';
+  const cacheProviders: ProviderId[] = autoMode
+    ? autoCacheProviders()
+    : [settings.provider];
+  const cacheKeys = Array.from(
+    new Set(
+      cacheProviders.map((provider) =>
+        cueCacheKeyForProvider(videoId, trackKey, from, to, settings, provider)
+      )
     )
-  ) {
-    provider = cached.provider;
-    cached.cues.forEach((cue, index) => {
-      if (cue.translation) translations[index] = cue.translation;
-    });
-  }
+  );
+
+  // Auto mode can reuse a complete translation produced earlier by any engine,
+  // even one the user no longer has in the current order. Manual mode stays
+  // scoped to the engine the user picked.
+  const cacheEntries = options.ignoreCache
+    ? []
+    : await Promise.all(
+        cacheKeys.map((key) =>
+          loadCachedEntry<{ cues: Cue[]; provider: ProviderId }>(
+            key,
+            CUE_CACHE_TTL_MS
+          )
+        )
+      );
+  const cached = pickBestCueCache(cues, cacheEntries);
+
+  const translations = cached?.translations ?? cues.map(() => '');
+  let provider: ProviderId | null = cached?.provider ?? null;
 
   const build = (values: string[]): Cue[] =>
     cues.map((cue, index) => ({
@@ -239,6 +236,45 @@ export async function translateCueList(
     onProgress?.(complete, provider);
     return { cues: complete, provider };
   }
+
+  const saveCueCache = async (
+    values: string[],
+    actualProvider: ProviderId
+  ) => {
+    const payload = { cues: build(values), provider: actualProvider };
+    const targets = autoMode
+      ? [
+          cueCacheKeyForProvider(
+            videoId,
+            trackKey,
+            from,
+            to,
+            settings,
+            'auto'
+          ),
+          cueCacheKeyForProvider(
+            videoId,
+            trackKey,
+            from,
+            to,
+            settings,
+            actualProvider
+          ),
+        ]
+      : [
+          cueCacheKeyForProvider(
+            videoId,
+            trackKey,
+            from,
+            to,
+            settings,
+            actualProvider
+          ),
+        ];
+    await Promise.all(
+      Array.from(new Set(targets)).map((key) => saveCached(key, payload))
+    );
+  };
 
   for (let start = 0; start < cues.length; start += TRANSLATE_BATCH_SIZE) {
     if (options.shouldStop?.()) {
@@ -269,9 +305,8 @@ export async function translateCueList(
     });
     provider = result.provider;
 
-    const partial = build(translations);
-    await saveCached(cacheKey, { cues: partial, provider: result.provider });
-    onProgress?.(partial, result.provider);
+    await saveCueCache(translations, result.provider);
+    onProgress?.(build(translations), result.provider);
   }
 
   const complete = build(translations);

@@ -24,6 +24,8 @@ const BASE = {
   interfaceLang: 'zh-CN',
   provider: 'auto',
   autoFallbackDeepSeek: true,
+  autoFreeOrder: ['microsoft', 'google', 'google2'],
+  autoPaidOrder: ['deepseek', 'siliconflow', 'openai'],
   translateTitles: true,
   titleTranslationMode: 'bilingual',
   defaultTab: 'video',

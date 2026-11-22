@@ -10,6 +10,8 @@ export const DEFAULT_SETTINGS: Settings = {
   interfaceLang: 'zh-CN',
   provider: 'auto',
   autoFallbackDeepSeek: true,
+  autoFreeOrder: ['microsoft', 'google', 'google2'],
+  autoPaidOrder: ['deepseek', 'siliconflow', 'openai'],
   translateTitles: true,
   titleTranslationMode: 'bilingual',
   defaultTab: 'video',
@@ -92,7 +94,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
 };
 
 export const PROVIDER_HINTS: Record<string, string> = {
-  auto: '依次尝试微软、谷歌和 Google 备用免费接口；全部失败后，再按设置决定是否切到 DeepSeek。',
+  auto: '自动模式先查已缓存字幕；没有缓存时按你设置的免费顺序尝试，全部失败后再按付费顺序尝试。',
   system:
     '调用手机系统自带的离线翻译。Android 需要 Google Play 服务，首次使用需下载语言包（每种约 30 MB），下载后不联网也能翻译。',
   microsoft: 'Edge 的内部免费接口，无需 Key，适合批量字幕，偶发限流。',

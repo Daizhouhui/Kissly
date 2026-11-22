@@ -1,12 +1,12 @@
+export type AutoFreeProviderId = 'microsoft' | 'google' | 'google2';
+
+export type AutoPaidProviderId = 'deepseek' | 'siliconflow' | 'openai';
+
 export type ProviderId =
   | 'auto'
   | 'system'
-  | 'microsoft'
-  | 'google'
-  | 'google2'
-  | 'deepseek'
-  | 'siliconflow'
-  | 'openai';
+  | AutoFreeProviderId
+  | AutoPaidProviderId;
 
 export type SubtitleMode = 'bilingual' | 'original' | 'translation';
 
@@ -93,6 +93,10 @@ export type Settings = {
   interfaceLang: string;
   provider: ProviderId;
   autoFallbackDeepSeek: boolean;
+  /** Auto mode tries these free engines in this order. */
+  autoFreeOrder: AutoFreeProviderId[];
+  /** Paid engines tried after the free chain when fallback is enabled. */
+  autoPaidOrder: AutoPaidProviderId[];
   translateTitles: boolean;
   titleTranslationMode: TitleTranslationMode;
   defaultTab: DefaultTab;

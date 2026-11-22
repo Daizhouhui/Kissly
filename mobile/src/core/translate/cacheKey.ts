@@ -17,8 +17,11 @@ function normalized(value: string | undefined): string {
  * point at a different model or a different OpenAI-compatible endpoint. Mixing
  * those into one cache key serves month-old translations from the old model.
  */
-export function providerCacheScope(settings: CacheSettings): string {
-  switch (settings.provider) {
+export function providerCacheScope(
+  settings: CacheSettings,
+  provider: ProviderId = settings.provider
+): string {
+  switch (provider) {
     case 'deepseek':
       return `deepseek:${normalized(settings.deepseekModel)}`;
     case 'siliconflow':
@@ -28,8 +31,22 @@ export function providerCacheScope(settings: CacheSettings): string {
         settings.openaiModel
       )}`;
     default:
-      return settings.provider;
+      return provider;
   }
+}
+
+export function cueCacheKeyForProvider(
+  videoId: string,
+  trackKey: string,
+  source: string,
+  target: string,
+  settings: CacheSettings,
+  provider: ProviderId
+): string {
+  return `cues:v4:${videoId}:${trackKey}:${source}:${target}:${providerCacheScope(
+    settings,
+    provider
+  )}`;
 }
 
 export function cueCacheKey(
@@ -42,9 +59,14 @@ export function cueCacheKey(
   // Source language is part of the contract: switching from "auto" to a
   // concrete language (or the other way around) must not reuse the old
   // provider's translation of the same track.
-  return `cues:v4:${videoId}:${trackKey}:${source}:${target}:${providerCacheScope(
-    settings
-  )}`;
+  return cueCacheKeyForProvider(
+    videoId,
+    trackKey,
+    source,
+    target,
+    settings,
+    settings.provider
+  );
 }
 
 export function titleCacheKey(

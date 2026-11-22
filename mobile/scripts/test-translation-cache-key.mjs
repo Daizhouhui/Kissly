@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import {
   cueCacheKey,
+  cueCacheKeyForProvider,
   providerCacheScope,
   titleCacheKey,
 } from '../src/core/translate/cacheKey.ts';
@@ -83,6 +84,22 @@ check('non-AI providers ignore model fields they never use', () => {
       deepseekModel: 'something-else',
     })
   );
+});
+
+check('an explicit provider keeps the same cue key in auto mode', () => {
+  const auto = cueCacheKeyForProvider('vid', 'en', 'auto', 'zh-CN', base, 'auto');
+  const deepseek = cueCacheKeyForProvider(
+    'vid',
+    'en',
+    'auto',
+    'zh-CN',
+    base,
+    'deepseek'
+  );
+  const manualDeepseek = cueCacheKey('vid', 'en', 'auto', 'zh-CN', base);
+  assert.ok(auto.endsWith(':auto'));
+  assert.equal(deepseek, manualDeepseek);
+  assert.notEqual(auto, deepseek);
 });
 
 check('title cache keys include the provider/model scope', () => {
