@@ -127,12 +127,14 @@ export default function ChannelScreen() {
     }
     if (!continuation) return;
     setLoadingMore(true);
+    const requestId = requestRef.current;
     try {
       const page = await fetchChannelVideosPage(channelId, {
         continuation,
         channelTitle: title,
         channelAvatar: avatar,
       });
+      if (requestId !== requestRef.current) return;
       const seen = new Set(items.map((item) => item.videoId));
       const fresh = page.items.filter((item) => !seen.has(item.videoId));
       const merged = [...items, ...fresh];
@@ -140,7 +142,8 @@ export default function ChannelScreen() {
       setContinuation(page.continuation);
       setVisible((count) => Math.min(merged.length, count + PAGE));
     } catch {
-      setContinuation(undefined);
+      // Keep the continuation token so a transient network failure can be
+      // retried by tapping "load more" again instead of ending pagination.
     } finally {
       setLoadingMore(false);
     }
