@@ -5569,7 +5569,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 6,
   },
   landSubTranslation: {
-    color: '#E9E3F5',
+    color: '#FFFFFF',
     lineHeight: 24,
     textAlign: 'center',
     marginTop: 2,
