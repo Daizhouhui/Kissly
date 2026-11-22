@@ -147,7 +147,7 @@ async function fetchPlayerWithClient(
     const response = await httpJson(url, {
       method: 'POST',
       body,
-      timeoutMs: 20000,
+      timeoutMs: 15000,
       headers: {
         ...BROWSER_HEADERS,
         ...client.headers,
@@ -166,7 +166,7 @@ async function fetchPlayerFromWatchPage(videoId: string): Promise<any | null> {
   try {
     const url = `https://www.youtube.com/watch?v=${videoId}&hl=en&bpctr=9999999999&has_verified=1`;
     const response = await httpText(url, {
-      timeoutMs: 25000,
+      timeoutMs: 15000,
       headers: {
         ...BROWSER_HEADERS,
         Accept:
@@ -180,21 +180,54 @@ async function fetchPlayerFromWatchPage(videoId: string): Promise<any | null> {
   }
 }
 
+/**
+ * Query all player clients at once. A client that returns caption tracks wins
+ * immediately; otherwise the first usable metadata (in client order) is kept
+ * as a fallback. This replaces the old 4×20s serial chain.
+ */
+function racePlayerMetadata(videoId: string): Promise<VideoMeta | null> {
+  const tasks = CLIENTS.map((client) =>
+    fetchPlayerWithClient(videoId, client)
+  );
+  if (!tasks.length) return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    const results: (VideoMeta | null)[] = new Array(tasks.length).fill(null);
+    let pending = tasks.length;
+    let settled = false;
+
+    const finishFallback = () => {
+      if (settled) return;
+      settled = true;
+      resolve(results.find((item) => item) ?? null);
+    };
+
+    tasks.forEach((task, index) => {
+      task
+        .then((response) => {
+          if (settled) return;
+          const parsed = response ? parsePlayerResponse(response) : null;
+          if (parsed?.captionTracks.length) {
+            settled = true;
+            resolve(parsed);
+            return;
+          }
+          results[index] = parsed;
+        })
+        .catch(() => {
+          results[index] = null;
+        })
+        .finally(() => {
+          pending -= 1;
+          if (pending === 0) finishFallback();
+        });
+    });
+  });
+}
+
 export async function getVideoMeta(videoId: string): Promise<VideoMeta> {
-  let fallback: VideoMeta | null = null;
-  for (const client of CLIENTS) {
-    const response = await fetchPlayerWithClient(videoId, client);
-    if (!response) continue;
-    const parsed = parsePlayerResponse(response);
-    if (!parsed) continue;
-    if (!fallback) fallback = parsed;
-    if (parsed.captionTracks.length) return parsed;
-    const status = response?.playabilityStatus?.status;
-    if (status && status !== 'OK' && status !== 'LOGIN_REQUIRED') {
-      // Keep looking with other clients, some expose captions where WEB does not.
-    }
-  }
-  if (fallback) return fallback;
+  const raced = await racePlayerMetadata(videoId);
+  if (raced) return raced;
 
   const htmlResponse = await fetchPlayerFromWatchPage(videoId);
   const parsed = parsePlayerResponse(htmlResponse);
@@ -308,49 +341,43 @@ export async function fetchCaptionCues(
     },
     { label: 'srv3', rank: 3, url: withFormat(track.baseUrl, 'srv3') },
   ];
-  let best: Cue[] = [];
-  let bestScore = -Infinity;
-  for (const variant of variants) {
-    try {
-      const response = await httpText(variant.url, {
-        timeoutMs: 10000,
-        headers: {
-          ...BROWSER_HEADERS,
-          'User-Agent':
-            'com.google.android.youtube/21.03.36 (Linux; U; Android 14) gzip',
-          'X-Goog-Api-Format-Version': '2',
-          ...(visitorData ? { 'X-Goog-Visitor-Id': visitorData } : {}),
-          Accept: 'application/json,text/xml,text/vtt,text/plain,*/*',
-          Origin: 'https://m.youtube.com',
-          Referer: 'https://m.youtube.com/',
-        },
-      });
-      if (response.status !== 200 || !response.text.trim()) continue;
-      const cues = parseCaptionText(response.text, track.languageCode);
-      if (!cues.length) continue;
-      const score = captionQualityScore(cues, durationSeconds) + variant.rank;
-      if (score > bestScore) {
-        bestScore = score;
-        best = cues;
+  const results = await Promise.all(
+    variants.map(async (variant) => {
+      try {
+        const response = await httpText(variant.url, {
+          timeoutMs: 8000,
+          headers: {
+            ...BROWSER_HEADERS,
+            'User-Agent':
+              'com.google.android.youtube/21.03.36 (Linux; U; Android 14) gzip',
+            'X-Goog-Api-Format-Version': '2',
+            ...(visitorData ? { 'X-Goog-Visitor-Id': visitorData } : {}),
+            Accept: 'application/json,text/xml,text/vtt,text/plain,*/*',
+            Origin: 'https://m.youtube.com',
+            Referer: 'https://m.youtube.com/',
+          },
+        });
+        if (response.status !== 200 || !response.text.trim()) return null;
+        const cues = parseCaptionText(response.text, track.languageCode);
+        if (!cues.length) return null;
+        return {
+          cues,
+          score:
+            captionQualityScore(cues, durationSeconds) + variant.rank,
+        };
+      } catch {
+        // A single blocked format should not block the others.
+        return null;
       }
-      if (variant.label === 'vtt' && durationSeconds > 0) {
-        const lastEnd = cues.reduce((max, cue) => Math.max(max, cue.end), 0);
-        const covered = cues.reduce(
-          (sum, cue) => sum + Math.max(0, cue.end - cue.start),
-          0
-        );
-        // Only skip the remaining formats when the VTT really covers the
-        // whole video. Otherwise a partial VTT must be compared against the
-        // json3/srv3 responses.
-        if (covered / durationSeconds >= 0.92 && lastEnd / durationSeconds >= 0.95) {
-          return cues;
-        }
-      }
-    } catch {
-      // Try the next caption format.
-    }
-  }
-  if (best.length) return best;
+    })
+  );
+
+  const best = results.reduce<{ cues: Cue[]; score: number } | null>(
+    (current, result) =>
+      result && (!current || result.score > current.score) ? result : current,
+    null
+  );
+  if (best) return best.cues;
   throw new Error('该视频没有可用的字幕数据');
 }
 
