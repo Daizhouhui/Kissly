@@ -2,6 +2,16 @@ name: Build Kissly apps
 
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: '构建平台（默认同时构建 Android 和 iOS）'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - android
+          - ios
   push:
     branches: [main]
     tags: ['v*']
@@ -10,7 +20,7 @@ on:
       - '.github/workflows/mobile.yml'
 
 concurrency:
-  group: mobile-${{ github.ref }}
+  group: mobile-${{ github.ref }}-${{ github.event.inputs.platform || 'both' }}
   cancel-in-progress: true
 
 permissions:
@@ -19,6 +29,9 @@ permissions:
 jobs:
   android:
     name: Android APK
+    # Manual runs can select iOS only. Push/tag runs keep the old behavior and
+    # build both platforms.
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.platform != 'ios' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -55,6 +68,7 @@ jobs:
 
   ios:
     name: iOS unsigned IPA
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.platform != 'android' }}
     runs-on: macos-26
     defaults:
       run:
@@ -113,36 +127,56 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    # A manually dispatched tag build may skip one platform. Release as long as
+    # every requested platform succeeded and at least one artifact exists.
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/v') && (needs.android.result == 'success' || needs.android.result == 'skipped') && (needs.ios.result == 'success' || needs.ios.result == 'skipped') && (needs.android.result == 'success' || needs.ios.result == 'success') }}
     needs: [android, ios]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Download APK
+        if: ${{ needs.android.result == 'success' }}
         uses: actions/download-artifact@v4
         with:
           name: kissly-android
           path: release-assets
       - name: Download IPA
+        if: ${{ needs.ios.result == 'success' }}
         uses: actions/download-artifact@v4
         with:
           name: kissly-ios-unsigned
           path: release-assets
       - name: Prepare release assets
         run: |
-          mv release-assets/app-release.apk release-assets/kissly-android.apk
+          set -e
+          mkdir -p .github/release-notes
+          NOTES=".github/release-notes/${GITHUB_REF_NAME}.md"
+          if [ ! -f "$NOTES" ]; then
+            printf "# Kissly %s\n" "$GITHUB_REF_NAME" > "$NOTES"
+          fi
+
+          APK=""
+          IPA=""
+          if [ -f release-assets/app-release.apk ]; then
+            mv release-assets/app-release.apk release-assets/kissly-android.apk
+            APK="release-assets/kissly-android.apk"
+          fi
+          if [ -f release-assets/Kissly-unsigned.ipa ]; then
+            IPA="release-assets/Kissly-unsigned.ipa"
+          fi
           ls -lh release-assets
-      - name: Append SHA256 checksums
-        run: |
-          APK_SHA=$(sha256sum release-assets/kissly-android.apk | awk '{print $1}' | tr '[:lower:]' '[:upper:]')
-          IPA_SHA=$(sha256sum release-assets/Kissly-unsigned.ipa | awk '{print $1}' | tr '[:lower:]' '[:upper:]')
+
           {
             echo ""
             echo "### 校验值（SHA256）"
             echo ""
-            echo "- \`kissly-android.apk\`：\`$APK_SHA\`"
-            echo "- \`Kissly-unsigned.ipa\`：\`$IPA_SHA\`"
-          } >> .github/release-notes/${{ github.ref_name }}.md
+            if [ -n "$APK" ]; then
+              echo "- \`kissly-android.apk\`：\`$(sha256sum "$APK" | awk '{print $1}' | tr '[:lower:]' '[:upper:]')\`"
+            fi
+            if [ -n "$IPA" ]; then
+              echo "- \`Kissly-unsigned.ipa\`：\`$(sha256sum "$IPA" | awk '{print $1}' | tr '[:lower:]' '[:upper:]')\`"
+            fi
+          } >> "$NOTES"
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
@@ -152,7 +186,7 @@ jobs:
           files: |
             release-assets/kissly-android.apk
             release-assets/Kissly-unsigned.ipa
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false
           draft: false
           prerelease: false
           make_latest: true
