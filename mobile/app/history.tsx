@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useAppStore } from '../src/core/store';
+import { HISTORY_LIMIT, useAppStore } from '../src/core/store';
 import { relativeTime } from '../src/core/utils';
 import { resumeTarget } from '../src/core/watchProgress';
 import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
@@ -76,7 +76,9 @@ export default function HistoryScreen() {
         subtitle={
           manage
             ? `已选 ${selectedIds.size} 项`
-            : `${history.length} 个最近打开的视频`
+            : history.length >= HISTORY_LIMIT
+              ? `最近 ${HISTORY_LIMIT} 个视频 · 更早的记录会自动清理`
+              : `${history.length} 个最近打开的视频`
         }
         right={
           history.length ? (

@@ -40,6 +40,9 @@ export type ToggleSentenceFavoriteResult = 'added' | 'removed' | 'limit';
 
 export const SENTENCE_FAVORITE_LIMIT = 500;
 
+/** Keeps AsyncStorage and the history list bounded; surfaced in the UI. */
+export const HISTORY_LIMIT = 120;
+
 export type YoutubeLoginStatus = 'unknown' | 'loggedIn' | 'loggedOut';
 
 type SubscriptionTombstones = Record<string, number>;
@@ -291,7 +294,7 @@ export const useAppStore = create<AppState>()(
           const others = state.history.filter(
             (entry) => entry.videoId !== item.videoId
           );
-          return { history: [merged, ...others].slice(0, 120) };
+          return { history: [merged, ...others].slice(0, HISTORY_LIMIT) };
         }),
       removeHistory: (videoIds) => {
         const targets = new Set(videoIds);
