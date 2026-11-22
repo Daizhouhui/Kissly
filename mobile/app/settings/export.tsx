@@ -122,7 +122,7 @@ export default function ExportScreen() {
 
   const exportSubscriptions = async () => {
     const rows = [
-      ['channelId', 'title', 'handle', 'url'],
+      ['channelId', 'title', 'handle', 'url', 'group'],
       ...subscriptions.map((item) => [
         item.channelId,
         item.title,
@@ -130,6 +130,7 @@ export default function ExportScreen() {
         item.handle
           ? `https://www.youtube.com/@${item.handle.replace(/^@/, '')}`
           : `https://www.youtube.com/channel/${item.channelId}`,
+        item.group ?? '',
       ]),
     ];
     await shareText(

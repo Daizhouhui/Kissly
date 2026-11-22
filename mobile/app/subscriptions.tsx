@@ -610,12 +610,14 @@ export default function SubscriptionsScreen() {
     }
     setBusy(true);
     try {
-      const header = 'Channel ID,Channel Title,Channel URL';
+      const header = 'Channel ID,Channel Title,Channel URL,Group';
       const lines = subscriptions.map((sub) => {
         const url = sub.handle
           ? `https://www.youtube.com/${sub.handle}`
           : `https://www.youtube.com/channel/${sub.channelId}`;
-        return [sub.channelId, sub.title, url].map(csvEscape).join(',');
+        return [sub.channelId, sub.title, url, sub.group ?? '']
+          .map(csvEscape)
+          .join(',');
       });
       const csv = [header, ...lines].join('\n');
       const path = `${FileSystem.cacheDirectory}kiss-subscriptions.csv`;
