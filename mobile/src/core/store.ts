@@ -80,6 +80,7 @@ type AppState = {
   youtubeLoginCheckedAt: number;
   setHydrated: (value: boolean) => void;
   patchSettings: (patch: DeepPartial<Settings>) => void;
+  resetSettings: () => void;
   replaceSettings: (
     settings: Settings,
     updatedAt?: number,
@@ -150,6 +151,16 @@ export const useAppStore = create<AppState>()(
               : state.settingsUpdatedAt,
           };
         }),
+      resetSettings: () => {
+        const now = Date.now();
+        set({
+          // Clone the nested default objects so later edits cannot mutate the
+          // shared DEFAULT_SETTINGS value.
+          settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as Settings,
+          settingsStamps: stampsForAllKeys(now),
+          settingsUpdatedAt: now,
+        });
+      },
       replaceSettings: (settings, updatedAt, stamps) => {
         const at = updatedAt ?? Date.now();
         set({

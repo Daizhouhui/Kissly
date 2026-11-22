@@ -29,11 +29,22 @@ export async function removeKey(key: string): Promise<void> {
 }
 
 export async function removeKeysByPrefix(prefix: string): Promise<void> {
+  await removeKeysByPrefixes([prefix]);
+}
+
+/** Remove several cache families in one AsyncStorage pass. */
+export async function removeKeysByPrefixes(prefixes: string[]): Promise<number> {
+  if (!prefixes.length) return 0;
   try {
     const keys = await AsyncStorage.getAllKeys();
-    const targets = keys.filter((key) => key.startsWith(NS + prefix));
+    const targets = keys.filter((key) =>
+      prefixes.some((prefix) => key.startsWith(NS + prefix))
+    );
     if (targets.length) await AsyncStorage.multiRemove(targets);
-  } catch {}
+    return targets.length;
+  } catch {
+    return 0;
+  }
 }
 
 export type TimedValue<T> = { at: number; value: T };

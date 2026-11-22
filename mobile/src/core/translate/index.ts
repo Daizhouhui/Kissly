@@ -47,6 +47,13 @@ async function ensureTitleCache() {
   titleCache = await loadJson<Record<string, string>>('title-cache', {});
 }
 
+/** Drop the in-memory title cache after a global cache wipe. */
+export function resetTranslationCacheMemory() {
+  memoryTitles.clear();
+  titleCache = {};
+  titleCacheLoaded = false;
+}
+
 function trimTitleCache() {
   const keys = Object.keys(titleCache);
   if (keys.length <= TITLE_CACHE_LIMIT) return;

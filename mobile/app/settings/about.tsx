@@ -14,6 +14,8 @@ import {
   View,
 } from 'react-native';
 
+import { clearGlobalCaches } from '../../src/core/appCache';
+import { useAppStore } from '../../src/core/store';
 import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
 import { Card, NavHeader, Row, SectionTitle } from '../../src/ui/components';
 import { appAlert as Alert } from '../../src/ui/app-alert';
@@ -101,8 +103,10 @@ export default function AboutScreen() {
     Platform.OS === 'android'
       ? Constants.expoConfig?.android?.versionCode
       : Constants.expoConfig?.ios?.buildNumber;
+  const resetSettings = useAppStore((state) => state.resetSettings);
   const [updatePhase, setUpdatePhase] = useState<UpdatePhase>('idle');
   const [downloadProgress, setDownloadProgress] = useState(0);
+  const [maintenance, setMaintenance] = useState<'cache' | 'reset' | null>(null);
 
   const openInstallSettings = () => {
     IntentLauncher.startActivityAsync(
@@ -224,6 +228,64 @@ export default function AboutScreen() {
           ? '正在打开安装器…'
           : '检查更新';
 
+  const runClearCache = async () => {
+    if (maintenance) return;
+    setMaintenance('cache');
+    try {
+      const removed = await clearGlobalCaches();
+      Alert.alert(
+        '缓存已清除',
+        `已清理 ${removed} 项字幕、翻译和订阅流缓存。\n\n历史、收藏、订阅、设置和账号数据都没有改动。`
+      );
+    } catch (error) {
+      Alert.alert(
+        '清除缓存失败',
+        error instanceof Error ? error.message : String(error)
+      );
+    } finally {
+      setMaintenance(null);
+    }
+  };
+
+  const confirmClearCache = () => {
+    if (maintenance) return;
+    Alert.alert(
+      '清除缓存？',
+      '会删除字幕、翻译、订阅流和标题的临时缓存，下次打开视频会重新加载。\n\n不会删除历史、收藏、订阅、设置或账号数据。',
+      [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '清除缓存',
+          style: 'destructive',
+          onPress: () => {
+            void runClearCache();
+          },
+        },
+      ]
+    );
+  };
+
+  const confirmResetSettings = () => {
+    if (maintenance) return;
+    Alert.alert(
+      '恢复默认设置？',
+      '会重置语言、翻译引擎、字幕、外观、默认打开页和 WebDAV 配置。\n\n不会删除历史、收藏、订阅、已保存的 API Key 或 WebDAV 密码。',
+      [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '恢复默认',
+          style: 'destructive',
+          onPress: () => {
+            setMaintenance('reset');
+            resetSettings();
+            setMaintenance(null);
+            Alert.alert('已恢复默认设置', '偏好设置已重置为初始值。');
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
       <NavHeader title="关于" subtitle="Kissly" />
@@ -263,6 +325,25 @@ export default function AboutScreen() {
             把 YouTube 的双语字幕做成一个安静的阅读器：竖屏逐句跟读，横屏沉浸观看，订阅与设置随 WebDAV 走。
           </Text>
         </View>
+
+        <SectionTitle title="存储与重置" />
+        <Card style={{ paddingVertical: 2, paddingHorizontal: 16 }}>
+          <Row
+            icon="trash-outline"
+            title="清除缓存"
+            subtitle="字幕、翻译、订阅流临时文件"
+            value={maintenance === 'cache' ? '清理中…' : undefined}
+            onPress={confirmClearCache}
+          />
+          <Row
+            icon="refresh-outline"
+            title="恢复默认设置"
+            subtitle="只重置偏好，不删历史、收藏、订阅"
+            danger
+            onPress={confirmResetSettings}
+            last
+          />
+        </Card>
 
         <SectionTitle title="链接" />
         <Card style={{ paddingVertical: 2, paddingHorizontal: 16 }}>
