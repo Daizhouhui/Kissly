@@ -186,6 +186,7 @@ function playerBridgeScript(startAt = 0) {
     if (previous && previous.timer) clearInterval(previous.timer);
     if (previous && previous.cssTimer) clearInterval(previous.cssTimer);
     if (previous && previous.startTimer) clearTimeout(previous.startTimer);
+    if (previous && previous.pauseAtTimer) clearInterval(previous.pauseAtTimer);
     var bridge = window.__kissBridge = {
       mode: 'mobile-watch',
       alive: true,
@@ -196,6 +197,9 @@ function playerBridgeScript(startAt = 0) {
       timer: null,
       cssTimer: null,
       startTimer: null,
+      pauseAtTimer: null,
+      pauseAtTarget: -1,
+      pauseAtSawBeforeEnd: false,
       videoRef: null,
       startAt: requestedStart,
       startApplied:
@@ -901,8 +905,18 @@ function playerBridgeScript(startAt = 0) {
 
     installCaptionInterceptors();
 
+    function clearPauseAt(){
+      if (bridge.pauseAtTimer) {
+        clearInterval(bridge.pauseAtTimer);
+        bridge.pauseAtTimer = null;
+      }
+      bridge.pauseAtTarget = -1;
+      bridge.pauseAtSawBeforeEnd = false;
+    }
+
     window.__kiss = {
       play: function(){
+        clearPauseAt();
         bridge.userPaused = false;
         bridge.wantPlay = true;
         bridge.hasStarted = true;
@@ -914,6 +928,7 @@ function playerBridgeScript(startAt = 0) {
         return true;
       },
       pause: function(){
+        clearPauseAt();
         bridge.userPaused = true;
         bridge.wantPlay = false;
         if (bridge.startTimer) {
@@ -948,7 +963,48 @@ function playerBridgeScript(startAt = 0) {
         setTimeout(report, 80);
         return true;
       },
-      seek: function(seconds){ var v=getVideo(); try{ if(v){ v.currentTime=Math.max(0, Number(seconds)||0); } }catch(e){}; return true; },
+      seek: function(seconds){
+        clearPauseAt();
+        var v=getVideo();
+        try{ if(v){ v.currentTime=Math.max(0, Number(seconds)||0); } }catch(e){}
+        return true;
+      },
+      pauseAt: function(seconds){
+        var target = Number(seconds);
+        if (!Number.isFinite(target) || target < 0) {
+          clearPauseAt();
+          return true;
+        }
+        clearPauseAt();
+        bridge.pauseAtTarget = target;
+        bridge.pauseAtTimer = setInterval(function(){
+          if (!bridge.alive || bridge.userPaused || !bridge.wantPlay) {
+            clearPauseAt();
+            return;
+          }
+          var v = getVideo();
+          if (!v) return;
+          if (v.ended) {
+            clearPauseAt();
+            return;
+          }
+          var now = Number(v.currentTime) || 0;
+          if (!bridge.pauseAtSawBeforeEnd) {
+            // A seek may not have landed yet. If currentTime is still past the
+            // target, wait for it to drop back before considering a pause.
+            if (now > target) return;
+            bridge.pauseAtSawBeforeEnd = true;
+          }
+          if (now < target) return;
+          clearPauseAt();
+          bridge.userPaused = true;
+          bridge.wantPlay = false;
+          v.__kissUserPaused = true;
+          try { v.pause(); } catch(e) {}
+          report();
+        }, 16);
+        return true;
+      },
       rate: function(rate){ var v=getVideo(); try{ if(v)v.playbackRate=Number(rate)||1; }catch(e){}; return true; },
       mute: function(muted){ var v=getVideo(); try{ if(v)v.muted=!!muted; }catch(e){}; return true; },
       audio: function(){ ensureAudio(); return true; },
@@ -2006,6 +2062,32 @@ export default function PlayerScreen() {
     setControlsVisible((value) => !value);
   };
 
+  const armPrecisionPause = (cue: Cue | null | undefined) => {
+    if (!cue) return;
+    // The bridge watches currentTime every 16 ms and pauses at the exact cue
+    // boundary. The React-side guard below remains as a fallback for an old
+    // WebView that did not receive the new bridge script.
+    send(`window.__kiss && window.__kiss.pauseAt(${cue.end}); true;`);
+  };
+
+  const clearPrecisionPause = () => {
+    send('window.__kiss && window.__kiss.pauseAt(-1); true;');
+  };
+
+  useEffect(() => {
+    // Re-arm after an orientation reload or a fresh WebView bridge. Without
+    // this, the first bridge injection pauses correctly but the replacement
+    // bridge loses the scheduled boundary.
+    if (!ready || !blindMode || !playing || !precisionCue) return;
+    armPrecisionPause(precisionCue);
+  }, [
+    blindMode,
+    playing,
+    precisionCue?.end,
+    precisionCue?.start,
+    ready,
+  ]);
+
   const togglePrecisionPlay = () => {
     if (precisionTimerRef.current) {
       clearTimeout(precisionTimerRef.current);
@@ -2030,6 +2112,7 @@ export default function PlayerScreen() {
       );
     }
     send('window.__kiss && window.__kiss.play(); true;');
+    armPrecisionPause(precisionCue);
     setPlaying(true);
     setBlocked(false);
   };
@@ -2099,6 +2182,7 @@ export default function PlayerScreen() {
     );
     seekTo(target.start + 0.02);
     send('window.__kiss && window.__kiss.play(); true;');
+    armPrecisionPause(target);
     setPlaying(true);
   };
 
@@ -2165,6 +2249,7 @@ export default function PlayerScreen() {
         seekTo(precisionCue.start + 0.01);
         setPrecisionPass((value) => value + 1);
         send('window.__kiss && window.__kiss.play(); true;');
+        armPrecisionPause(precisionCue);
         setPlaying(true);
       }, listeningRepeatInterval * 1000);
       return;
@@ -2347,6 +2432,7 @@ export default function PlayerScreen() {
     setPrecisionPass(1);
     setPrecisionCueIndex(-1);
     blindGuardRef.current = '';
+    clearPrecisionPause();
     if (precisionTimerRef.current) {
       clearTimeout(precisionTimerRef.current);
       precisionTimerRef.current = null;
@@ -2378,6 +2464,7 @@ export default function PlayerScreen() {
       send('window.__kiss && window.__kiss.play(); true;');
       setPlaying(true);
     }
+    armPrecisionPause(target);
   };
 
   const togglePrecision = () => {
