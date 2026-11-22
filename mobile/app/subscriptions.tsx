@@ -19,7 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../src/core/store';
 import { Subscription } from '../src/core/types';
-import { parseTakeoutCsv } from '../src/core/youtube/channel';
+import { parseTakeoutCsv } from '../src/core/youtube/takeout';
 import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
 import { appAlert } from '../src/ui/app-alert';
 import { AppPressable } from '../src/ui/app-pressable';
