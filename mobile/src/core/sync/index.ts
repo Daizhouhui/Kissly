@@ -1,6 +1,12 @@
 import { getSecret } from '../secrets';
+import {
+  mergeSettings,
+  pickSyncedSettings,
+  settingsFileChanged,
+} from '../settingsSync';
+import type { SettingsStamps, SyncSettings } from '../settingsSync';
 import { getSettings, useAppStore } from '../store';
-import { Settings, Subscription, WebDavConfig } from '../types';
+import { Subscription, WebDavConfig } from '../types';
 import { WebdavClient } from './webdav';
 
 type SubscriptionTombstones = Record<string, number>;
@@ -13,11 +19,15 @@ type SubscriptionsFile = {
   deleted: SubscriptionTombstones;
 };
 
-type SyncSettings = Omit<Settings, 'webdav' | 'theme' | 'themeAccent'>;
-
+/**
+ * `version: 1` files only have one `updatedAt`; `version: 2` adds a stamp per
+ * top-level setting so two devices can edit different rows without one whole
+ * file overwriting the other.
+ */
 type SettingsFile = {
-  version: 1;
+  version: 1 | 2;
   updatedAt: number;
+  stamps?: SettingsStamps;
   settings: SyncSettings;
 };
 
@@ -173,11 +183,6 @@ export async function getWebdavConfig(): Promise<WebDavConfig> {
   };
 }
 
-function syncableSettings(settings: Settings): SyncSettings {
-  const { webdav, theme, themeAccent, ...rest } = settings;
-  return rest;
-}
-
 export async function testWebdav(config?: WebDavConfig): Promise<void> {
   const resolved = config ?? (await getWebdavConfig());
   if (!resolved.url.trim()) throw new Error('请填写 WebDAV 地址');
@@ -203,6 +208,9 @@ export async function syncNow(): Promise<string> {
     const localSubs = state.subscriptions;
     const localDeleted = state.subscriptionTombstones;
     const localOrderUpdatedAt = state.subscriptionOrderUpdatedAt;
+    const localSettings = state.settings;
+    const localSettingsStamps = state.settingsStamps;
+    const localSettingsUpdatedAt = state.settingsUpdatedAt;
     const remoteSubs = await client.getJson<SubscriptionsFile>(
       'subscriptions.json'
     );
@@ -274,39 +282,63 @@ export async function syncNow(): Promise<string> {
         );
     }
 
-    const settings = useAppStore.getState().settings;
     const remoteSettings = await client.getJson<SettingsFile>('settings.json');
-    const localUpdatedAt = state.settingsUpdatedAt || 0;
-    if (
-      remoteSettings.data?.settings &&
-      Number(remoteSettings.data.updatedAt) > localUpdatedAt
-    ) {
-      useAppStore.getState().replaceSettings(
-        {
-          ...(remoteSettings.data.settings as unknown as Settings),
-          webdav: settings.webdav,
-          theme: settings.theme,
-          themeAccent: settings.themeAccent,
-        },
-        Number(remoteSettings.data.updatedAt)
+    const remoteSettingsFile = remoteSettings.data;
+    const mergedSettings = mergeSettings(
+      localSettings,
+      localSettingsStamps,
+      localSettingsUpdatedAt,
+      remoteSettingsFile?.settings,
+      remoteSettingsFile?.stamps,
+      Number(remoteSettingsFile?.updatedAt) || 0
+    );
+    // Keep the union locally even if the upload below fails: the next sync can
+    // still push it, and the user sees the newest of both devices right away.
+    useAppStore
+      .getState()
+      .replaceSettings(
+        mergedSettings.settings,
+        mergedSettings.updatedAt,
+        mergedSettings.stamps
       );
-    } else {
-      const payload: SettingsFile = {
-        version: 1,
-        updatedAt: localUpdatedAt || Date.now(),
-        settings: syncableSettings(settings),
-      };
+
+    const settingsPayload: SettingsFile = {
+      version: 2,
+      updatedAt: mergedSettings.updatedAt || Date.now(),
+      stamps: mergedSettings.stamps,
+      settings: pickSyncedSettings(mergedSettings.settings),
+    };
+
+    if (!remoteSettingsFile || settingsFileChanged(settingsPayload, remoteSettingsFile)) {
       try {
-        await client.putJson('settings.json', payload, remoteSettings.etag);
+        await client.putJson('settings.json', settingsPayload, remoteSettings.etag);
       } catch (error) {
         if (!String(error).includes('412')) throw error;
+        // Another device wrote between our GET and PUT. Re-merge both sides
+        // instead of overwriting its newer keys with our stale snapshot.
         const retry = await client.getJson<SettingsFile>('settings.json');
+        const retryMerged = mergeSettings(
+          mergedSettings.settings,
+          mergedSettings.stamps,
+          mergedSettings.updatedAt,
+          retry.data?.settings,
+          retry.data?.stamps,
+          Number(retry.data?.updatedAt) || 0
+        );
+        useAppStore
+          .getState()
+          .replaceSettings(
+            retryMerged.settings,
+            retryMerged.updatedAt,
+            retryMerged.stamps
+          );
         await client.putJson(
           'settings.json',
           {
-            version: 1,
-            updatedAt: Date.now(),
-            settings: syncableSettings(settings),
+            version: 2,
+            updatedAt: retryMerged.updatedAt || Date.now(),
+            stamps: retryMerged.stamps,
+            settings: pickSyncedSettings(retryMerged.settings),
           },
           retry.etag
         );

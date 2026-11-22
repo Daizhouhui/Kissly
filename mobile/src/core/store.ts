@@ -3,6 +3,12 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 import { DEFAULT_SETTINGS } from './defaults';
+import {
+  changedSettingKeys,
+  isSyncedSettingKey,
+  stampsForAllKeys,
+} from './settingsSync';
+import type { SettingsStamps } from './settingsSync';
 import { HistoryItem, FavoriteItem, SentenceFavorite, Settings, Subscription } from './types';
 import { HistoryPatch, mergeHistoryEntry } from './watchProgress';
 
@@ -51,6 +57,8 @@ function sortByOrder(items: Subscription[]): Subscription[] {
 type AppState = {
   hydrated: boolean;
   settings: Settings;
+  /** Per-key write time for WebDAV settings merge. */
+  settingsStamps: SettingsStamps;
   settingsUpdatedAt: number;
   subscriptions: Subscription[];
   subscriptionTombstones: SubscriptionTombstones;
@@ -65,7 +73,11 @@ type AppState = {
   youtubeLoginCheckedAt: number;
   setHydrated: (value: boolean) => void;
   patchSettings: (patch: DeepPartial<Settings>) => void;
-  replaceSettings: (settings: Settings, updatedAt?: number) => void;
+  replaceSettings: (
+    settings: Settings,
+    updatedAt?: number,
+    stamps?: SettingsStamps
+  ) => void;
   addSubscription: (item: Subscription) => void;
   addSubscriptions: (items: Subscription[]) => void;
   updateSubscription: (channelId: string, patch: Partial<Subscription>) => void;
@@ -96,6 +108,7 @@ export const useAppStore = create<AppState>()(
     (set, get) => ({
       hydrated: false,
       settings: DEFAULT_SETTINGS,
+      settingsStamps: {},
       settingsUpdatedAt: 0,
       subscriptions: [],
       subscriptionTombstones: {},
@@ -110,15 +123,34 @@ export const useAppStore = create<AppState>()(
       youtubeLoginCheckedAt: 0,
       setHydrated: (value) => set({ hydrated: value }),
       patchSettings: (patch) =>
-        set((state) => ({
-          settings: deepMerge(state.settings, patch),
-          settingsUpdatedAt: Date.now(),
-        })),
-      replaceSettings: (settings, updatedAt) =>
+        set((state) => {
+          const next = deepMerge(state.settings, patch);
+          const now = Date.now();
+          const stamps = { ...state.settingsStamps };
+          let touchedSyncedKey = false;
+          for (const key of changedSettingKeys(state.settings, next)) {
+            if (typeof key !== 'string' || !isSyncedSettingKey(key)) continue;
+            stamps[key] = now;
+            touchedSyncedKey = true;
+          }
+          return {
+            settings: next,
+            settingsStamps: stamps,
+            // A theme or WebDAV edit is device-local and must not make the
+            // whole settings file look newer than the other device's copy.
+            settingsUpdatedAt: touchedSyncedKey
+              ? now
+              : state.settingsUpdatedAt,
+          };
+        }),
+      replaceSettings: (settings, updatedAt, stamps) => {
+        const at = updatedAt ?? Date.now();
         set({
           settings: deepMerge(DEFAULT_SETTINGS, settings),
-          settingsUpdatedAt: updatedAt ?? Date.now(),
-        }),
+          settingsStamps: stamps ? { ...stamps } : stampsForAllKeys(at),
+          settingsUpdatedAt: at,
+        });
+      },
       addSubscription: (item) => {
         const exists = get().subscriptions.some(
           (sub) => sub.channelId === item.channelId
@@ -285,6 +317,7 @@ export const useAppStore = create<AppState>()(
         sentenceFavorites: state.sentenceFavorites,
         history: state.history,
         lastSyncAt: state.lastSyncAt,
+        settingsStamps: state.settingsStamps,
         settingsUpdatedAt: state.settingsUpdatedAt,
         youtubeLoginStatus: state.youtubeLoginStatus,
         youtubeLoginCheckedAt: state.youtubeLoginCheckedAt,
@@ -310,9 +343,15 @@ export const useAppStore = create<AppState>()(
           mergedSettings.discoverLayout = 'grid';
         }
         mergedSettings.designVersion = 3;
+        const settingsUpdatedAt = saved?.settingsUpdatedAt ?? 0;
+        const savedStamps = saved?.settingsStamps;
         return {
           ...current,
           settings: mergedSettings,
+          settingsStamps:
+            savedStamps && Object.keys(savedStamps).length
+              ? savedStamps
+              : stampsForAllKeys(settingsUpdatedAt),
           subscriptions: withOrder(sortByOrder(saved?.subscriptions ?? [])),
           subscriptionTombstones: saved?.subscriptionTombstones ?? {},
           subscriptionOrderUpdatedAt: saved?.subscriptionOrderUpdatedAt ?? 0,
@@ -320,7 +359,7 @@ export const useAppStore = create<AppState>()(
           sentenceFavorites: saved?.sentenceFavorites ?? [],
           history: saved?.history ?? [],
           lastSyncAt: saved?.lastSyncAt ?? 0,
-          settingsUpdatedAt: saved?.settingsUpdatedAt ?? 0,
+          settingsUpdatedAt,
           youtubeLoginStatus: saved?.youtubeLoginStatus ?? 'unknown',
           youtubeLoginCheckedAt: saved?.youtubeLoginCheckedAt ?? 0,
         };
