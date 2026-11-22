@@ -21,7 +21,11 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 
-import { getSettings, useAppStore } from '@/src/core/store';
+import {
+  getSettings,
+  SENTENCE_FAVORITE_LIMIT,
+  useAppStore,
+} from '@/src/core/store';
 import { getSecret } from '@/src/core/secrets';
 import {
   AiConfig,
@@ -2231,7 +2235,7 @@ export default function PlayerScreen() {
   };
 
   const toggleCueFavorite = (cue: Cue) => {
-    const added = toggleSentenceFavorite({
+    const result = toggleSentenceFavorite({
       id: sentenceFavoriteId(videoId, cue.start),
       videoId,
       videoTitle: metaTitle || initialTitle || videoId,
@@ -2243,7 +2247,11 @@ export default function PlayerScreen() {
       translation: cue.translation,
       savedAt: Date.now(),
     });
-    setToast(added ? '已收藏这句' : '已取消句子收藏');
+    if (result === 'limit') {
+      setToast(`句子收藏已满 ${SENTENCE_FAVORITE_LIMIT} 条，请先清理`);
+      return;
+    }
+    setToast(result === 'added' ? '已收藏这句' : '已取消句子收藏');
   };
 
   const exitPrecision = () => {

@@ -36,6 +36,10 @@ function deepMerge<T>(base: T, patch: unknown): T {
 
 export type SyncState = 'idle' | 'syncing' | 'ok' | 'error';
 
+export type ToggleSentenceFavoriteResult = 'added' | 'removed' | 'limit';
+
+export const SENTENCE_FAVORITE_LIMIT = 500;
+
 export type YoutubeLoginStatus = 'unknown' | 'loggedIn' | 'loggedOut';
 
 type SubscriptionTombstones = Record<string, number>;
@@ -93,7 +97,7 @@ type AppState = {
   toggleFavorite: (item: FavoriteItem) => boolean;
   removeFavorite: (videoId: string) => void;
   removeFavorites: (videoIds: string[]) => void;
-  toggleSentenceFavorite: (item: SentenceFavorite) => boolean;
+  toggleSentenceFavorite: (item: SentenceFavorite) => ToggleSentenceFavoriteResult;
   removeSentenceFavorite: (id: string) => void;
   removeSentenceFavorites: (ids: string[]) => void;
   recordHistory: (item: HistoryPatch) => void;
@@ -255,12 +259,18 @@ export const useAppStore = create<AppState>()(
               (fav) => fav.id !== item.id
             ),
           }));
-          return false;
+          return 'removed';
+        }
+        if (get().sentenceFavorites.length >= SENTENCE_FAVORITE_LIMIT) {
+          return 'limit';
         }
         set((state) => ({
-          sentenceFavorites: [item, ...state.sentenceFavorites].slice(0, 500),
+          sentenceFavorites: [item, ...state.sentenceFavorites].slice(
+            0,
+            SENTENCE_FAVORITE_LIMIT
+          ),
         }));
-        return true;
+        return 'added';
       },
       removeSentenceFavorite: (id) =>
         set((state) => ({
