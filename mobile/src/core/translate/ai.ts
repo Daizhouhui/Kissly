@@ -192,7 +192,7 @@ export function siliconflowConfig(
     id: 'SiliconFlow',
     url: 'https://api.siliconflow.cn/v1/chat/completions',
     key,
-    model,
+    model: model || 'Qwen/Qwen3.5-9B',
     timeoutMs,
   };
 }
@@ -203,14 +203,17 @@ export function openaiConfig(
   model: string,
   timeoutMs: number
 ): AiConfig {
-  const normalized = baseUrl.replace(/\/+$/, '');
+  const normalized = (baseUrl ?? '').trim().replace(/\/+$/, '');
+  // Clearing the field falls back to the same defaults shown as placeholders;
+  // otherwise the request becomes a relative "/chat/completions" URL.
+  const base = normalized || 'https://api.openai.com/v1';
   return {
     id: 'OpenAI',
-    url: normalized.endsWith('/chat/completions')
-      ? normalized
-      : `${normalized}/chat/completions`,
+    url: base.endsWith('/chat/completions')
+      ? base
+      : `${base}/chat/completions`,
     key,
-    model,
+    model: model || 'gpt-4o-mini',
     timeoutMs,
   };
 }

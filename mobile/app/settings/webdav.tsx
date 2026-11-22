@@ -63,10 +63,12 @@ export default function WebdavSettingsScreen() {
     setTesting(true);
     try {
       await testWebdav({
-        url: url.trim(),
+        // Test the same normalized values that "save" would persist, so
+        // clearing the field to use the placeholder does not fail the test.
+        url: url.trim() || KOOFIR_WEBDAV_URL,
         username: username.trim(),
         password,
-        folder: folder.trim(),
+        folder: folder.trim() || 'Kissly',
         enabled,
       });
       Alert.alert('连接成功', 'WebDAV 目录可以访问，保存后即可同步。');
