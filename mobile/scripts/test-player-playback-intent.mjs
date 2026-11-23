@@ -3,13 +3,18 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 const source = fs.readFileSync(new URL('../app/player.tsx', import.meta.url), 'utf8');
+// The bridge lives in its own module now; the RN screen only talks to it.
+const bridgeModule = fs.readFileSync(
+  new URL('../src/player/bridgeScript.ts', import.meta.url),
+  'utf8'
+);
 
 function extractBridge() {
-  const start = source.indexOf('function playerBridgeScript(');
-  const bodyStart = source.indexOf('return `', start);
-  const bodyEnd = source.indexOf('`;', bodyStart + 8);
+  const start = bridgeModule.indexOf('export function playerBridgeScript(');
+  const bodyStart = bridgeModule.indexOf('return `', start);
+  const bodyEnd = bridgeModule.indexOf('`;', bodyStart + 8);
   assert.ok(start >= 0 && bodyStart > start && bodyEnd > bodyStart);
-  let bridge = source.slice(bodyStart + 8, bodyEnd);
+  let bridge = bridgeModule.slice(bodyStart + 8, bodyEnd);
   bridge = bridge.replace(
     /\$\{JSON\.stringify\(WATCH_CSS\)\}/g,
     JSON.stringify('')
@@ -343,10 +348,16 @@ check('React sends an explicit play/pause intent rather than a raw toggle', () =
 });
 
 check('orientation and screen entry reconcile the bridge intent', () => {
-  assert.match(source, /scheduleOrientationResume[\s\S]*?window\.__kiss\.reconcile\(\)/);
+  assert.match(source, /createTransitionGate\(/);
+  assert.match(source, /window\.__kiss\.layoutStart\(/);
+  assert.match(source, /window\.__kiss\.layoutStable\(/);
+  assert.match(source, /gateRef\.current\?\.observeLayout\(/);
+  assert.match(source, /beginTransition\('app-active', \{ expectLayout: false \}\)/);
   assert.match(source, /resetForEntry/);
   assert.match(source, /pauseForScreen/);
   assert.match(source, /useFocusEffect/);
+  assert.doesNotMatch(source, /scheduleOrientationResume/);
+  assert.doesNotMatch(source, /__kiss\.orientation\(/);
 });
 
 const harness = createHarness();
@@ -497,21 +508,135 @@ check('repeated reconciles do not reissue play to an already playing YouTube pla
   );
 });
 
-check('pause events inside the orientation window do not create a play/pause feedback loop', () => {
+check('pause events inside the layout transition do not create a play/pause feedback loop', () => {
   const h = createHarness();
   h.runBridge();
   h.advance(100);
   h.player.autoPauseOnPlay = 99;
+  const before = h.player.playCalls;
 
-  h.kiss.orientation();
+  h.kiss.layoutStart(1);
   h.player.pauseVideo();
   h.kiss.reconcile();
-  h.advance(1200);
+  h.advance(400);
 
-  assert.ok(
-    h.player.playCalls <= 2,
-    `orientation recovery looped ${h.player.playCalls} times; expected at most 2`
+  assert.equal(
+    h.player.playCalls,
+    before,
+    'no play command may be issued while the surface is resizing'
   );
+
+  h.kiss.layoutStable(1);
+  h.advance(1500);
+  const afterSettle = h.player.playCalls;
+  assert.ok(
+    afterSettle - before <= 2,
+    `settle recovery looped ${afterSettle - before} times; expected at most 2`
+  );
+
+  h.advance(3000);
+  assert.equal(
+    h.player.playCalls,
+    afterSettle,
+    'the bounded repair must not keep fighting pauses forever'
+  );
+});
+
+check('late pauses inside the settle window are repaired within a hard budget', () => {
+  const h = createHarness();
+  h.runBridge();
+  h.advance(100);
+  const before = h.player.playCalls;
+
+  h.kiss.layoutStart(9);
+  h.kiss.layoutStable(9);
+  h.advance(100);
+  assert.equal(h.video.paused, false);
+
+  // YouTube emits one more pause just after the surface settled.
+  h.player.playerState = 2;
+  h.video.pause();
+  h.advance(300);
+  assert.equal(h.video.paused, false, 'the late pause must be repaired');
+  assert.equal(h.player.playCalls, before + 1);
+
+  // A second late pause uses the last unit of the recovery budget.
+  h.player.playerState = 2;
+  h.video.pause();
+  h.advance(600);
+  assert.ok(
+    h.player.playCalls - before <= 2,
+    `late repairs must stay within the two-command budget, got ${h.player.playCalls - before}`
+  );
+
+  // A third pause inside the window is not fought any more.
+  h.player.playerState = 2;
+  h.video.pause();
+  const beforeThird = h.player.playCalls;
+  h.advance(600);
+  assert.equal(h.video.paused, true, 'the budget must be exhausted after two repairs');
+  assert.equal(h.player.playCalls, beforeThird);
+
+  // Outside the settle window a pause is never fought at all.
+  h.kiss.reconcile();
+  h.advance(200);
+  assert.equal(h.video.paused, false);
+  h.advance(2000);
+  const afterWindow = h.player.playCalls;
+  h.player.playerState = 2;
+  h.video.pause();
+  h.advance(800);
+  assert.equal(h.video.paused, true, 'a pause outside the settle window must not be repaired');
+  assert.equal(h.player.playCalls, afterWindow);
+});
+
+check('a stale layout handshake cannot resume an older rotation', () => {
+  const h = createHarness();
+  h.runBridge();
+  h.advance(100);
+  h.player.pauseVideo();
+  const before = h.player.playCalls;
+
+  h.kiss.layoutStart(7);
+  // A late "stable" message from an older epoch must be ignored.
+  h.kiss.layoutStable(6);
+  h.advance(300);
+  assert.equal(h.player.playCalls, before);
+  assert.equal(h.bridge.phase, 'transition');
+
+  h.kiss.layoutStable(7);
+  h.advance(400);
+  assert.equal(h.bridge.phase, 'steady');
+  assert.ok(h.player.playCalls > before, 'the current epoch must recover playback');
+});
+
+check('a lost stable message is closed by the transition guard', () => {
+  const h = createHarness();
+  h.runBridge();
+  h.advance(100);
+  h.player.pauseVideo();
+  const before = h.player.playCalls;
+
+  h.kiss.layoutStart(3);
+  h.advance(1500);
+  assert.equal(h.bridge.phase, 'steady', 'the guard must close a stranded transition');
+  assert.ok(h.player.playCalls > before, 'the guard recovery restores playback once');
+});
+
+check('a user pause during a transition is not resumed by the settle handshake', () => {
+  const h = createHarness();
+  h.runBridge();
+  h.advance(100);
+
+  h.kiss.layoutStart(2);
+  h.kiss.pause();
+  h.advance(100);
+  assert.equal(h.bridge.playIntent, 'pause');
+
+  h.kiss.layoutStable(2);
+  h.advance(1200);
+  assert.equal(h.video.paused, true);
+  assert.equal(h.bridge.playIntent, 'pause');
 });
 
 check('the ready message carries actual playback state for the loading overlay', () => {
@@ -529,7 +654,7 @@ check('play after a fullscreen pause survives one late YouTube pause without loo
   const h = createHarness();
   h.runBridge();
   h.advance(100);
-  h.kiss.orientation();
+  h.kiss.layoutStart(1);
   h.kiss.pause();
   h.advance(80);
   assert.equal(h.video.paused, true);
@@ -537,6 +662,10 @@ check('play after a fullscreen pause survives one late YouTube pause without loo
 
   h.player.autoPauseOnPlay = 1;
   h.kiss.setPlaying(true);
+  h.advance(100);
+  assert.equal(h.video.paused, true, 'play is deferred while the surface is resizing');
+
+  h.kiss.layoutStable(1);
   h.advance(1200);
 
   assert.equal(h.bridge.playIntent, 'play');
@@ -554,29 +683,40 @@ check('rotation recovery waits for the surface to settle and issues one play com
   h.advance(500);
   h.player.pauseVideo();
   const before = h.player.playCalls;
-  h.player.autoPauseOnPlay = 99;
-  h.after(500, () => {
-    h.player.autoPauseOnPlay = 0;
-  });
 
-  h.kiss.orientation();
+  h.kiss.layoutStart(4);
   h.kiss.reconcile();
-  h.advance(200);
+  h.advance(400);
   assert.equal(
     h.player.playCalls,
     before,
     'a reconcile during surface recreation must not fight transient pauses'
   );
 
-  h.kiss.orientation();
-  h.advance(649);
-  assert.equal(h.player.playCalls, before, 'repeated rotation events must extend one settle window');
-  h.advance(1);
+  h.kiss.layoutStable(4);
+  h.advance(400);
 
   assert.equal(h.player.playCalls, before + 1, 'the settled rotation should recover once');
   assert.equal(h.video.paused, false);
   assert.equal(h.player.playerState, 1);
   assert.equal(h.lastTime().playing, true);
+});
+
+check('the legacy orientation call still opens a transition that the guard closes', () => {
+  const h = createHarness();
+  h.runBridge();
+  h.advance(100);
+  h.player.pauseVideo();
+  const before = h.player.playCalls;
+
+  h.kiss.orientation();
+  h.advance(200);
+  assert.equal(h.bridge.phase, 'transition');
+  assert.equal(h.player.playCalls, before);
+
+  h.advance(1400);
+  assert.equal(h.bridge.phase, 'steady');
+  assert.equal(h.player.playCalls, before + 1);
 });
 
 check('the loading overlay is gated by a decoded frame, not playback intent', () => {

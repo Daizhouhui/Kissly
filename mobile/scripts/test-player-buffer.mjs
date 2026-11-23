@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const player = readFileSync(new URL('../app/player.tsx', import.meta.url), 'utf8');
+const bridge = readFileSync(
+  new URL('../src/player/bridgeScript.ts', import.meta.url),
+  'utf8'
+);
 
 let count = 0;
 function check(name, fn) {
@@ -11,9 +15,9 @@ function check(name, fn) {
 }
 
 check('the bridge reports the real buffered range', () => {
-  assert.match(player, /bufferedStart: buffer\.start/);
-  assert.match(player, /bufferedEnd: buffer\.end/);
-  assert.match(player, /function bufferedRange\(v\)/);
+  assert.match(bridge, /bufferedStart: buffer\.start/);
+  assert.match(bridge, /bufferedEnd: buffer\.end/);
+  assert.match(bridge, /function bufferedRange\(v\)/);
 });
 
 check('portrait progress draws a buffer segment behind the played segment', () => {
@@ -24,7 +28,7 @@ check('portrait progress draws a buffer segment behind the played segment', () =
 
 check('landscape progress draws the same buffer segment', () => {
   assert.match(player, /styles\.landProgressBuffer/);
-  assert.match(player, /setBufferedEnd\(message\.bufferedEnd\)/);
+  assert.match(player, /setBufferedEnd\(\(previous\) =>/);
 });
 
 console.log(`player-buffer: ${count} assertions passed`);

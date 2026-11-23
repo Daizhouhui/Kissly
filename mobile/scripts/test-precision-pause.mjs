@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const source = fs.readFileSync(new URL('../app/player.tsx', import.meta.url), 'utf8');
+const bridge = fs.readFileSync(
+  new URL('../src/player/bridgeScript.ts', import.meta.url),
+  'utf8'
+);
 
 let count = 0;
 function check(name, fn) {
@@ -11,8 +15,8 @@ function check(name, fn) {
 }
 
 check('the bridge exposes a precise pauseAt timer', () => {
-  assert.match(source, /pauseAt:\s*function\(seconds\)\{/);
-  assert.match(source, /\},\s*16\);/);
+  assert.match(bridge, /pauseAt:\s*function\(seconds\)\{/);
+  assert.match(bridge, /\},\s*16\);/);
 });
 
 check('blind playback arms the pause at the current cue end', () => {

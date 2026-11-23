@@ -61,6 +61,9 @@ import { AppPressable, AppPressableProps } from '@/src/ui/app-pressable';
 import { RipplePressable } from '@/src/ui/ripple-pressable';
 import { CollapseIcon, LoopIcon, SpeedIcon } from '@/src/ui/player-icons';
 import { CONTINUOUS_CORNER, RADIUS } from '@/src/tokens';
+import { playerBridgeScript } from '@/src/player/bridgeScript';
+import { createTransitionGate } from '@/src/player/transitionGate';
+import type { TransitionGate, TransitionTrigger } from '@/src/player/transitionGate';
 import { useAppTheme } from '@/src/ui/theme';
 
 const PlayerPressable = forwardRef<any, AppPressableProps>((props, ref) => (
@@ -163,1351 +166,6 @@ const WATCH_UA =
   Platform.OS === 'ios'
     ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1'
     : 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
-
-const WATCH_CSS = `
-html,body,ytm-app,ytm-app-root,#page-container,#content{background:#000!important;margin:0!important;padding:0!important;overflow:hidden!important;height:100%!important;width:100%!important;}
-ytm-header,ytm-header-bar,ytm-app-header,ytm-mobile-topbar-renderer,ytm-nav-bar,ytm-menu,#header,#masthead-container,
-#watch7-content,.watch-main-col,
-ytm-single-column-watch-next-results-renderer,ytm-watch-metadata,ytm-comments,ytm-comments-entry-point-header-renderer,
-ytm-item-section-renderer,#comments,#secondary,#below,#related,#chat,#chat-container,#meta,#info,#owner,#actions,#description,
-ytm-clarification-renderer,ytm-merch-shelf-renderer,ytm-donation-shelf-renderer,#ticker,ytm-miniplayer,
-#player-control-container,#player-endscreen-container,#player-shorts-container,#player-thumbnail-overlay,#player-cinematics-container,
-.app-promo,ytm-app-promo,#app-promo,.ytp-chrome-bottom,.ytp-gradient-bottom,.ytp-caption-window-container,
-.ytp-pause-overlay,.ytp-ce-element,.ytp-ad-overlay-container,.ytp-paid-content-overlay,.ytp-share-button,
-.ytp-watch-later-button,.ytp-title,.ytp-watermark,.ytp-large-play-button,.ytm-player-controls,.player-controls,
-ytm-pivot-bar-renderer,ytm-pivot-bar,ytm-topbar,[class*="pivot-bar"],[class*="topbar"],[id*="watch-next"],[class*="watch-next"]{display:none!important;}
-#player-base,#player-container,#player-container-id,#player-container-outer,#player-container-inner,#player,
-ytm-player,.html5-video-player{position:fixed!important;left:0!important;top:0!important;width:100vw!important;height:100vh!important;
-max-width:none!important;max-height:none!important;min-height:0!important;padding:0!important;margin:0!important;z-index:2!important;}
-.html5-video-container,video{width:100%!important;height:100%!important;left:0!important;top:0!important;}
-video{object-fit:contain!important;background:#000!important;}
-`;
-
-function playerBridgeScript(startAt = 0) {
-  return `
-(function(){
-  try {
-    var previous = window.__kissBridge;
-    var requestedStart = ${JSON.stringify(Math.max(0, Number(startAt) || 0))};
-    if (previous) previous.alive = false;
-    if (previous && previous.timer) clearInterval(previous.timer);
-    if (previous && previous.cssTimer) clearInterval(previous.cssTimer);
-    if (previous && previous.startTimer) clearTimeout(previous.startTimer);
-    if (previous && previous.pauseAtTimer) clearInterval(previous.pauseAtTimer);
-    if (previous && previous.playFallbackTimer) clearTimeout(previous.playFallbackTimer);
-    if (previous && previous.pauseFallbackTimer) clearTimeout(previous.pauseFallbackTimer);
-    if (previous && previous.playConfirmTimer) clearTimeout(previous.playConfirmTimer);
-    if (previous && previous.reconcileTimer) clearTimeout(previous.reconcileTimer);
-    if (previous && previous.orientationTimer) clearTimeout(previous.orientationTimer);
-    if (previous && previous.orientationConfirmTimer) clearTimeout(previous.orientationConfirmTimer);
-    var storedIntent = '';
-    var storedIntentUrl = '';
-    try {
-      storedIntent = window.sessionStorage.getItem('kiss-play-intent') || '';
-      storedIntentUrl = window.sessionStorage.getItem('kiss-play-url') || '';
-    } catch(e) {}
-    var inheritedIntent = previous
-      ? (previous.playIntent === 'play' || previous.playIntent === 'pause'
-          ? previous.playIntent
-          : (previous.wantPlay && !previous.userPaused ? 'play' : 'pause'))
-      : '';
-    var storedIntentApplies = !previous && storedIntentUrl === location.href;
-    var initialIntent = inheritedIntent ||
-      (storedIntentApplies && storedIntent === 'pause' ? 'pause' : 'play');
-    var bridge = window.__kissBridge = {
-      mode: 'mobile-watch',
-      alive: true,
-      // There is exactly one authority for playback: the user's intent.
-      // Rotation, buffering and WebView reloads may change the real <video>
-      // state, but they must never rewrite this intent.
-      playIntent: initialIntent,
-      pauseReason: previous ? String(previous.pauseReason || '') : '',
-      frameReady: false,
-      audioStrikes: 0,
-      timer: null,
-      cssTimer: null,
-      startTimer: null,
-      pauseAtTimer: null,
-      pauseAtTarget: -1,
-      pauseAtSawBeforeEnd: false,
-      commandSeq: 0,
-      lastPlayCommandAt: -10000,
-      playFallbackTimer: null,
-      pauseFallbackTimer: null,
-      playConfirmTimer: null,
-      reconcileTimer: null,
-      orientationUntil: 0,
-      orientationTimer: null,
-      orientationConfirmTimer: null,
-      orientationPlayRequested: false,
-      videoRef: null,
-      startAt: requestedStart,
-      startApplied:
-        requestedStart <= 0 ||
-        (previous &&
-          previous.startAt === requestedStart &&
-          !!previous.startApplied)
-    };
-    function injectCss(){
-      try {
-        var old = document.getElementById('kiss-watch-css');
-        if (old) return;
-        var style = document.createElement('style');
-        style.id = 'kiss-watch-css';
-        style.textContent = ${JSON.stringify(WATCH_CSS)};
-        (document.head || document.documentElement).appendChild(style);
-      } catch(e) {}
-    }
-    injectCss();
-    bridge.cssTimer = setInterval(injectCss, 3000);
-    function send(payload){
-      try { window.ReactNativeWebView.postMessage(JSON.stringify(payload)); } catch(e) {}
-    }
-    function getPlayer(){
-      return document.getElementById('movie_player') || document.querySelector('.html5-video-player');
-    }
-    function getVideo(){
-      // Scope to the real watch player and prefer YouTube's main video element.
-      // The page can keep preview/ad/mini-player <video> elements around; using
-      // the first document-level video makes pause/play target the wrong one.
-      try {
-        var p = getPlayer();
-        if (p && p.querySelector) {
-          var main = p.querySelector('video.html5-main-video');
-          if (main) return main;
-          var videos = p.querySelectorAll('video');
-          var best = null;
-          var bestArea = 0;
-          for (var i = 0; i < videos.length; i++) {
-            var candidate = videos[i];
-            var rect = candidate.getBoundingClientRect
-              ? candidate.getBoundingClientRect()
-              : { width: 0, height: 0 };
-            var area = Math.max(0, rect.width) * Math.max(0, rect.height);
-            if (area > bestArea) {
-              bestArea = area;
-              best = candidate;
-            }
-          }
-          if (best) return best;
-        }
-      } catch(e) {}
-      return document.querySelector('#movie_player video') || document.querySelector('video');
-    }
-    function isAdShowing(){
-      try {
-        var p = getPlayer();
-        if (p && p.classList && p.classList.contains('ad-showing')) return true;
-        if (p && p.querySelector) {
-          var skip = p.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button');
-          if (skip) {
-            var rect = skip.getBoundingClientRect();
-            if (rect.width > 0 && rect.height > 0) return true;
-          }
-        }
-      } catch(e) {}
-      return false;
-    }
-    var audioFixTimer = null;
-    function unmuteOverlay(){
-      try {
-        var selectors = [
-          '.ytp-unmute',
-          '.ytp-unmute-button',
-          'button[aria-label="取消静音"]',
-          'button[aria-label="Unmute"]',
-          'button[aria-label*="取消静音"]',
-          'button[aria-label*="Unmute"]'
-        ];
-        for (var i = 0; i < selectors.length; i++) {
-          var el = document.querySelector(selectors[i]);
-          if (el && el.getClientRects().length) {
-            el.click();
-            return true;
-          }
-        }
-      } catch(e) {}
-      return false;
-    }
-    function ensureAudio(){
-      var v = getVideo();
-      var p = getPlayer();
-      if (!v) return false;
-      try { if (v.muted) v.muted = false; } catch(e) {}
-      try { if (v.volume < 0.99) v.volume = 1; } catch(e) {}
-      try { if (p && p.unMute) p.unMute(); } catch(e) {}
-      try { if (p && p.setVolume) p.setVolume(100); } catch(e) {}
-      return unmuteOverlay();
-    }
-    function scheduleAudio(delay){
-      if (audioFixTimer) clearTimeout(audioFixTimer);
-      audioFixTimer = setTimeout(function(){ ensureAudio(); }, delay || 250);
-    }
-    function isFrameReady(v){
-      return !!(v && v.readyState >= 2 && v.videoWidth > 0);
-    }
-    function persistPlayIntent(){
-      try {
-        window.sessionStorage.setItem('kiss-play-intent', bridge.playIntent);
-        window.sessionStorage.setItem('kiss-play-url', location.href);
-      } catch(e) {}
-    }
-    function setPlayIntent(next, reason){
-      bridge.playIntent = next ? 'play' : 'pause';
-      bridge.pauseReason = String(reason || '');
-      persistPlayIntent();
-    }
-    function clearStartTimer(){
-      if (bridge.startTimer) {
-        clearTimeout(bridge.startTimer);
-        bridge.startTimer = null;
-      }
-    }
-    function playerState(p){
-      try {
-        if (p && typeof p.getPlayerState === 'function') {
-          var state = Number(p.getPlayerState());
-          return isFinite(state) ? state : NaN;
-        }
-      } catch(e) {}
-      return NaN;
-    }
-    function isPlayerPlayingState(state){
-      return state === 1 || state === 3;
-    }
-    function isPlayerPausedState(state){
-      return state === 0 || state === 2 || state === 5;
-    }
-    function isActuallyPlaying(v, p){
-      var state = playerState(p);
-      if (!v || v.ended) return false;
-      if (isPlayerPausedState(state)) return false;
-      if (v.paused) return false;
-      if (isPlayerPlayingState(state)) return true;
-      // Some embeds do not expose getPlayerState. In that case the raw element
-      // is the only signal we have.
-      return isFinite(state) ? false : true;
-    }
-    function safePlayVideo(v){
-      try {
-        if (!v) return false;
-        var result = v.play();
-        if (result && result.catch) result.catch(function(){});
-        return true;
-      } catch(e) {
-        return false;
-      }
-    }
-    function safePauseVideo(v){
-      try {
-        if (v && !v.paused) v.pause();
-      } catch(e) {}
-    }
-    function clearPlayFallback(){
-      if (bridge.playFallbackTimer) {
-        clearTimeout(bridge.playFallbackTimer);
-        bridge.playFallbackTimer = null;
-      }
-    }
-    function clearPauseFallback(){
-      if (bridge.pauseFallbackTimer) {
-        clearTimeout(bridge.pauseFallbackTimer);
-        bridge.pauseFallbackTimer = null;
-      }
-    }
-    function requestPlayerPlay(v, force){
-      var p = getPlayer();
-      var current = v || getVideo();
-      if (!current) return;
-      // Android pauses the WebView while its native surface is recreated.
-      // Preserve the user's intent, but never fight those transient pauses
-      // with play commands until the last rotation notification has settled.
-      if (orientationHoldActive()) {
-        scheduleOrientationSettle();
-        return;
-      }
-      // Never issue another play command while YouTube and the raw video are
-      // already playing. Repeated playVideo() calls during a rotation used to
-      // make Android look like it was tapping pause/play in a loop.
-      if (isActuallyPlaying(current, p)) return;
-      var now = Date.now();
-      if (!force && now - (Number(bridge.lastPlayCommandAt) || 0) < 360) return;
-      bridge.lastPlayCommandAt = now;
-      bridge.commandSeq += 1;
-      var seq = bridge.commandSeq;
-      clearPlayFallback();
-      clearPauseFallback();
-      var askedPlayer = false;
-      if (p && typeof p.playVideo === 'function') {
-        try {
-          p.playVideo();
-          askedPlayer = true;
-        } catch(e) {}
-      }
-      if (!askedPlayer) {
-        if (current.paused || current.ended) safePlayVideo(current);
-        return;
-      }
-      // The YouTube API is the primary authority. Give it a moment to move both
-      // playerState and the real <video>, then nudge the raw element only once
-      // if it is still stuck. This avoids firing playVideo() and video.play()
-      // against each other in the same tick.
-      bridge.playFallbackTimer = setTimeout(function(){
-        bridge.playFallbackTimer = null;
-        if (!bridge.alive || bridge.playIntent !== 'play') return;
-        if (bridge.commandSeq !== seq) return;
-        var next = getVideo();
-        if (!next) return;
-        var state = playerState(getPlayer());
-        if (isPlayerPlayingState(state)) {
-          if (next.paused || next.ended) safePlayVideo(next);
-          return;
-        }
-        // If YouTube still reports paused/cued, do not start the raw element
-        // behind its back. That creates two disagreeing players and is exactly
-        // the state that produced the pause/play stutter. The bounded confirm
-        // in playNow gets one more chance through the player API.
-        if (!isFinite(state) && (next.paused || next.ended)) {
-          safePlayVideo(next);
-        }
-      }, force ? 260 : 320);
-    }
-    function requestPlayerPause(v){
-      var p = getPlayer();
-      var current = v || getVideo();
-      var state = playerState(p);
-      if (current && current.paused &&
-          (!isFinite(state) || state === 0 || state === 2)) {
-        return;
-      }
-      bridge.commandSeq += 1;
-      clearPlayFallback();
-      clearPauseFallback();
-      var askedPlayer = false;
-      if (p && typeof p.pauseVideo === 'function') {
-        try {
-          p.pauseVideo();
-          askedPlayer = true;
-        } catch(e) {}
-      }
-      if (!askedPlayer) {
-        safePauseVideo(current);
-        return;
-      }
-      // Pause through the player API first; only nudge the raw element if it
-      // is still running after YouTube has been told to stop.
-      bridge.pauseFallbackTimer = setTimeout(function(){
-        bridge.pauseFallbackTimer = null;
-        if (!bridge.alive || bridge.playIntent !== 'pause') return;
-        var next = getVideo();
-        if (next && !next.paused) safePauseVideo(next);
-      }, 180);
-    }
-    function playNow(reason, immediate){
-      clearPauseAt();
-      clearStartTimer();
-      setPlayIntent(true, reason || 'user');
-      if (bridge.playConfirmTimer) {
-        clearTimeout(bridge.playConfirmTimer);
-        bridge.playConfirmTimer = null;
-      }
-      var v = getVideo();
-      if (v) {
-        try { v.__kissUserPaused = false; } catch(e) {}
-      }
-      var explicit = immediate !== false;
-      if (orientationHoldActive()) bridge.orientationPlayRequested = true;
-      if (v) maybeStart(v, explicit);
-      if (explicit) {
-        // One bounded confirmation after an explicit tap. It recovers a
-        // YouTube pause that arrives just after our command, but cannot turn
-        // into the old 180ms pause/play feedback loop.
-        bridge.playConfirmTimer = setTimeout(function(){
-          bridge.playConfirmTimer = null;
-          if (!bridge.alive || bridge.playIntent !== 'play') return;
-          var current = getVideo();
-          if (!current) return;
-          if (!isActuallyPlaying(current, getPlayer())) {
-            requestPlayerPlay(current, true);
-          }
-        }, 700);
-      }
-      scheduleAudio(260);
-      setTimeout(ensureAudio, 1000);
-      setTimeout(report, 80);
-      return true;
-    }
-    function pauseNow(reason){
-      clearPauseAt();
-      clearStartTimer();
-      bridge.orientationPlayRequested = false;
-      if (bridge.playConfirmTimer) {
-        clearTimeout(bridge.playConfirmTimer);
-        bridge.playConfirmTimer = null;
-      }
-      setPlayIntent(false, reason || 'user');
-      var v = getVideo();
-      if (v) {
-        try { v.__kissUserPaused = true; } catch(e) {}
-        requestPlayerPause(v);
-      }
-      setTimeout(report, 80);
-      return true;
-    }
-    function announceReady(v){
-      if (!isFrameReady(v) || bridge.frameReady) return;
-      bridge.frameReady = true;
-      var p = getPlayer();
-      send({
-        type: 'ready',
-        playing: bridge.playIntent === 'play',
-        actualPlaying: isActuallyPlaying(v, p),
-        playerState: playerState(p)
-      });
-    }
-    function applyStart(v){
-      if (bridge.startApplied) return;
-      if (!v || v.readyState < 1) return;
-      var duration = Number(v.duration) || 0;
-      var target = Math.max(0, Number(bridge.startAt) || 0);
-      if (duration > 0) target = Math.min(target, Math.max(0, duration - 1));
-      try {
-        if (Math.abs((Number(v.currentTime) || 0) - target) > 0.5) {
-          v.currentTime = target;
-        }
-        bridge.startApplied = true;
-        report();
-      } catch(e) {}
-    }
-    function maybeStart(v, force){
-      // The old first-frame gate paused an already playing video whenever a
-      // rotation briefly reported readyState/videoWidth as zero. That gate is
-      // gone. Here we only move the video toward the user's intent; we never
-      // pause it just because its frame metadata is temporarily incomplete.
-      if (!bridge.alive || !v || bridge.playIntent !== 'play') return;
-      var p = getPlayer();
-      if (!isFrameReady(v)) {
-        if (!isActuallyPlaying(v, p)) requestPlayerPlay(v, force);
-        // Slow network fallback: do not leave the player stuck if loadeddata
-        // never arrives. This never changes playback intent.
-        if (!bridge.startTimer) {
-          bridge.startTimer = setTimeout(function(){
-            bridge.startTimer = null;
-            var current = getVideo();
-            if (current && bridge.playIntent === 'play' &&
-                !isActuallyPlaying(current, getPlayer())) {
-              requestPlayerPlay(current, true);
-            }
-          }, 4500);
-        }
-        return;
-      }
-      clearStartTimer();
-      applyStart(v);
-      if (!isActuallyPlaying(v, p)) requestPlayerPlay(v, force);
-      announceReady(v);
-      if (isActuallyPlaying(v, getPlayer())) scheduleAudio(250);
-    }
-    function bufferedRange(v){
-      var current = Number(v && v.currentTime) || 0;
-      try {
-        var ranges = v.buffered;
-        if (!ranges || !ranges.length) return { start: current, end: current };
-        var start = current;
-        var end = current;
-        for (var i = 0; i < ranges.length; i += 1) {
-          var rangeStart = Number(ranges.start(i));
-          var rangeEnd = Number(ranges.end(i));
-          if (!isFinite(rangeStart) || !isFinite(rangeEnd)) continue;
-          if (rangeStart <= current + 0.5 && rangeEnd >= current - 0.5) {
-            if (rangeEnd > end) end = rangeEnd;
-            if (rangeStart < start || start === current) start = rangeStart;
-          }
-        }
-        return { start: start, end: end };
-      } catch(e) {
-        return { start: current, end: current };
-      }
-    }
-    function report(){
-      if (!bridge.alive) return;
-      var v = getVideo();
-      var p = getPlayer();
-      if (!v) return;
-      var quality = '';
-      try { quality = p && p.getPlaybackQuality ? p.getPlaybackQuality() : ''; } catch(e) {}
-      var buffer = bufferedRange(v);
-      send({
-        type: 'time',
-        current: Number(v.currentTime) || 0,
-        duration: Number(v.duration) || 0,
-        bufferedStart: buffer.start,
-        bufferedEnd: buffer.end,
-        // React mirrors intent, not the raw video flag. A rotation can make
-        // the raw flag flap for a few frames while the user still wants play.
-        playing: bridge.playIntent === 'play' && !v.ended,
-        // actualPlaying combines YouTube's playerState with the real element.
-        // The raw flag alone can stay true while YouTube has paused the player,
-        // which is how the UI used to look "playing" over a frozen picture.
-        actualPlaying: isActuallyPlaying(v, p),
-        playerState: playerState(p),
-        pauseReason: bridge.pauseReason,
-        ready: isFrameReady(v),
-        rate: v.playbackRate,
-        quality: quality,
-        ad: isAdShowing()
-      });
-    }
-    function installVideoEvents(v){
-      if (v.__kissEventRouter) return;
-      v.__kissEventRouter = true;
-      var names = [
-        'timeupdate','play','playing','pause','durationchange',
-        'loadedmetadata','seeking','seeked','ratechange','ended',
-        'volumechange','error','loadeddata','canplay'
-      ];
-      for (var i = 0; i < names.length; i += 1) {
-        (function(name){
-          v.addEventListener(name, function(){
-            // The router always forwards to the current bridge. A script
-            // re-injection therefore cannot leave stale listeners speaking
-            // for the previous playback state machine.
-            var active = window.__kissBridge;
-            if (!active || !active.alive || active.videoRef !== v) return;
-            if (name === 'loadeddata' || name === 'canplay') {
-              if (typeof active.onVideoReady === 'function') {
-                active.onVideoReady(v);
-              }
-              return;
-            }
-            if (typeof active.onVideoEvent === 'function') {
-              active.onVideoEvent(name, v);
-            }
-          });
-        })(names[i]);
-      }
-    }
-    bridge.onVideoReady = function(v){
-      if (!bridge.alive || bridge.videoRef !== v) return;
-      maybeStart(v);
-    };
-    bridge.onVideoEvent = function(name, v){
-      if (!bridge.alive || bridge.videoRef !== v) return;
-      if (name === 'ended') {
-        setPlayIntent(false, 'ended');
-        report();
-        return;
-      }
-      // Do not turn a 'pause' event into an immediate play command. Android
-      // emits pause repeatedly while the WebView surface is being resized;
-      // reacting to each one created the audible pause/play stutter. Rotation
-      // recovery is handled by the bounded reconcile schedule instead.
-      if (name === 'playing') {
-        bridge.audioStrikes = 0;
-        scheduleAudio(180);
-        setTimeout(ensureAudio, 900);
-      } else if (name === 'loadedmetadata') {
-        scheduleAudio(180);
-      } else if (name === 'volumechange') {
-        if (v.muted && bridge.audioStrikes < 6) {
-          bridge.audioStrikes += 1;
-          scheduleAudio(120);
-        } else if (!v.muted) {
-          bridge.audioStrikes = 0;
-        }
-      } else if (name === 'error') {
-        send({ type:'problem', reason:'video-error', code: v.error ? v.error.code : 0 });
-      }
-      report();
-    };
-    var bindTries = 0;
-    function bind(){
-      if (!bridge.alive) return;
-      var v = getVideo();
-      if (!v) {
-        bindTries++;
-        if (bindTries < 14) setTimeout(bind, 700);
-        return;
-      }
-      applyStart(v);
-      if (bridge.videoRef !== v) {
-        bridge.videoRef = v;
-        bridge.frameReady = false;
-        clearStartTimer();
-      }
-      if (bridge.playIntent === 'play') {
-        try { v.__kissUserPaused = false; } catch(e) {}
-      } else {
-        try { v.__kissUserPaused = true; } catch(e) {}
-      }
-      installVideoEvents(v);
-      try { v.playsInline = true; } catch(e) {}
-      try { v.preload = 'auto'; } catch(e) {}
-      report();
-      // Always let the state machine decide. It waits for the first frame but
-      // never pauses a video that is already playing or already has intent.
-      maybeStart(v);
-      if (!bridge.timer) {
-        bridge.timer = setInterval(report, 900);
-      }
-    }
-    function isCaptionUrl(url){
-      var value = String(url || '');
-      return value.indexOf('/api/timedtext') >= 0 ||
-        value.indexOf('/youtubei/v1/get_transcript') >= 0;
-    }
-
-    function findDeepKey(value, key, depth){
-      if (!value || typeof value !== 'object' || depth > 8) return null;
-      if (value[key]) return value[key];
-      for (var name in value) {
-        if (!Object.prototype.hasOwnProperty.call(value, name)) continue;
-        var found = findDeepKey(value[name], key, depth + 1);
-        if (found) return found;
-      }
-      return null;
-    }
-
-    function captionSegmentText(segment){
-      if (!segment) return '';
-      var snippet = segment.snippet;
-      if (snippet) {
-        if (typeof snippet.simpleText === 'string') return snippet.simpleText;
-        if (snippet.runs && snippet.runs.length) {
-          var parts = [];
-          for (var i = 0; i < snippet.runs.length; i += 1) {
-            parts.push(snippet.runs[i] && snippet.runs[i].text ? snippet.runs[i].text : '');
-          }
-          return parts.join('');
-        }
-      }
-      return typeof segment.text === 'string' ? segment.text : '';
-    }
-
-    function transcriptCuesFromResponse(payload){
-      var segments = null;
-      try { segments = findDeepKey(payload, 'initialSegments', 0); } catch(e) {}
-      if (!segments || !segments.length) {
-        try {
-          var panel = payload && payload.actions && payload.actions[0] &&
-            payload.actions[0].updateEngagementPanelAction;
-          var transcript = panel && panel.content && panel.content.transcriptRenderer;
-          var search = transcript && transcript.content &&
-            transcript.content.transcriptSearchPanelRenderer;
-          segments = search && search.body &&
-            search.body.transcriptSegmentListRenderer &&
-            search.body.transcriptSegmentListRenderer.initialSegments;
-        } catch(e) {}
-      }
-      if (!segments || !segments.length) return [];
-      var cues = [];
-      for (var i = 0; i < segments.length; i += 1) {
-        var segment = segments[i] || {};
-        var startMs = Number(
-          segment.startMs != null ? segment.startMs : segment.start_time
-        );
-        var endMs = Number(
-          segment.endMs != null ? segment.endMs : segment.end_time
-        );
-        if (!isFinite(endMs) || endMs <= startMs) {
-          var durationMs = Number(
-            segment.durationMs != null ? segment.durationMs : segment.duration
-          );
-          endMs = startMs + (isFinite(durationMs) && durationMs > 0 ? durationMs : 0);
-        }
-        var text = captionSegmentText(segment).replace(/\s+/g, ' ').trim();
-        if (isFinite(startMs) && isFinite(endMs) && endMs > startMs && text) {
-          cues.push({ start: startMs / 1000, end: endMs / 1000, text: text });
-        }
-      }
-      return cues;
-    }
-
-    function normalizeCaptionPayload(url, text, status){
-      if (!text) return null;
-      var content = String(text);
-      if (!content.trim() || !looksLikeCaptionText(content)) return null;
-      var payload = {
-        type: 'caption-payload',
-        source: 'webview-player',
-        url: String(url || ''),
-        status: Number(status) || 0,
-        text: content.slice(0, 6000000)
-      };
-      if (String(url || '').indexOf('/get_transcript') >= 0) {
-        try {
-          var cues = transcriptCuesFromResponse(JSON.parse(content));
-          if (cues.length) {
-            payload.cues = cues;
-            delete payload.text;
-            return payload;
-          }
-        } catch(e) {}
-        return null;
-      }
-      return payload;
-    }
-
-    bridge.captionDeliver = function(payload){
-      if (!payload) return;
-      var videoId = bridge.captionVideoId || '';
-      if (videoId && payload.url && String(payload.url).indexOf(videoId) < 0) {
-        return;
-      }
-      if (typeof bridge.captionFinish === 'function') {
-        bridge.captionFinish(payload);
-      }
-    };
-
-    function installCaptionInterceptors(){
-      if (window.__kissCaptionHook) {
-        window.__kissCaptionHook.deliver = bridge.captionDeliver;
-        return;
-      }
-      var hook = window.__kissCaptionHook = {
-        deliver: bridge.captionDeliver,
-        seen: {}
-      };
-      function remember(url, text, status){
-        var payload = normalizeCaptionPayload(url, text, status);
-        if (!payload) return;
-        var key = String(url) + '|' + (payload.text ? payload.text.length : (payload.cues ? payload.cues.length : 0));
-        if (hook.seen[key]) return;
-        hook.seen[key] = true;
-        hook.deliver(payload);
-      }
-      var rawFetch = window.fetch;
-      if (typeof rawFetch === 'function') {
-        window.fetch = function(input, init){
-          var url = typeof input === 'string'
-            ? input
-            : (input && input.url ? input.url : String(input || ''));
-          var result = rawFetch.apply(this, arguments);
-          if (isCaptionUrl(url)) {
-            try {
-              result.then(function(response){
-                try {
-                  response.clone().text().then(function(text){
-                    remember(url, text, response.status);
-                  }).catch(function(){});
-                } catch(e) {}
-              }).catch(function(){});
-            } catch(e) {}
-          }
-          return result;
-        };
-      }
-      var rawOpen = XMLHttpRequest.prototype.open;
-      var rawSend = XMLHttpRequest.prototype.send;
-      XMLHttpRequest.prototype.open = function(method, url){
-        this.__kissCaptionUrl = String(url || '');
-        return rawOpen.apply(this, arguments);
-      };
-      XMLHttpRequest.prototype.send = function(){
-        var xhr = this;
-        var url = xhr.__kissCaptionUrl || '';
-        if (isCaptionUrl(url)) {
-          xhr.addEventListener('load', function(){
-            try {
-              var text = xhr.responseType === 'json'
-                ? JSON.stringify(xhr.response)
-                : xhr.responseText;
-              remember(url, text, xhr.status);
-            } catch(e) {}
-          });
-        }
-        return rawSend.apply(this, arguments);
-      };
-    }
-
-    function captionUrlWithFormat(baseUrl, format, android){
-      var url = String(baseUrl || '').replace(/&amp;/g, '&');
-      if (!url) return '';
-      if (/[?&]fmt=/.test(url)) {
-        url = url.replace(/([?&])fmt=[^&]*/, '$1fmt=' + format);
-      } else {
-        url += (url.indexOf('?') >= 0 ? '&' : '?') + 'fmt=' + format;
-      }
-      if (android) {
-        if (/[?&]c=/.test(url)) {
-          url = url.replace(/([?&])c=[^&]*/, '$1c=ANDROID');
-        } else {
-          url += '&c=ANDROID';
-        }
-      }
-      return url;
-    }
-
-    function looksLikeCaptionText(text){
-      var value = String(text || '').trim();
-      if (!value) return false;
-      return value.indexOf('WEBVTT') === 0 ||
-        value.indexOf('"events"') >= 0 ||
-        value.indexOf('"initialSegments"') >= 0 ||
-        value.indexOf('<transcript') >= 0 ||
-        value.indexOf('<tt') >= 0 ||
-        value.indexOf('<?xml') === 0;
-    }
-
-    function captionTrackUrls(track){
-      var base = track && track.baseUrl ? String(track.baseUrl) : '';
-      if (!base) return [];
-      var formats = ['json3', 'vtt', 'srv3'];
-      var urls = [base];
-      for (var i = 0; i < formats.length; i += 1) {
-        urls.push(captionUrlWithFormat(base, formats[i], true));
-        urls.push(captionUrlWithFormat(base, formats[i], false));
-      }
-      return urls;
-    }
-
-    async function fetchCaptionTextFromTracks(tracks){
-      var list = Array.isArray(tracks) ? tracks : [];
-      for (var i = 0; i < list.length; i += 1) {
-        var urls = captionTrackUrls(list[i]);
-        for (var j = 0; j < urls.length; j += 1) {
-          try {
-            var response = await fetch(urls[j], {
-              credentials: 'include',
-              headers: { Accept: '*/*' }
-            });
-            var text = await response.text();
-            if (response.status === 200 && text && text.trim() && looksLikeCaptionText(text)) {
-              return { text: text, url: urls[j], status: response.status };
-            }
-          } catch(e) {}
-        }
-      }
-      return null;
-    }
-
-    function recentTimedtextUrls(videoId, lang){
-      var preferred = [];
-      var others = [];
-      try {
-        var entries = performance.getEntriesByType('resource') || [];
-        var baseLang = String(lang || '').split('-')[0];
-        for (var i = 0; i < entries.length; i += 1) {
-          var name = entries[i] && entries[i].name ? entries[i].name : '';
-          if (name.indexOf('/api/timedtext') < 0) continue;
-          if (videoId && name.indexOf(String(videoId)) < 0) continue;
-          if (baseLang && name.indexOf('lang=' + baseLang) >= 0) preferred.push(name);
-          else others.push(name);
-        }
-      } catch(e) {}
-      // Keep the newest URLs from each bucket. Concatenating first and then
-      // slicing used to drop the preferred language when YouTube requested
-      // many other timedtext tracks.
-      return preferred
-        .slice(-6)
-        .reverse()
-        .concat(others.slice(-6).reverse());
-    }
-
-    function getClientVersion(){
-      try {
-        if (window.ytcfg && window.ytcfg.get) {
-          return window.ytcfg.get('INNERTUBE_CLIENT_VERSION') || '';
-        }
-      } catch(e) {}
-      return '';
-    }
-
-    function getVisitorData(){
-      try {
-        if (window.ytcfg && window.ytcfg.get) {
-          var value = window.ytcfg.get('VISITOR_DATA');
-          if (value) return value;
-        }
-      } catch(e) {}
-      try {
-        var match = String(document.documentElement.innerHTML || '')
-          .match(/"VISITOR_DATA":"([^"]+)"/);
-        return match ? decodeURIComponent(match[1]) : '';
-      } catch(e) {}
-      return '';
-    }
-
-    function getInnertubeContext(){
-      var context = null;
-      try {
-        if (window.ytcfg && window.ytcfg.get) {
-          context = window.ytcfg.get('INNERTUBE_CONTEXT');
-        }
-      } catch(e) {}
-      if (!context || typeof context !== 'object') {
-        context = {
-          client: {
-            clientName: 'WEB',
-            clientVersion: getClientVersion() || '2.20260101.00.00',
-            hl: 'en',
-            gl: 'US'
-          }
-        };
-      }
-      if (context.client && !context.client.visitorData) {
-        context.client.visitorData = getVisitorData();
-      }
-      return context;
-    }
-
-    function findTranscriptParams(){
-      try {
-        var endpoint = findDeepKey(window.ytInitialData, 'getTranscriptEndpoint', 0);
-        if (endpoint && endpoint.params) return endpoint.params;
-      } catch(e) {}
-      try {
-        var playerEndpoint = findDeepKey(window.ytInitialPlayerResponse, 'getTranscriptEndpoint', 0);
-        if (playerEndpoint && playerEndpoint.params) return playerEndpoint.params;
-      } catch(e) {}
-      try {
-        var match = String(document.documentElement.innerHTML || '')
-          .match(/"getTranscriptEndpoint":\{"params":"([^"]+)"/);
-        return match ? match[1] : '';
-      } catch(e) {}
-      return '';
-    }
-
-    async function fetchTranscriptFromPage(videoId, lang){
-      var params = findTranscriptParams();
-      if (!params) return [];
-      try { params = decodeURIComponent(params); } catch(e) {}
-      var key = '';
-      try {
-        if (window.ytcfg && window.ytcfg.get) {
-          key = window.ytcfg.get('INNERTUBE_API_KEY') || '';
-        }
-      } catch(e) {}
-      var url = '/youtubei/v1/get_transcript?prettyPrint=false' +
-        (key ? '&key=' + encodeURIComponent(key) : '');
-      var clientVersion = getClientVersion() || '2.20260101.00.00';
-      var clientName = '1';
-      try {
-        if (window.ytcfg && window.ytcfg.get) {
-          clientName = String(window.ytcfg.get('INNERTUBE_CONTEXT_CLIENT_NAME') || '1');
-        }
-      } catch(e) {}
-      var response = await fetch(url, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Youtube-Client-Name': clientName,
-          'X-Youtube-Client-Version': clientVersion,
-          'X-Goog-Visitor-Id': getVisitorData()
-        },
-        body: JSON.stringify({
-          context: getInnertubeContext(),
-          params: params
-        })
-      });
-      if (!response.ok) return [];
-      var json = await response.json();
-      return transcriptCuesFromResponse(json);
-    }
-
-    function captionTrackMatches(track, lang){
-      var code = String(track && track.languageCode ? track.languageCode : '');
-      var target = String(lang || '');
-      if (!target || !code) return true;
-      return code === target ||
-        code.indexOf(target + '-') === 0 ||
-        target.indexOf(code + '-') === 0;
-    }
-
-    function setCaptionTrack(player, track, attempts){
-      try {
-        if (player && player.setOption) {
-          player.setOption('captions', 'track', track);
-        }
-      } catch(e) {
-        if (attempts > 0) {
-          setTimeout(function(){
-            setCaptionTrack(player, track, attempts - 1);
-          }, 250);
-        }
-      }
-    }
-
-    function activateCaptions(lang){
-      var player = getPlayer();
-      var activated = false;
-      var selected = null;
-      if (player) {
-        try {
-          if (player.loadModule) player.loadModule('captions');
-        } catch(e) {}
-        var list = null;
-        try {
-          list = player.getOption('captions', 'tracklist', { includeAsr: true });
-        } catch(e) {}
-        if (list && list.tracks && list.tracks.length) list = list.tracks;
-        if (!list || !list.length) {
-          try { list = player.getOption('captions', 'tracklist'); } catch(e) {}
-        }
-        if (list && list.tracks && list.tracks.length) list = list.tracks;
-        if (list && list.length) {
-          for (var i = 0; i < list.length; i += 1) {
-            if (captionTrackMatches(list[i], lang)) {
-              selected = list[i];
-              break;
-            }
-          }
-          if (!selected) selected = list[0];
-          try { player.setOption('captions', 'track', {}); } catch(e) {}
-          setTimeout(function(){
-            setCaptionTrack(player, selected, 3);
-          }, 300);
-          activated = true;
-        }
-        try {
-          var current = player.getOption('captions', 'track');
-          if (current && current.languageCode) activated = true;
-        } catch(e) {}
-      }
-      if (activated) return true;
-      var selectors = [
-        '.ytmClosedCaptioningButtonButton',
-        'ytm-closed-captioning-button',
-        '.ytmClosedCaptioningButtonHost',
-        'yt-closed-captions-toggle-button',
-        '.ytp-caption-button',
-        '.ytp-subtitles-button',
-        'button[aria-label*="字幕"]',
-        'button[aria-label*="Captions"]',
-        'button[aria-label*="Subtitles"]',
-        'button[aria-label*="captions"]',
-        'button[aria-label*="subtitles"]'
-      ];
-      for (var k = 0; k < selectors.length; k += 1) {
-        try {
-          var button = document.querySelector(selectors[k]);
-          if (button) {
-            button.click();
-            return true;
-          }
-        } catch(e) {}
-      }
-      return false;
-    }
-
-    installCaptionInterceptors();
-
-    function clearPauseAt(){
-      if (bridge.pauseAtTimer) {
-        clearInterval(bridge.pauseAtTimer);
-        bridge.pauseAtTimer = null;
-      }
-      bridge.pauseAtTarget = -1;
-      bridge.pauseAtSawBeforeEnd = false;
-    }
-
-    function orientationHoldActive(){
-      return Date.now() < (Number(bridge.orientationUntil) || 0);
-    }
-    function scheduleOrientationSettle(){
-      if (bridge.orientationTimer) clearTimeout(bridge.orientationTimer);
-      var delay = Math.max(0, (Number(bridge.orientationUntil) || 0) - Date.now());
-      bridge.orientationTimer = setTimeout(function(){
-        bridge.orientationTimer = null;
-        if (!bridge.alive) return;
-        var confirmExplicitPlay = bridge.orientationPlayRequested;
-        bridge.orientationPlayRequested = false;
-        reconcilePlayback('orientation-settled');
-        if (bridge.orientationConfirmTimer) {
-          clearTimeout(bridge.orientationConfirmTimer);
-          bridge.orientationConfirmTimer = null;
-        }
-        if (confirmExplicitPlay && bridge.playIntent === 'play') {
-          // A user tap during rotation gets one post-settle confirmation for
-          // a late native pause. Rotation alone never enters this retry path.
-          bridge.orientationConfirmTimer = setTimeout(function(){
-            bridge.orientationConfirmTimer = null;
-            if (!bridge.alive || bridge.playIntent !== 'play') return;
-            var current = getVideo();
-            if (current && !isActuallyPlaying(current, getPlayer())) {
-              requestPlayerPlay(current, true);
-            }
-          }, 400);
-        }
-      }, delay);
-    }
-    function beginOrientation(){
-      bridge.orientationUntil = Date.now() + 650;
-      clearPlayFallback();
-      clearStartTimer();
-      if (bridge.playConfirmTimer) {
-        clearTimeout(bridge.playConfirmTimer);
-        bridge.playConfirmTimer = null;
-      }
-      // All native/React orientation notifications extend the same quiet
-      // window. Only the final timer is allowed to reconcile playback.
-      scheduleOrientationSettle();
-      return true;
-    }
-
-    function reconcilePlayback(reason){
-      if (!bridge.alive || bridge.playIntent !== 'play') return true;
-      if (orientationHoldActive()) {
-        scheduleOrientationSettle();
-        return true;
-      }
-      var v = getVideo();
-      if (!v) return true;
-      if (v.ended) {
-        setPlayIntent(false, 'ended');
-        report();
-        return true;
-      }
-      // Only restore the user's play intent. Never touch pauseAt here: a
-      // blind-listening boundary must survive a fullscreen rotation.
-      maybeStart(v);
-      setTimeout(report, 80);
-      return true;
-    }
-
-    window.__kiss = {
-      play: function(){
-        return playNow('user');
-      },
-      pause: function(){
-        return pauseNow('user');
-      },
-      setPlaying: function(playing){
-        return playing ? playNow('user') : pauseNow('user');
-      },
-      resume: function(){
-        return reconcilePlayback('orientation');
-      },
-      reconcile: function(){
-        return reconcilePlayback('reconcile');
-      },
-      refresh: function(){
-        // onLoadEnd only needs a DOM rescan. Reinjecting the whole script used
-        // to initialize playback twice and restart pending timers on cold load.
-        bindTries = 0;
-        bind();
-        return true;
-      },
-      orientation: function(){
-        return beginOrientation();
-      },
-      resetForEntry: function(){
-        return playNow('entry', false);
-      },
-      pauseForScreen: function(){
-        var result = pauseNow('screen');
-        // A screen exit is a fresh-entry boundary. Do not let a pause from
-        // this video leak into the next player instance through sessionStorage.
-        try {
-          window.sessionStorage.removeItem('kiss-play-intent');
-          window.sessionStorage.removeItem('kiss-play-url');
-        } catch(e) {}
-        return result;
-      },
-      toggle: function(){
-        if (bridge.playIntent === 'play') {
-          return pauseNow('user');
-        }
-        return playNow('user');
-      },
-      seek: function(seconds){
-        clearPauseAt();
-        var v=getVideo();
-        try{ if(v){ v.currentTime=Math.max(0, Number(seconds)||0); } }catch(e){}
-        return true;
-      },
-      pauseAt: function(seconds){
-        var target = Number(seconds);
-        if (!Number.isFinite(target) || target < 0) {
-          clearPauseAt();
-          return true;
-        }
-        clearPauseAt();
-        bridge.pauseAtTarget = target;
-        bridge.pauseAtTimer = setInterval(function(){
-          if (!bridge.alive || bridge.playIntent !== 'play') {
-            clearPauseAt();
-            return;
-          }
-          var v = getVideo();
-          if (!v) return;
-          if (v.ended) {
-            clearPauseAt();
-            setPlayIntent(false, 'ended');
-            report();
-            return;
-          }
-          var now = Number(v.currentTime) || 0;
-          if (!bridge.pauseAtSawBeforeEnd) {
-            // A seek may not have landed yet. If currentTime is still past the
-            // target, wait for it to drop back before considering a pause.
-            if (now > target) return;
-            bridge.pauseAtSawBeforeEnd = true;
-          }
-          if (now < target) return;
-          pauseNow('boundary');
-          // React must observe the semantic boundary even when this pause and
-          // the final time report arrive in the same WebView message batch.
-          send({ type: 'cue-ended', current: now, cueEnd: target });
-        }, 16);
-        return true;
-      },
-      rate: function(rate){ var v=getVideo(); try{ if(v)v.playbackRate=Number(rate)||1; }catch(e){}; return true; },
-      mute: function(muted){ var v=getVideo(); try{ if(v)v.muted=!!muted; }catch(e){}; return true; },
-      audio: function(){ ensureAudio(); return true; },
-      captions: function(lang, tracks, videoId){
-        if (bridge.captionBusy) return true;
-        bridge.captionBusy = true;
-        bridge.captionVideoId = String(videoId || '');
-        var finished = false;
-        var timer = setTimeout(function(){
-          if (!finished) fail('timeout');
-        }, 15000);
-        function finish(payload){
-          if (finished) return;
-          finished = true;
-          clearTimeout(timer);
-          bridge.captionBusy = false;
-          bridge.captionFinish = null;
-          bridge.captionVideoId = '';
-          send(payload);
-        }
-        function fail(reason){
-          finish({ type: 'caption-error', reason: String(reason || 'captions-unavailable') });
-        }
-        bridge.captionFinish = function(payload){
-          if (payload) finish(payload);
-        };
-        (async function(){
-          try {
-            var direct = await fetchCaptionTextFromTracks(tracks || []);
-            if (finished) return;
-            if (direct) {
-              var payload = normalizeCaptionPayload(direct.url, direct.text, direct.status);
-              if (payload) {
-                finish(payload);
-                return;
-              }
-            }
-          } catch(e) {}
-          var recent = recentTimedtextUrls(videoId, lang);
-          for (var i = 0; i < recent.length; i += 1) {
-            if (finished) return;
-            try {
-              var response = await fetch(recent[i], {
-                credentials: 'include',
-                headers: { Accept: '*/*' }
-              });
-              var text = await response.text();
-              if (response.status === 200 && text && text.trim() && looksLikeCaptionText(text)) {
-                var payload = normalizeCaptionPayload(recent[i], text, response.status);
-                if (payload) {
-                  finish(payload);
-                  return;
-                }
-              }
-            } catch(e) {}
-          }
-          if (finished) return;
-          try {
-            var cues = await fetchTranscriptFromPage(videoId, lang);
-            if (!finished && cues && cues.length) {
-              finish({
-                type: 'caption-payload',
-                source: 'webview-transcript',
-                url: 'youtubei/get_transcript',
-                cues: cues
-              });
-              return;
-            }
-          } catch(e) {}
-          if (finished) return;
-          var activated = activateCaptions(lang);
-          if (!activated) {
-            var tries = 0;
-            var tryAgain = function(){
-              if (finished) return;
-              tries += 1;
-              if (activateCaptions(lang)) return;
-              if (tries < 4) {
-                setTimeout(tryAgain, 500);
-                return;
-              }
-              fail('no-player-captions');
-            };
-            setTimeout(tryAgain, 500);
-          }
-        })();
-        return true;
-      }
-    };
-    bind();
-    var lastHref = location.href;
-    document.addEventListener('yt-navigate-finish', function(){
-      if (!bridge.alive) return;
-      if (location.href !== lastHref) {
-        lastHref = location.href;
-        setPlayIntent(true, 'navigation');
-        bridge.frameReady = false;
-        bridge.videoRef = null;
-        clearStartTimer();
-        bridge.captionBusy = false;
-        bridge.captionFinish = null;
-        bridge.captionVideoId = '';
-        var nextVideo = getVideo();
-        if (nextVideo) {
-          nextVideo.__kissUserPaused = false;
-          nextVideo.__kissQualityStarted = false;
-        }
-      }
-      bindTries = 0;
-      setTimeout(bind, 400);
-    }, true);
-    function scheduleReconcile(delay){
-      if (bridge.reconcileTimer) clearTimeout(bridge.reconcileTimer);
-      bridge.reconcileTimer = setTimeout(function(){
-        bridge.reconcileTimer = null;
-        if (!bridge.alive) return;
-        reconcilePlayback('orientation');
-      }, delay);
-    }
-    window.addEventListener('orientationchange', function(){
-      // Android can pause the WebView while the activity rotates. Wait for
-      // both native and React rotation notifications to settle before issuing
-      // one recovery command; pause events themselves never trigger play.
-      beginOrientation();
-    });
-    function reconcileWhenVisible(){
-      if (document.hidden) return;
-      scheduleReconcile(300);
-    }
-    document.addEventListener('visibilitychange', function(){
-      if (!document.hidden) reconcileWhenVisible();
-    });
-    window.addEventListener('pageshow', reconcileWhenVisible);
-    window.addEventListener('focus', reconcileWhenVisible);
-    setTimeout(function(){
-      var v=getVideo();
-      var p=getPlayer();
-      var state=-1;
-      try{ state = p && p.getPlayerState ? p.getPlayerState() : -1; }catch(e){}
-      var text='';
-      try{ text=(document.body&&document.body.innerText||'').toLowerCase(); }catch(e){}
-      var bad = !v || state===5 ||
-        text.indexOf('video unavailable')>=0 ||
-        text.indexOf('playback on other websites has been disabled')>=0 ||
-        text.indexOf('this video is unavailable')>=0 ||
-        text.indexOf('error 101')>=0 || text.indexOf('error 150')>=0 || text.indexOf('error 153')>=0;
-      if (bad) send({ type:'problem', reason:'unavailable', state: state, text: text.slice(0,160) });
-    }, 6500);
-  } catch (error) {
-    try { window.ReactNativeWebView.postMessage(JSON.stringify({type:'problem', reason:'bridge', text:String(error)})); } catch(e) {}
-  }
-})();
-true;
-`;
-}
 
 function focusPlaybackAction(
   isNewEntry: boolean,
@@ -1616,6 +274,9 @@ export default function PlayerScreen() {
   // embed URL directly has no HTTP Referer and YouTube rejects it with Error
   // 153, which was the root cause of the old "video unavailable" screen.
   const [ready, setReady] = useState(false);
+  // Bumped only when the WebView is deliberately reloaded, so the injected
+  // bridge is cached for the normal playing lifetime.
+  const [bridgeGeneration, setBridgeGeneration] = useState(0);
   const [videoLoading, setVideoLoading] = useState(true);
   const videoLoadingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -1624,11 +285,26 @@ export default function PlayerScreen() {
   const resumeOnFocusRef = useRef(false);
   const mirrorPlaying = (value: boolean) => {
     playingRef.current = value;
-    setPlaying(value);
+    // Reports arrive several times per second. Re-rendering this screen for a
+    // boolean that did not change was pure JS-thread cost during a rotation.
+    setPlaying((previous) => (previous === value ? previous : value));
   };
   const [adShowing, setAdShowing] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [current, setCurrent] = useState(0);
+  const lastProgressPushRef = useRef({ at: 0, value: -1 });
+  const pushProgress = (value: number) => {
+    // The bridge reports ~4 times a second plus once per media event. Only the
+    // progress bar and the active subtitle row consume this value, so collapse
+    // sub-0.1s / sub-150ms duplicates instead of re-rendering the whole screen.
+    const now = Date.now();
+    const last = lastProgressPushRef.current;
+    if (last.value >= 0 && Math.abs(value - last.value) < 0.1 && now - last.at < 150) {
+      return;
+    }
+    lastProgressPushRef.current = { at: now, value };
+    setCurrent(value);
+  };
   const [duration, setDuration] = useState(0);
   const [bufferedStart, setBufferedStart] = useState(0);
   const [bufferedEnd, setBufferedEnd] = useState(0);
@@ -1703,7 +379,6 @@ export default function PlayerScreen() {
   const visibleCueRangeRef = useRef({ first: -1, last: -1 });
   const fontTrackWidthRef = useRef(0);
   const rateTrackWidthRef = useRef(0);
-  const orientationResumeTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const isFavorite = favorites.some((item) => item.videoId === videoId);
   const subtitleMode = settings.subtitle.mode;
@@ -2333,38 +1008,70 @@ export default function PlayerScreen() {
     return () => timers.forEach((timer) => clearTimeout(timer));
   }, [activeIndex, scrollMode, trackKey]);
 
+  // One channel for every bridge command. The transition gate is the only
+  // component that decides *when* a play command may be issued; everything
+  // else just expresses intent.
+  const pushBridge = useCallback((script: string) => {
+    webRef.current?.injectJavaScript(script);
+  }, []);
+
+  const gateRef = useRef<TransitionGate | null>(null);
+  if (!gateRef.current) {
+    gateRef.current = createTransitionGate({
+      now: () => Date.now(),
+      setTimeout: (fn, ms) => setTimeout(fn, ms),
+      clearTimeout: (id) => clearTimeout(id as ReturnType<typeof setTimeout>),
+      onStart: (epoch) => {
+        pushBridge(
+          `window.__kiss && window.__kiss.layoutStart(${epoch}); true;`
+        );
+      },
+      onSettle: (epoch) => {
+        pushBridge(
+          `window.__kiss && window.__kiss.layoutStable(${epoch}); true;`
+        );
+      },
+    });
+  }
+
+  const beginTransition = useCallback(
+    (
+      trigger: TransitionTrigger,
+      options?: { expectLayout?: boolean; expectRotation?: boolean }
+    ) => {
+      gateRef.current?.begin(trigger, options);
+    },
+    []
+  );
+
   useEffect(() => {
     return () => {
-      orientationResumeTimers.current.forEach((timer) => clearTimeout(timer));
-      orientationResumeTimers.current = [];
+      gateRef.current?.dispose();
       ScreenOrientation.unlockAsync().catch(() => {});
     };
   }, []);
 
-  const clearOrientationResume = () => {
-    orientationResumeTimers.current.forEach((timer) => clearTimeout(timer));
-    orientationResumeTimers.current = [];
-  };
-
-  const scheduleOrientationResume = () => {
-    clearOrientationResume();
-    // Mark the transition immediately. The bridge coalesces native and React
-    // notifications into one quiet window, then owns the first recovery.
-    webRef.current?.injectJavaScript(
-      'window.__kiss && window.__kiss.orientation(); true;'
-    );
-    // Keep only two late, bounded checks for a pause delivered after the
-    // surface settles. Do not repeatedly unmute/setVolume during rotation.
-    [800, 1800].forEach((delay) => {
-      orientationResumeTimers.current.push(
-        setTimeout(() => {
-          webRef.current?.injectJavaScript(
-            'window.__kiss && window.__kiss.reconcile(); true;'
-          );
-        }, delay)
-      );
-    });
-  };
+  // A device rotation that the player did not initiate (auto-rotate, system
+  // fullscreen, back gesture) still has to open a transition, otherwise the
+  // surface would resize with no handshake and the bridge would keep issuing
+  // play commands into the middle of it. When a lock-initiated transition is
+  // already open, this only confirms that the rotation really happened.
+  const lastWindowSizeRef = useRef({ width: windowSize.width, height: windowSize.height });
+  useEffect(() => {
+    const last = lastWindowSizeRef.current;
+    if (last.width === windowSize.width && last.height === windowSize.height) {
+      return;
+    }
+    lastWindowSizeRef.current = {
+      width: windowSize.width,
+      height: windowSize.height,
+    };
+    if (gateRef.current?.isActive()) {
+      gateRef.current.observeRotation();
+      return;
+    }
+    beginTransition('rotation', { expectLayout: true, expectRotation: false });
+  }, [beginTransition, windowSize.height, windowSize.width]);
 
   useFocusEffect(
     useCallback(() => {
@@ -2402,35 +1109,40 @@ export default function PlayerScreen() {
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') scheduleOrientationResume();
+      // Returning from background does not resize the surface, so this closes
+      // after the quiet window instead of waiting for a layout report.
+      if (state === 'active') beginTransition('app-active', { expectLayout: false });
     });
     return () => sub.remove();
-  }, []);
+  }, [beginTransition]);
 
   const exitFullscreen = async () => {
-    webRef.current?.injectJavaScript(
-      'window.__kiss && window.__kiss.orientation(); true;'
-    );
+    // Open the transition before the lock. It is closed only after the window
+    // has rotated *and* the stage reports a stable size, so the bridge never
+    // resumes playback just before the real surface resize.
+    beginTransition('orientation-lock', {
+      expectLayout: true,
+      expectRotation: true,
+    });
     try {
       await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
     } catch {}
     setFullscreen(false);
     setControlsVisible(true);
-    scheduleOrientationResume();
   };
 
   const handleFullscreen = async () => {
     setControlsVisible(true);
-    webRef.current?.injectJavaScript(
-      'window.__kiss && window.__kiss.orientation(); true;'
-    );
     try {
       if (landscape || fullscreen) {
         await exitFullscreen();
       } else {
+        beginTransition('orientation-lock', {
+          expectLayout: true,
+          expectRotation: true,
+        });
         await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
         setFullscreen(true);
-        scheduleOrientationResume();
       }
     } catch {}
   };
@@ -2493,9 +1205,7 @@ export default function PlayerScreen() {
     return () => clearVideoLoadingTimer();
   }, []);
 
-  const send = (script: string) => {
-    webRef.current?.injectJavaScript(script);
-  };
+  const send = pushBridge;
 
   const togglePlay = () => {
     // Send the next intent explicitly instead of asking the bridge to toggle
@@ -2587,6 +1297,9 @@ export default function PlayerScreen() {
   const seekTo = (seconds: number) => {
     const next = Math.max(0, Math.min(duration || seconds, seconds));
     setCurrent(next);
+    // A seek is an explicit jump: do not let the throttle swallow the next
+    // report just because it is close to the previous position.
+    lastProgressPushRef.current = { at: Date.now(), value: next };
     send(`window.__kiss && window.__kiss.seek(${next}); true;`);
   };
 
@@ -2767,6 +1480,7 @@ export default function PlayerScreen() {
       if (typeof message.current === 'number') {
         progressRef.current.current = message.current;
         setCurrent(message.current);
+        lastProgressPushRef.current = { at: Date.now(), value: message.current };
       }
       runPrecisionBoundary(true);
       return;
@@ -2838,30 +1552,43 @@ export default function PlayerScreen() {
     if (message.type === 'time') {
       if (typeof message.current === 'number') {
         progressRef.current.current = message.current;
-        setCurrent(message.current);
+        pushProgress(message.current);
       }
       if (typeof message.duration === 'number' && message.duration > 0) {
         progressRef.current.duration = message.duration;
-        setDuration(message.duration);
+        setDuration((previous) =>
+          Math.abs(previous - message.duration) < 0.01 ? previous : message.duration
+        );
       }
       if (typeof message.bufferedStart === 'number') {
         progressRef.current.bufferedStart = message.bufferedStart;
-        setBufferedStart(message.bufferedStart);
+        setBufferedStart((previous) =>
+          Math.abs(previous - message.bufferedStart) < 0.05
+            ? previous
+            : message.bufferedStart
+        );
       }
       if (typeof message.bufferedEnd === 'number') {
         progressRef.current.bufferedEnd = message.bufferedEnd;
-        setBufferedEnd(message.bufferedEnd);
+        setBufferedEnd((previous) =>
+          Math.abs(previous - message.bufferedEnd) < 0.05
+            ? previous
+            : message.bufferedEnd
+        );
       }
       if (typeof message.playing === 'boolean') mirrorPlaying(message.playing);
       if (shouldClearVideoLoading(message)) {
         clearVideoLoadingTimer();
-        setVideoLoading(false);
+        setVideoLoading((previous) => (previous ? false : previous));
       }
       if (typeof message.ad === 'boolean') {
         progressRef.current.ad = message.ad;
-        setAdShowing(message.ad);
+        setAdShowing((previous) => (previous === message.ad ? previous : message.ad));
       }
-      if (message.quality) setQuality(String(message.quality));
+      if (message.quality) {
+        const nextQuality = String(message.quality);
+        setQuality((previous) => (previous === nextQuality ? previous : nextQuality));
+      }
       if (message.ready) setReady(true);
       if (message.ready) webReadyRef.current = true;
       return;
@@ -2882,7 +1609,11 @@ export default function PlayerScreen() {
     startAtRef.current = Math.max(0, progressRef.current.current);
     setVideoLoading(true);
     armVideoLoadingFallback();
-    webRef.current?.reload();
+    // Rebuild the bridge with the new resume offset, then reload in the next
+    // task so the WebView already holds the new script when it starts loading.
+    beginTransition('webview-reload', { expectLayout: false });
+    setBridgeGeneration((value) => value + 1);
+    setTimeout(() => webRef.current?.reload(), 0);
   };
 
   const shareVideo = async () => {
@@ -3226,6 +1957,16 @@ export default function PlayerScreen() {
     !blindMode &&
     !hideVideo;
   const webUrl = `https://m.youtube.com/watch?v=${videoId}&hl=zh-CN&autoplay=0`;
+  // The bridge script is a ~40 kB template. It used to be rebuilt on every
+  // render (several times a second while playing), which kept the JS thread
+  // busy exactly during rotation. Build it once per video, and only for a
+  // deliberate reload (retry) where the start offset changes.
+  const injectedScript = useMemo(
+    () => playerBridgeScript(startAtRef.current),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [bridgeGeneration, videoId]
+  );
+  const webSource = useMemo(() => ({ uri: webUrl }), [webUrl]);
 
   if (!videoId) {
     return (
@@ -3240,6 +1981,10 @@ export default function PlayerScreen() {
       key="video-stage"
       onLayout={(event) => {
         const { width, height } = event.nativeEvent.layout;
+        // Authoritative resize signal for the bridge: the stage is what the
+        // WebView actually occupies. Reporting it lets the gate close the
+        // transition only once the surface has a stable size.
+        gateRef.current?.observeLayout(width, height);
         setVideoStageSize((current) =>
           current.width === width && current.height === height
             ? current
@@ -3258,7 +2003,7 @@ export default function PlayerScreen() {
         <AnyWebView
           key="watch"
           ref={webRef}
-          source={{ uri: webUrl }}
+          source={webSource}
           style={
             hideVideo && !landscape
               ? [
@@ -3282,7 +2027,7 @@ export default function PlayerScreen() {
           sharedCookiesEnabled
           thirdPartyCookiesEnabled
           userAgent={WATCH_UA}
-          injectedJavaScript={playerBridgeScript(startAtRef.current)}
+          injectedJavaScript={injectedScript}
           onMessage={handleMessage}
           onLoadStart={() => {
             webReadyRef.current = false;
