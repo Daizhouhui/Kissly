@@ -29,6 +29,12 @@ npx expo start
 
 用 Expo Go 可以预览首页、订阅和设置；播放器的 WebView / 屏幕方向能力以正式构建的 APK / IPA 为准。
 
+### 真机调试（播放器 / WebView）
+
+Expo Go 不包含本地原生模块，也无法可靠地测试 WebView 播放。完整的本地 debug 构建、Metro 热更新、adb 操作和 WebView CDP 调试流程见
+[`docs/local-debug.md`](docs/local-debug.md)，配套工具在 [`scripts/dev/`](scripts/dev/)。
+任何有 shell 权限的 AI agent 都可以按这份文档复现：`device.sh` 负责截图/点击/日志/深链，`cdp.mjs` 负责进入 WebView 内部执行 JS、抓网络和 console。
+
 ### 常用命令
 
 ```bash
