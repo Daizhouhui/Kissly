@@ -261,6 +261,13 @@ export default function MeScreen() {
             onPress={() => setDialog('title')}
           />
           <MeRow
+            icon="document-text-outline"
+            title="字幕样式"
+            subtitle="字号、显示方式与位置"
+            value={`${settings.subtitle.fontSize}px`}
+            onPress={() => router.push('/settings/subtitle' as any)}
+          />
+          <MeRow
             icon="phone-portrait-outline"
             title="默认打开页"
             value={tabValue}
