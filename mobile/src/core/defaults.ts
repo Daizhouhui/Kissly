@@ -1,4 +1,4 @@
-import { Settings } from './types';
+import type { Settings } from './types';
 
 export const KOOFIR_WEBDAV_URL = 'https://app.koofr.net/dav/Koofr';
 export const WEBDAV_FOLDER = 'Kissly';
@@ -15,13 +15,13 @@ export const DEFAULT_SETTINGS: Settings = {
   translateTitles: true,
   titleTranslationMode: 'bilingual',
   defaultTab: 'video',
-  discoverLayout: 'grid',
+  discoverLayout: 'list',
   theme: 'system',
-  themeAccent: 'sage',
+  themeAccent: 'youtube',
   keepAwake: true,
   speechRate: 0.9,
   speechPitch: 1,
-  designVersion: 3,
+  designVersion: 4,
   subtitle: {
     fontSize: 20,
     landscapeFontSize: 24,

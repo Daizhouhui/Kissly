@@ -84,7 +84,7 @@ export function normalizeSettings(settings: Settings): Settings {
     ),
     defaultTab: oneOf(
       settings.defaultTab,
-      ['video', 'podcast', 'learning', 'me'] as const,
+      ['video', 'podcast', 'learning'] as const,
       DEFAULT_SETTINGS.defaultTab
     ),
     discoverLayout: oneOf(
@@ -99,7 +99,7 @@ export function normalizeSettings(settings: Settings): Settings {
     ),
     themeAccent: oneOf(
       settings.themeAccent,
-      ['sage', 'violet', 'blue', 'teal', 'orange', 'rose', 'green'] as const,
+      ['youtube', 'sage', 'violet', 'blue', 'teal', 'orange', 'rose', 'green'] as const,
       DEFAULT_SETTINGS.themeAccent
     ),
     speechRate: numberInRange(settings.speechRate, 0.5, 2, DEFAULT_SETTINGS.speechRate),

@@ -26,6 +26,7 @@ export type SubtitlePosition = 'bottom' | 'top';
 export type ThemePreference = 'system' | 'light' | 'dark';
 
 export type ThemeAccent =
+  | 'youtube'
   | 'sage'
   | 'violet'
   | 'blue'
@@ -38,7 +39,7 @@ export type DiscoverLayout = 'list' | 'grid' | 'large';
 
 export type TitleTranslationMode = 'none' | 'bilingual' | 'translation';
 
-export type DefaultTab = 'video' | 'podcast' | 'learning' | 'me';
+export type DefaultTab = 'video' | 'podcast' | 'learning';
 
 export type SubtitleScrollMode = 'top' | 'page';
 

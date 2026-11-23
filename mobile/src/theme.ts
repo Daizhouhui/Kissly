@@ -86,6 +86,7 @@ type AccentColors = Pick<Theme['colors'], 'primary' | 'primarySoft' | 'primaryDe
 
 const accents: Record<ThemeMode, Record<ThemeAccent, AccentColors>> = {
   light: {
+    youtube: { primary: '#B33333', primarySoft: '#FBECEC', primaryDeep: '#8F2626' },
     sage: { primary: '#446B5B', primarySoft: '#E2ECE5', primaryDeep: '#315444' },
     violet: { primary: '#6B4DF6', primarySoft: '#EEE9FF', primaryDeep: '#5136CF' },
     blue: { primary: '#2F6FED', primarySoft: '#E8F0FE', primaryDeep: '#1D4ED8' },
@@ -95,6 +96,7 @@ const accents: Record<ThemeMode, Record<ThemeAccent, AccentColors>> = {
     green: { primary: '#2E9B63', primarySoft: '#E7F7EE', primaryDeep: '#237A4E' },
   },
   dark: {
+    youtube: { primary: '#E69090', primarySoft: '#421D1D', primaryDeep: '#C96B6B' },
     sage: { primary: '#8FB89F', primarySoft: '#223128', primaryDeep: '#6D987D' },
     violet: { primary: '#A78BFA', primarySoft: '#241B3D', primaryDeep: '#8B5CF6' },
     blue: { primary: '#6E9BFF', primarySoft: '#16233D', primaryDeep: '#3B82F6' },
@@ -111,18 +113,19 @@ export const THEME_ACCENTS: Array<{
   light: string;
   dark: string;
 }> = [
-  { id: 'sage', label: '鼠尾草', light: '#446B5B', dark: '#8FB89F' },
+  { id: 'youtube', label: '暗红色', light: '#B33333', dark: '#E69090' },
   { id: 'violet', label: '紫罗兰', light: '#6B4DF6', dark: '#A78BFA' },
   { id: 'blue', label: '青蓝', light: '#2F6FED', dark: '#6E9BFF' },
   { id: 'teal', label: '青绿', light: '#0F9D8A', dark: '#2DD4BF' },
   { id: 'orange', label: '琥珀', light: '#E87817', dark: '#FFA94D' },
   { id: 'rose', label: '玫瑰', light: '#E0447A', dark: '#FF7FA8' },
   { id: 'green', label: '森绿', light: '#2E9B63', dark: '#52D68D' },
+  { id: 'sage', label: '鼠尾草', light: '#446B5B', dark: '#8FB89F' },
 ];
 
 export function getTheme(
   mode: ThemeMode,
-  accent: ThemeAccent = 'sage'
+  accent: ThemeAccent = 'youtube'
 ): Theme {
   const dark = mode === 'dark';
   const base = dark ? darkBase : lightBase;

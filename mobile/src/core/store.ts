@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 import { DEFAULT_SETTINGS } from './defaults';
+import { migrateSettingsForDesign } from './settingsMigration';
 import {
   changedSettingKeys,
   isSyncedSettingKey,
@@ -159,10 +160,16 @@ export const useAppStore = create<AppState>()(
         }),
       resetSettings: () => {
         const now = Date.now();
+        const current = get().settings;
+        // "Reset preferences" must not sign the user out of WebDAV. Keep the
+        // whole connection block (URL, username, folder, enabled) so a reset
+        // of language/translation/subtitle settings does not wipe credentials.
+        const defaults = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as Settings;
         set({
-          // Clone the nested default objects so later edits cannot mutate the
-          // shared DEFAULT_SETTINGS value.
-          settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as Settings,
+          settings: {
+            ...defaults,
+            webdav: { ...(current.webdav ?? defaults.webdav) },
+          },
           settingsStamps: stampsForAllKeys(now),
           settingsUpdatedAt: now,
         });
@@ -359,22 +366,10 @@ export const useAppStore = create<AppState>()(
             (saved?.settings as { designVersion?: number } | undefined)
               ?.designVersion ?? 0
           ) || 0;
-        const mergedSettings = normalizeSettings(
-          deepMerge(DEFAULT_SETTINGS, saved?.settings)
+        const mergedSettings = migrateSettingsForDesign(
+          previousDesign,
+          normalizeSettings(deepMerge(DEFAULT_SETTINGS, saved?.settings))
         );
-        // 1.x shipped with a blue iOS-like palette, 1.2 used violet. Move
-        // installs that still carry the untouched default onto the Android
-        // reference sage palette exactly once.
-        if (previousDesign < 1 && mergedSettings.themeAccent === 'blue') {
-          mergedSettings.themeAccent = 'sage';
-        }
-        if (previousDesign < 3 && mergedSettings.themeAccent === 'violet') {
-          mergedSettings.themeAccent = 'sage';
-        }
-        if (previousDesign < 3 && mergedSettings.discoverLayout === 'list') {
-          mergedSettings.discoverLayout = 'grid';
-        }
-        mergedSettings.designVersion = 3;
         const settingsUpdatedAt = saved?.settingsUpdatedAt ?? 0;
         const savedStamps = saved?.settingsStamps;
         return {

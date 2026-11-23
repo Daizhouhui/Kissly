@@ -171,16 +171,16 @@ export default function HomeScreen() {
       <AppPressable
         onPress={openSearch}
         feedback="ripple"
-        radius={RADIUS.control}
+        radius={RADIUS.pill}
         accessibilityLabel="搜索 YouTube"
         style={{
           flexDirection: 'row',
           alignItems: 'center',
           gap: 9,
           backgroundColor: theme.colors.surfaceAlt,
-          borderRadius: RADIUS.control,
+          borderRadius: RADIUS.pill,
           ...CONTINUOUS_CORNER,
-          paddingHorizontal: 16,
+          paddingHorizontal: 18,
           height: 50,
           marginTop: 16,
         }}
@@ -377,12 +377,13 @@ export default function HomeScreen() {
                 key={item.id}
                 onPress={() => setFilter(item.id)}
                 feedback="opacity"
+                radius={RADIUS.pill}
                 accessibilityRole="button"
                 accessibilityState={{ selected: active }}
                 style={{
                   paddingHorizontal: 18,
                   height: 36,
-                  borderRadius: RADIUS.control,
+                  borderRadius: RADIUS.pill,
                   ...CONTINUOUS_CORNER,
                   alignItems: 'center',
                   justifyContent: 'center',

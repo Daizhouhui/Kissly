@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -41,6 +41,23 @@ export default function WebdavSettingsScreen() {
   const [passwordLoaded, setPasswordLoaded] = useState(
     Boolean(settings.webdav.password)
   );
+  // The form mounts before AsyncStorage rehydration in some cold-start
+  // cases, so initialize from defaults and refill once the saved config
+  // arrives. Never overwrite text the user is currently editing.
+  const formEdited = useRef(false);
+
+  useEffect(() => {
+    if (formEdited.current) return;
+    setUrl(settings.webdav.url || KOOFIR_WEBDAV_URL);
+    setUsername(settings.webdav.username);
+    setFolder(settings.webdav.folder || 'Kissly');
+    setEnabled(settings.webdav.enabled);
+  }, [
+    settings.webdav.url,
+    settings.webdav.username,
+    settings.webdav.folder,
+    settings.webdav.enabled,
+  ]);
 
   useEffect(() => {
     if (settings.webdav.password) {
@@ -72,6 +89,7 @@ export default function WebdavSettingsScreen() {
         enabled,
       },
     });
+    formEdited.current = false;
   };
 
   const test = async () => {
@@ -186,14 +204,20 @@ export default function WebdavSettingsScreen() {
           <Field
             label="服务器地址"
             value={url}
-            onChangeText={setUrl}
+            onChangeText={(value) => {
+              formEdited.current = true;
+              setUrl(value);
+            }}
             placeholder={KOOFIR_WEBDAV_URL}
             autoCapitalize="none"
           />
           <Field
             label="用户名"
             value={username}
-            onChangeText={setUsername}
+            onChangeText={(value) => {
+              formEdited.current = true;
+              setUsername(value);
+            }}
             placeholder="Koofr 登录邮箱"
             autoCapitalize="none"
           />
@@ -208,7 +232,10 @@ export default function WebdavSettingsScreen() {
           <Field
             label="同步文件夹"
             value={folder}
-            onChangeText={setFolder}
+            onChangeText={(value) => {
+              formEdited.current = true;
+              setFolder(value);
+            }}
             placeholder="Kissly"
             autoCapitalize="none"
           />
@@ -266,7 +293,13 @@ export default function WebdavSettingsScreen() {
                 启动 App 时自动合并，10 分钟内不重复请求
               </Text>
             </View>
-            <SettingSwitch value={enabled} onValueChange={setEnabled} />
+            <SettingSwitch
+              value={enabled}
+              onValueChange={(value) => {
+                formEdited.current = true;
+                setEnabled(value);
+              }}
+            />
           </View>
           <View
             style={{

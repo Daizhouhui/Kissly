@@ -117,7 +117,7 @@ export default function AppearanceSettingsScreen() {
                   {accent.label}
                 </Text>
                 <Text style={{ color: theme.colors.textTertiary, fontSize: 10.5, marginTop: 2 }}>
-                  {accent.id === 'blue' ? '默认' : '主题色'}
+                  {accent.id === 'youtube' ? '默认' : '主题色'}
                 </Text>
               </Pressable>
             );
