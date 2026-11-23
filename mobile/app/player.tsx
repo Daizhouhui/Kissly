@@ -11,6 +11,7 @@ import {
   Animated,
   AppState,
   BackHandler,
+  Easing,
   FlatList,
   Platform,
   ScrollView,
@@ -74,6 +75,13 @@ const radiusStyle = (radius: number) => ({
   ...CONTINUOUS_CORNER,
 });
 
+// Portrait player gutter: keeps the back arrow, video, timestamps,
+// transcript text and progress bar on one left edge.
+const PLAYER_GUTTER = 20;
+const CONTROLS_HIDE_DELAY_MS = 3000;
+const SEEK_GRAB_RADIUS = 22;
+const SEEK_CONFIRM_TIMEOUT_MS = 900;
+
 function CueFade(props: {
   active: boolean;
   paused: boolean;
@@ -90,6 +98,35 @@ function CueFade(props: {
   }
   return <CueFadeAnimated {...props} />;
 }
+
+/**
+ * The play triangle needs only a very slight optical nudge: its glyph bounds
+ * are already close to the center, and 1/6 of the icon size overshoots to the
+ * right. 1/12 keeps its visual mass a touch right of the dead center while the
+ * pause glyph stays perfectly symmetric.
+ */
+function PlayPauseIcon({
+  playing,
+  size,
+  color = '#FFFFFF',
+}: {
+  playing: boolean;
+  size: number;
+  color?: string;
+}) {
+  if (playing) {
+    return <Ionicons name="pause" size={size} color={color} />;
+  }
+  return (
+    <Ionicons
+      name="play"
+      size={size}
+      color={color}
+      style={{ transform: [{ translateX: size / 12 }] }}
+    />
+  );
+}
+
 
 function CueFadeAnimated({
   active,
@@ -190,31 +227,40 @@ function playerBridgeScript(startAt = 0) {
   try {
     var requestedStart = ${JSON.stringify(Math.max(0, Number(startAt) || 0))};
     var previous = window.__kissBridge;
-    if (previous) previous.alive = false;
-    if (previous && previous.timer) clearInterval(previous.timer);
-    if (previous && previous.cssTimer) clearInterval(previous.cssTimer);
-    if (previous && previous.startTimer) clearTimeout(previous.startTimer);
-    var bridge = window.__kissBridge = {
-      mode: 'mobile-watch',
-      alive: true,
-      wantPlay: previous ? previous.wantPlay : true,
-      userPaused: previous ? previous.userPaused : false,
-      frameReady: false,
-      timer: null,
-      cssTimer: null,
-      startTimer: null,
-      videoRef: null,
-      captionCache: previous ? previous.captionCache : null,
-      startAt: requestedStart,
-      startApplied:
-        requestedStart <= 0 ||
-        (previous &&
-          previous.startAt === requestedStart &&
-          !!previous.startApplied),
-      pauseAtTimer: null,
-      pauseAtTarget: -1,
-      pauseAtSawBeforeEnd: false
-    };
+    if (previous) {
+      previous.alive = false;
+      if (previous.timer) clearInterval(previous.timer);
+      if (previous.cssTimer) clearInterval(previous.cssTimer);
+      if (previous.startTimer) clearTimeout(previous.startTimer);
+    }
+    // Re-injections into the same document (orientation changes / Fast Refresh)
+    // must keep one shared bridge object. Event listeners from the previous
+    // injection still call report() and would otherwise update a detached
+    // object, producing contradictory buffering states.
+    var bridge = previous || {};
+    window.__kissBridge = bridge;
+    bridge.mode = 'mobile-watch';
+    bridge.alive = true;
+    bridge.wantPlay = previous ? previous.wantPlay : true;
+    bridge.userPaused = previous ? previous.userPaused : false;
+    bridge.frameReady = previous ? !!previous.frameReady : false;
+    bridge.buffering = previous ? !!previous.buffering : false;
+    bridge.timer = null;
+    bridge.cssTimer = null;
+    bridge.startTimer = null;
+    bridge.videoRef = previous ? previous.videoRef : null;
+    bridge.captionCache = previous ? previous.captionCache : null;
+    bridge.startAt = requestedStart;
+    bridge.startApplied =
+      requestedStart <= 0 ||
+      (previous &&
+        previous.startAt === requestedStart &&
+        !!previous.startApplied);
+    bridge.pauseAtTimer = previous ? previous.pauseAtTimer : null;
+    bridge.pauseAtTarget = previous ? previous.pauseAtTarget : -1;
+    bridge.pauseAtSawBeforeEnd = previous
+      ? !!previous.pauseAtSawBeforeEnd
+      : false;
     function injectCss(){
       try {
         var old = document.getElementById('kiss-watch-css');
@@ -438,6 +484,7 @@ function playerBridgeScript(startAt = 0) {
         bufferedEnd: buffer.end,
         playing: !v.paused && !v.ended,
         ready: isFrameReady(v),
+        buffering: !!(!v.paused && !v.ended && (bridge.buffering || v.seeking || v.readyState < 3)),
         rate: v.playbackRate,
         quality: quality,
         ad: isAdShowing()
@@ -465,9 +512,28 @@ function playerBridgeScript(startAt = 0) {
       if (!v.__kissBound) {
         v.__kissBound = true;
         ['timeupdate','play','playing','pause','ended','durationchange','loadedmetadata','seeking','seeked','ratechange'].forEach(function(name){
-          v.addEventListener(name, report);
+          v.addEventListener(name, function(){
+            if (name === 'seeking') bridge.buffering = true;
+            if (name === 'playing' || name === 'pause' || name === 'ended' || name === 'seeked') {
+              bridge.buffering = false;
+            }
+            report();
+          });
+        });
+        v.addEventListener('waiting', function(){
+          bridge.buffering = true;
+          report();
+        });
+        v.addEventListener('stalled', function(){
+          bridge.buffering = true;
+          report();
+        });
+        v.addEventListener('canplay', function(){
+          bridge.buffering = false;
+          report();
         });
         v.addEventListener('playing', function(){
+          bridge.buffering = false;
           scheduleAudio(180);
           setTimeout(ensureAudio, 900);
         });
@@ -1291,6 +1357,58 @@ export default function PlayerScreen() {
   // 153, which was the root cause of the old "video unavailable" screen.
   const [ready, setReady] = useState(false);
   const [videoLoading, setVideoLoading] = useState(true);
+  const [videoBuffering, setVideoBuffering] = useState(false);
+  const videoBufferingRef = useRef(false);
+  const videoBufferingShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const videoBufferingHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const applyVideoBuffering = (next: boolean) => {
+    if (next) {
+      if (videoBufferingHideTimerRef.current) {
+        clearTimeout(videoBufferingHideTimerRef.current);
+        videoBufferingHideTimerRef.current = null;
+      }
+      if (videoBufferingRef.current || videoBufferingShowTimerRef.current) return;
+      videoBufferingShowTimerRef.current = setTimeout(() => {
+        videoBufferingShowTimerRef.current = null;
+        videoBufferingRef.current = true;
+        setVideoBuffering(true);
+      }, 120);
+      return;
+    }
+    if (videoBufferingShowTimerRef.current) {
+      clearTimeout(videoBufferingShowTimerRef.current);
+      videoBufferingShowTimerRef.current = null;
+    }
+    if (!videoBufferingRef.current || videoBufferingHideTimerRef.current) return;
+    videoBufferingHideTimerRef.current = setTimeout(() => {
+      videoBufferingHideTimerRef.current = null;
+      videoBufferingRef.current = false;
+      setVideoBuffering(false);
+    }, 250);
+  };
+  const resetVideoBuffering = () => {
+    if (videoBufferingShowTimerRef.current) {
+      clearTimeout(videoBufferingShowTimerRef.current);
+      videoBufferingShowTimerRef.current = null;
+    }
+    if (videoBufferingHideTimerRef.current) {
+      clearTimeout(videoBufferingHideTimerRef.current);
+      videoBufferingHideTimerRef.current = null;
+    }
+    videoBufferingRef.current = false;
+    setVideoBuffering(false);
+  };
+  useEffect(
+    () => () => {
+      if (videoBufferingShowTimerRef.current) {
+        clearTimeout(videoBufferingShowTimerRef.current);
+      }
+      if (videoBufferingHideTimerRef.current) {
+        clearTimeout(videoBufferingHideTimerRef.current);
+      }
+    },
+    []
+  );
   const videoLoadingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [playing, setPlaying] = useState(false);
   const mirrorPlaying = (value: boolean) => {
@@ -1322,6 +1440,7 @@ export default function PlayerScreen() {
   const [sheetParent, setSheetParent] = useState<'main' | 'listening'>('main');
   const [fontSizeTarget, setFontSizeTarget] = useState<'portrait' | 'landscape'>('portrait');
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [controlsActivity, setControlsActivity] = useState(0);
   const [videoStageSize, setVideoStageSize] = useState({ width: 0, height: 0 });
   const [sourceCues, setSourceCues] = useState<Cue[]>([]);
   const [translatedCues, setTranslatedCues] = useState<Cue[] | null>(null);
@@ -1334,7 +1453,39 @@ export default function PlayerScreen() {
   const [status, setStatus] = useState('正在读取字幕…');
   const [progressWidth, setProgressWidth] = useState(0);
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
+  const [seeking, setSeeking] = useState(false);
   const seekPreviewRef = useRef<number | null>(null);
+  const seekDragRef = useRef<{
+    mode: 'relative' | 'absolute';
+    startPageX: number;
+    startValue: number;
+    trackLeft: number;
+    width: number;
+    duration: number;
+  } | null>(null);
+  const pendingSeekRef = useRef<number | null>(null);
+  const pendingSeekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seekGrow = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(seekGrow, {
+      toValue: seeking ? 1 : 0,
+      duration: 180,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [seeking, seekGrow]);
+
+  useEffect(
+    () => () => {
+      if (pendingSeekTimerRef.current) {
+        clearTimeout(pendingSeekTimerRef.current);
+        pendingSeekTimerRef.current = null;
+      }
+    },
+    []
+  );
+
   const [trackKey, setTrackKey] = useState('');
   const [toast, setToast] = useState('');
   const [rate, setRate] = useState(1);
@@ -1506,6 +1657,13 @@ export default function PlayerScreen() {
     };
   }, [settings.keepAwake]);
 
+  const controlsOverlayOpen = rateSheet || modeMenu || sheet;
+
+  const keepControlsVisible = () => {
+    setControlsVisible(true);
+    setControlsActivity((value) => value + 1);
+  };
+
   useEffect(() => {
     if (
       Platform.OS === 'web' ||
@@ -1517,16 +1675,30 @@ export default function PlayerScreen() {
       setControlsVisible(true);
       return;
     }
-    if (!controlsVisible || !playing || videoLoading) return;
-    const timer = setTimeout(() => setControlsVisible(false), 3000);
+    if (
+      !controlsVisible ||
+      !playing ||
+      videoLoading ||
+      videoBuffering ||
+      controlsOverlayOpen
+    ) {
+      return;
+    }
+    const timer = setTimeout(
+      () => setControlsVisible(false),
+      CONTROLS_HIDE_DELAY_MS
+    );
     return () => clearTimeout(timer);
   }, [
     playing,
     adShowing,
     blindMode,
     controlsVisible,
+    controlsActivity,
+    controlsOverlayOpen,
     hideVideo,
     videoLoading,
+    videoBuffering,
     videoProblem,
   ]);
 
@@ -1968,7 +2140,7 @@ export default function PlayerScreen() {
     scrollToCueIndex(
       activeIndex,
       animated,
-      scrollMode === 'page' ? 0.08 : 0.38
+      scrollMode === 'page' ? 0.08 : 0
     );
     return true;
   };
@@ -2231,21 +2403,85 @@ export default function PlayerScreen() {
     setTimeout(() => scrollToCueIndex(index, true, 0.22), 80);
   };
 
-  const previewSeekAt = (locationX: number) => {
-    if (!duration || !progressWidth) return null;
-    const ratio = Math.max(0, Math.min(1, locationX / progressWidth));
-    const value = Math.round(ratio * duration * 10) / 10;
-    seekPreviewRef.current = value;
-    setSeekPreview(value);
-    return value;
+  const clearPendingSeek = () => {
+    if (pendingSeekTimerRef.current) {
+      clearTimeout(pendingSeekTimerRef.current);
+      pendingSeekTimerRef.current = null;
+    }
+    pendingSeekRef.current = null;
+  };
+
+  const setSeekPreviewValue = (value: number, limit = duration) => {
+    const max = Math.max(0, limit || 0);
+    const next = Math.round(Math.max(0, Math.min(max, value)) * 10) / 10;
+    seekPreviewRef.current = next;
+    setSeekPreview(next);
+  };
+
+  const cancelSeekDrag = () => {
+    seekDragRef.current = null;
+    seekPreviewRef.current = null;
+    clearPendingSeek();
+    setSeekPreview(null);
+    setSeeking(false);
+  };
+
+  const beginSeekDrag = (locationX: number, pageX: number) => {
+    if (!duration || progressWidth <= 0) return;
+    clearPendingSeek();
+    const playhead = Math.max(0, Math.min(duration, current));
+    const thumbX = (playhead / duration) * progressWidth;
+    // Touching the knob should grab it, not teleport it to the finger. Touching
+    // the rest of the rail keeps the familiar tap-to-seek behaviour.
+    const nearThumb = Math.abs(locationX - thumbX) <= SEEK_GRAB_RADIUS;
+    const touchValue =
+      (Math.max(0, Math.min(progressWidth, locationX)) / progressWidth) * duration;
+    const startValue = nearThumb ? playhead : touchValue;
+    seekDragRef.current = {
+      mode: nearThumb ? 'relative' : 'absolute',
+      startPageX: pageX,
+      startValue,
+      trackLeft: pageX - locationX,
+      width: progressWidth,
+      duration,
+    };
+    setSeekPreviewValue(startValue, duration);
+  };
+
+  const moveSeekDrag = (pageX: number) => {
+    const drag = seekDragRef.current;
+    if (!drag || drag.width <= 0) return;
+    const value =
+      drag.mode === 'relative'
+        ? drag.startValue +
+          ((pageX - drag.startPageX) / drag.width) * drag.duration
+        : ((pageX - drag.trackLeft) / drag.width) * drag.duration;
+    setSeekPreviewValue(value, drag.duration);
   };
 
   const commitPreviewSeek = () => {
+    if (!seekDragRef.current) return;
     const value = seekPreviewRef.current;
+    seekDragRef.current = null;
     if (value == null) return;
-    seekPreviewRef.current = null;
-    seekTo(value);
-    setSeekPreview(null);
+    const target = Math.max(0, Math.min(duration || value, value));
+    seekPreviewRef.current = target;
+    setSeekPreview(target);
+    pendingSeekRef.current = target;
+    if (pendingSeekTimerRef.current) {
+      clearTimeout(pendingSeekTimerRef.current);
+      pendingSeekTimerRef.current = null;
+    }
+    // Keep the preview on the target until the WebView confirms the seek, so
+    // stale `current` frames cannot snap the thumb back for a moment.
+    pendingSeekTimerRef.current = setTimeout(() => {
+      if (pendingSeekRef.current === target) {
+        pendingSeekRef.current = null;
+        seekPreviewRef.current = null;
+        setSeekPreview(null);
+      }
+    }, SEEK_CONFIRM_TIMEOUT_MS);
+    seekTo(target);
   };
 
   const jumpCue = (direction: -1 | 1) => {
@@ -2408,6 +2644,7 @@ export default function PlayerScreen() {
       webReadyRef.current = true;
       clearVideoLoadingTimer();
       setReady(true);
+      resetVideoBuffering();
       setVideoLoading(false);
       setVideoProblem('');
       return;
@@ -2463,27 +2700,55 @@ export default function PlayerScreen() {
       return;
     }
     if (message.type === 'time') {
-      if (typeof message.current === 'number') {
-        progressRef.current.current = message.current;
-        setCurrent(message.current);
-      }
-      if (typeof message.duration === 'number' && message.duration > 0) {
-        progressRef.current.duration = message.duration;
-        setDuration(message.duration);
-      }
-      if (typeof message.bufferedStart === 'number') {
-        progressRef.current.bufferedStart = message.bufferedStart;
-        setBufferedStart(message.bufferedStart);
-      }
-      if (typeof message.bufferedEnd === 'number') {
-        progressRef.current.bufferedEnd = message.bufferedEnd;
-        setBufferedEnd(message.bufferedEnd);
-      }
-      if (typeof message.playing === 'boolean') setPlaying(message.playing);
+      const isAd = message.ad === true;
       if (typeof message.ad === 'boolean') {
+        const wasAd = progressRef.current.ad;
         progressRef.current.ad = message.ad;
         setAdShowing(message.ad);
+        if (message.ad && !wasAd) {
+          cancelSeekDrag();
+          resetVideoBuffering();
+        }
       }
+      if (isAd) resetVideoBuffering();
+      if (!isAd) {
+        if (typeof message.current === 'number') {
+          progressRef.current.current = message.current;
+          setCurrent(message.current);
+        }
+        if (typeof message.duration === 'number' && message.duration > 0) {
+          progressRef.current.duration = message.duration;
+          setDuration(message.duration);
+        }
+        if (typeof message.bufferedStart === 'number') {
+          progressRef.current.bufferedStart = message.bufferedStart;
+          setBufferedStart(message.bufferedStart);
+        }
+        if (typeof message.bufferedEnd === 'number') {
+          progressRef.current.bufferedEnd = message.bufferedEnd;
+          setBufferedEnd(message.bufferedEnd);
+        }
+        if (typeof message.buffering === 'boolean') {
+          applyVideoBuffering(message.buffering);
+        } else if (message.ready === false) {
+          applyVideoBuffering(!videoLoading);
+        }
+        const pending = pendingSeekRef.current;
+        if (
+          pending != null &&
+          typeof message.current === 'number' &&
+          Math.abs(message.current - pending) <= 1
+        ) {
+          pendingSeekRef.current = null;
+          if (pendingSeekTimerRef.current) {
+            clearTimeout(pendingSeekTimerRef.current);
+            pendingSeekTimerRef.current = null;
+          }
+          seekPreviewRef.current = null;
+          setSeekPreview(null);
+        }
+      }
+      if (typeof message.playing === 'boolean') setPlaying(message.playing);
       if (message.quality) setQuality(String(message.quality));
       if (message.ready) {
         setReady(true);
@@ -2501,6 +2766,7 @@ export default function PlayerScreen() {
       setPlaying(false);
       setReady(false);
       setAdShowing(false);
+      resetVideoBuffering();
       setVideoProblem('这个视频限制了站内播放，可能需要登录、年龄验证或作者关闭了外站播放。');
     }
   };
@@ -2509,6 +2775,7 @@ export default function PlayerScreen() {
     setVideoProblem('');
     setReady(false);
     setAdShowing(false);
+    resetVideoBuffering();
     setPlaying(false);
     setCurrent(0);
     startAtRef.current = Math.max(0, progressRef.current.current);
@@ -2857,6 +3124,7 @@ export default function PlayerScreen() {
     !adShowing &&
     !blindMode &&
     !hideVideo;
+  const showVideoBuffering = videoBuffering && !adShowing && !videoProblem;
   const webUrl = `https://m.youtube.com/watch?v=${videoId}&hl=zh-CN&autoplay=0`;
 
   if (!videoId) {
@@ -3000,9 +3268,18 @@ export default function PlayerScreen() {
           </Text>
         </View>
       ) : null}
-      {!landscape && videoTappable && controlsVisible ? (
-        <Pressable style={styles.centerPlay} onPress={togglePlay}>
-          <Ionicons name={playing ? 'pause' : 'play'} size={34} color="#FFFFFF" />
+      {!landscape && videoTappable && (controlsVisible || showVideoBuffering) ? (
+        <Pressable
+          style={styles.centerPlay}
+          onPress={togglePlay}
+          accessibilityRole="button"
+          accessibilityLabel={showVideoBuffering ? '正在缓冲' : playing ? '暂停' : '播放'}
+        >
+          {showVideoBuffering ? (
+            <ActivityIndicator size="large" color="#FFFFFF" />
+          ) : (
+            <PlayPauseIcon playing={playing} size={34} />
+          )}
         </Pressable>
       ) : null}
       {!landscape && !hideVideo && !blindMode && !adShowing && nativeVideo && controlsVisible ? (
@@ -3056,25 +3333,49 @@ export default function PlayerScreen() {
     : 0;
   const bufferLeft = bufferStartRatio * progressWidth;
   const bufferWidth = Math.max(0, (bufferEndRatio - bufferStartRatio) * progressWidth);
+  const progressRailHeight = seekGrow.interpolate({
+    inputRange: [0, 1],
+    outputRange: [4, 8],
+  });
+  const progressThumbScale = seekGrow.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.34],
+  });
 
   const progress = (
     <View
       style={styles.progressTouch}
-      pointerEvents={blindMode ? 'none' : 'auto'}
-      onLayout={(event) => setProgressWidth(event.nativeEvent.layout.width)}
+      pointerEvents={blindMode || adShowing ? 'none' : 'auto'}
+      onLayout={(event) => {
+        if (seekDragRef.current) return;
+        setProgressWidth(event.nativeEvent.layout.width);
+      }}
       onStartShouldSetResponder={() => true}
       onMoveShouldSetResponder={() => true}
       onResponderGrant={(event) => {
-        previewSeekAt(event.nativeEvent.locationX);
+        setSeeking(true);
+        beginSeekDrag(event.nativeEvent.locationX, event.nativeEvent.pageX);
       }}
       onResponderMove={(event) => {
-        previewSeekAt(event.nativeEvent.locationX);
+        moveSeekDrag(event.nativeEvent.pageX);
       }}
-      onResponderRelease={() => commitPreviewSeek()}
-      onResponderTerminate={() => commitPreviewSeek()}
+      onResponderRelease={() => {
+        commitPreviewSeek();
+        setSeeking(false);
+      }}
+      onResponderTerminate={() => {
+        commitPreviewSeek();
+        setSeeking(false);
+      }}
       onResponderTerminationRequest={() => false}
     >
-      <View style={[styles.progressRail, { backgroundColor: theme.colors.surfaceAlt }]}>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.progressRail,
+          { backgroundColor: theme.colors.surfaceAlt, height: progressRailHeight },
+        ]}
+      >
         <View
           style={[
             styles.progressBuffer,
@@ -3101,12 +3402,14 @@ export default function PlayerScreen() {
             },
           ]}
         />
-      </View>
-      <View
+      </Animated.View>
+      <Animated.View
+        pointerEvents="none"
         style={[
           styles.progressThumb,
           {
             backgroundColor: theme.colors.primary,
+            transform: [{ scale: progressThumbScale }],
             left: duration
               ? Math.max(
                   0,
@@ -3166,7 +3469,7 @@ export default function PlayerScreen() {
         haptic="light"
         style={[styles.playButton, { backgroundColor: theme.colors.primary }]}
       >
-        <Ionicons name={playing ? 'pause' : 'play'} size={24} color="#FFFFFF" />
+        <PlayPauseIcon playing={playing} size={24} />
       </RipplePressable>
       <RipplePressable
         onPress={() => (blindMode ? jumpPrecisionCue(1) : jumpCue(1))}
@@ -3321,8 +3624,16 @@ export default function PlayerScreen() {
 
   const landscapeOverlay = landscape ? (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      {showVideoBuffering && !controlsVisible ? (
+        <View style={styles.landBuffering} pointerEvents="none">
+          <ActivityIndicator size="large" color="#FFFFFF" />
+        </View>
+      ) : null}
       <Pressable
         feedback="none"
+        // YouTube's ad UI (including Skip Ad) lives in the WebView. Keep the
+        // full-screen tap catcher out of the way while an ad is playing.
+        pointerEvents={adShowing ? 'none' : 'auto'}
         style={StyleSheet.absoluteFill}
         onPress={(event) =>
           handleVideoStageTap(event, windowSize.width, windowSize.height)
@@ -3339,21 +3650,33 @@ export default function PlayerScreen() {
             >
               <Text style={styles.landTime}>{formatTime(seekPreview ?? current)}</Text>
               <View
+                pointerEvents={adShowing ? 'none' : 'auto'}
                 style={styles.landProgressTouch}
-                onLayout={(event) => setProgressWidth(event.nativeEvent.layout.width)}
+                onLayout={(event) => {
+                  if (seekDragRef.current) return;
+                  setProgressWidth(event.nativeEvent.layout.width);
+                }}
                 onStartShouldSetResponder={() => true}
                 onMoveShouldSetResponder={() => true}
                 onResponderGrant={(event) => {
-                  previewSeekAt(event.nativeEvent.locationX);
+                  keepControlsVisible();
+                  beginSeekDrag(event.nativeEvent.locationX, event.nativeEvent.pageX);
                 }}
                 onResponderMove={(event) => {
-                  previewSeekAt(event.nativeEvent.locationX);
+                  keepControlsVisible();
+                  moveSeekDrag(event.nativeEvent.pageX);
                 }}
-                onResponderRelease={() => commitPreviewSeek()}
-                onResponderTerminate={() => commitPreviewSeek()}
+                onResponderRelease={() => {
+                  keepControlsVisible();
+                  commitPreviewSeek();
+                }}
+                onResponderTerminate={() => {
+                  keepControlsVisible();
+                  commitPreviewSeek();
+                }}
                 onResponderTerminationRequest={() => false}
               >
-                <View style={styles.landProgressRail}>
+                <View pointerEvents="none" style={styles.landProgressRail}>
                   <View
                     style={[
                       styles.landProgressBuffer,
@@ -3387,7 +3710,10 @@ export default function PlayerScreen() {
               pressableRef={landscapeCcButtonRef}
               collapsable={false}
               haptic={false}
-              onPress={openLandscapeModeMenu}
+              onPress={() => {
+                keepControlsVisible();
+                openLandscapeModeMenu();
+              }}
               style={styles.landIconButton}
             >
               <MaterialCommunityIcons
@@ -3398,7 +3724,10 @@ export default function PlayerScreen() {
             </RipplePressable>
             <RipplePressable
               haptic={false}
-              onPress={openRateSheet}
+              onPress={() => {
+                keepControlsVisible();
+                openRateSheet();
+              }}
               style={styles.landTopRatePill}
             >
               <Text style={styles.landRateText}>{rateLabel}</Text>
@@ -3413,7 +3742,11 @@ export default function PlayerScreen() {
             </RipplePressable>
             <RipplePressable
               haptic={false}
-              onPress={blindMode ? openListeningSettings : openMainSettings}
+              onPress={() => {
+                keepControlsVisible();
+                if (blindMode) openListeningSettings();
+                else openMainSettings();
+              }}
               style={styles.landIconButton}
             >
               <Ionicons name="ellipsis-horizontal" size={19} color="#FFFFFF" />
@@ -3422,21 +3755,34 @@ export default function PlayerScreen() {
 
           <View style={styles.landCenter}>
             <Pressable
-              onPress={() => jumpCue(-1)}
+              onPress={() => {
+                keepControlsVisible();
+                jumpCue(-1);
+              }}
               haptic="light"
               style={styles.landTransportButton}
             >
               <Ionicons name="play-skip-back" size={18} color="#FFFFFF" />
             </Pressable>
             <Pressable
-              onPress={togglePlay}
+              onPress={() => {
+                keepControlsVisible();
+                togglePlay();
+              }}
               haptic="light"
               style={styles.landPlay}
             >
-              <Ionicons name={playing ? 'pause' : 'play'} size={30} color="#FFFFFF" />
+              {showVideoBuffering ? (
+                <ActivityIndicator size="large" color="#FFFFFF" />
+              ) : (
+                <PlayPauseIcon playing={playing} size={30} />
+              )}
             </Pressable>
             <Pressable
-              onPress={() => jumpCue(1)}
+              onPress={() => {
+                keepControlsVisible();
+                jumpCue(1);
+              }}
               haptic="light"
               style={styles.landTransportButton}
             >
@@ -3664,7 +4010,7 @@ export default function PlayerScreen() {
         windowSize={5}
         removeClippedSubviews={false}
         contentContainerStyle={{
-          paddingHorizontal: 14,
+          paddingHorizontal: PLAYER_GUTTER - 8,
           paddingTop: 10,
           paddingBottom: 240,
           flexGrow: cues.length === 0 ? 1 : 0,
@@ -4029,7 +4375,7 @@ export default function PlayerScreen() {
               onPress={openListeningSettings}
               hitSlop={10}
             >
-              <Ionicons name="ellipsis-horizontal" size={22} color={theme.colors.text} />
+              <Ionicons name="ellipsis-vertical" size={22} color={theme.colors.text} />
             </Pressable>
           </>
         ) : (
@@ -4095,7 +4441,7 @@ export default function PlayerScreen() {
               onPress={openMainSettings}
               hitSlop={10}
             >
-              <Ionicons name="ellipsis-horizontal" size={22} color={theme.colors.text} />
+              <Ionicons name="ellipsis-vertical" size={22} color={theme.colors.text} />
             </Pressable>
           </>
         )}
@@ -4106,7 +4452,7 @@ export default function PlayerScreen() {
       {!landscape ? (
         <View style={{ flex: 1 }}>
           {blindMode ? (
-            <View style={{ paddingHorizontal: 18, paddingTop: 10 }}>
+            <View style={{ paddingHorizontal: PLAYER_GUTTER, paddingTop: 10 }}>
               {progress}
             </View>
           ) : null}
@@ -5435,7 +5781,7 @@ const styles = StyleSheet.create({
   headerSubtitle: { color: '#8D849D', fontSize: 11, marginTop: 2 },
   headerProvider: { color: '#8D849D', fontSize: 10.5, fontWeight: '600' },
   videoFrame: {
-    marginHorizontal: 14,
+    marginHorizontal: PLAYER_GUTTER,
     backgroundColor: '#000000',
     overflow: 'hidden',
     ...radiusStyle(RADIUS.card),
@@ -5607,7 +5953,7 @@ const styles = StyleSheet.create({
   cueTranslation: { color: '#746B85', lineHeight: 24, marginTop: 0 },
   emptyTranscript: { alignItems: 'center', paddingTop: 36, gap: 10 },
   emptyTranscriptText: { color: '#8D849D', fontSize: 12, textAlign: 'center', lineHeight: 18, paddingHorizontal: 20 },
-  controls: { backgroundColor: '#120E1B', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#241C33', paddingHorizontal: 18, paddingTop: 6 },
+  controls: { backgroundColor: '#120E1B', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#241C33', paddingHorizontal: PLAYER_GUTTER, paddingTop: 6 },
   progressTouch: { height: 22, justifyContent: 'center' },
   progressRail: { height: 4, ...radiusStyle(RADIUS.pill), backgroundColor: '#2B2340', overflow: 'hidden' },
   progressBuffer: { position: 'absolute', top: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.22)' },
@@ -5654,7 +6000,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.1,
   },
   loopButton: {
-    width: 38,
+    width: 44,
     height: 34,
     ...radiusStyle(RADIUS.pill),
     alignItems: 'center',
@@ -5739,6 +6085,8 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   landTime: {
+    width: 50,
+    textAlign: 'center',
     color: '#EDE9F7',
     fontSize: 13,
     fontVariant: ['tabular-nums'],
@@ -5796,6 +6144,20 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(18,15,23,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  landBuffering: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    width: 62,
+    height: 62,
+    marginLeft: -31,
+    marginTop: -31,
+    ...radiusStyle(RADIUS.pill),
+    backgroundColor: 'rgba(18,15,23,0.62)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 7,
   },
   landPlay: {
     width: 62,
