@@ -9,14 +9,7 @@ import {
   stampsForAllKeys,
 } from './settingsSync';
 import type { SettingsStamps } from './settingsSync';
-import {
-  normalizeAutoFreeOrder,
-  normalizeAutoPaidOrder,
-} from './translate/autoOrder';
-import {
-  normalizeOpenAiProfileId,
-  normalizeOpenAiProfiles,
-} from './translate/openaiProfiles';
+import { normalizeSettings } from './settingsNormalize';
 import { HistoryItem, FavoriteItem, SentenceFavorite, Settings, Subscription } from './types';
 import { HistoryPatch, mergeHistoryEntry } from './watchProgress';
 
@@ -46,31 +39,6 @@ function deepMerge<T>(base: T, patch: unknown): T {
  * Order arrays arrive from AsyncStorage and WebDAV. Always repair them before
  * they reach the translator or the reorder controls.
  */
-function normalizeSettings(settings: Settings): Settings {
-  const openaiProfiles = normalizeOpenAiProfiles(
-    settings.openaiProfiles,
-    settings.openaiBaseUrl,
-    settings.openaiModel
-  );
-  const openaiProfileId = normalizeOpenAiProfileId(
-    settings.openaiProfileId,
-    openaiProfiles
-  );
-  const activeOpenAi =
-    openaiProfiles.find((profile) => profile.id === openaiProfileId) ??
-    openaiProfiles[0];
-  return {
-    ...settings,
-    autoFreeOrder: normalizeAutoFreeOrder(settings.autoFreeOrder),
-    autoPaidOrder: normalizeAutoPaidOrder(settings.autoPaidOrder),
-    openaiProfiles,
-    openaiProfileId,
-    // Translation and cache code read the legacy flat fields. Keep them as a
-    // mirror of the active profile so old callers and old caches still work.
-    openaiBaseUrl: activeOpenAi?.baseUrl ?? settings.openaiBaseUrl,
-    openaiModel: activeOpenAi?.model ?? settings.openaiModel,
-  };
-}
 
 export type SyncState = 'idle' | 'syncing' | 'ok' | 'error';
 

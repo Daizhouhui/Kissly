@@ -5,7 +5,7 @@ import {
   mergeSubscriptions,
   subscriptionPayloadChanged,
 } from '../src/core/sync/subscriptions.ts';
-import { buildWebdavUrl } from '../src/core/sync/webdav.ts';
+import { buildWebdavUrl, isWebdavConflictError, WebdavConflictError } from '../src/core/sync/webdav.ts';
 
 let count = 0;
 function check(name, fn) {
@@ -168,6 +168,58 @@ check('a first sync keeps the remote order instead of sorting every item by age'
     merged.items.map((item) => item.channelId),
     ['B', 'A']
   );
+});
+
+check('channel statistics survive a merge from either device', () => {
+  const localOnlyStats = mergeSubscriptions(
+    [sub('A', { subscriberCount: '1.2M', videoCount: '340' })],
+    [sub('A')],
+    {},
+    {},
+    5,
+    10
+  );
+  assert.equal(localOnlyStats.items[0].subscriberCount, '1.2M');
+  assert.equal(localOnlyStats.items[0].videoCount, '340');
+
+  const remoteOnlyStats = mergeSubscriptions(
+    [sub('A')],
+    [sub('A', { subscriberCount: '800K', videoCount: '120' })],
+    {},
+    {},
+    5,
+    10
+  );
+  assert.equal(remoteOnlyStats.items[0].subscriberCount, '800K');
+  assert.equal(remoteOnlyStats.items[0].videoCount, '120');
+});
+
+check('channel statistics changes are detected as a payload difference', () => {
+  const merged = mergeSubscriptions(
+    [sub('A', { subscriberCount: '1.2M', videoCount: '340' })],
+    [sub('A')],
+    {},
+    {},
+    5,
+    10
+  );
+  const remote = {
+    version: 2,
+    orderUpdatedAt: merged.orderUpdatedAt,
+    items: merged.items.map((item) => ({
+      ...item,
+      subscriberCount: '1.3M',
+    })),
+    deleted: merged.tombstones,
+  };
+  assert.equal(subscriptionPayloadChanged(merged, remote), true);
+});
+
+check('a WebDAV 412 is detected by type, not by its message text', () => {
+  assert.equal(isWebdavConflictError(new Error('upstream said 412')), false);
+  const conflict = new WebdavConflictError();
+  assert.equal(isWebdavConflictError(conflict), true);
+  assert.equal(conflict.status, 412);
 });
 
 console.log(`subscription-sync: ${count} assertions passed`);

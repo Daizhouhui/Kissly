@@ -3,6 +3,7 @@ import {
   prepareSystemTranslation,
   systemTranslate,
 } from '../../../modules/kissly-system-translate';
+import { withTimeout } from '../http';
 import { getSettings } from '../store';
 import {
   assertSystemLanguageSupported,
@@ -16,7 +17,7 @@ export async function systemTranslateTexts(
   texts: string[],
   from: string,
   to: string,
-  _timeoutMs: number
+  timeoutMs: number
 ): Promise<string[]> {
   if (!texts.length) return [];
   const settings = getSettings();
@@ -29,8 +30,16 @@ export async function systemTranslateTexts(
   // target language. Download the pack for the current pair instead of failing
   // with a missing-model error. Auto never selects `system`, so this cannot
   // pull a large pack during a silent free-provider fallback.
-  await prepareSystemTranslation(source, target);
-  return systemTranslate(texts, source, target);
+  await withTimeout(
+    prepareSystemTranslation(source, target),
+    timeoutMs,
+    '系统翻译模型准备超时'
+  );
+  return withTimeout(
+    systemTranslate(texts, source, target),
+    timeoutMs,
+    '系统翻译超时'
+  );
 }
 
 export async function prepareSystemLanguagePack(from: string, to: string) {

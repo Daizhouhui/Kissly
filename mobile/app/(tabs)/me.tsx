@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { targetLabel } from '../../src/core/defaults';
+import { PROVIDER_LABELS, targetLabel } from '../../src/core/defaults';
 import { useAppStore } from '../../src/core/store';
 import { syncNow } from '../../src/core/sync';
 import { relativeTime } from '../../src/core/utils';
@@ -121,17 +121,7 @@ function Group({ children, first }: { children: ReactNode; first?: boolean }) {
 }
 
 function providerLabel(provider: string) {
-  const labels: Record<string, string> = {
-    auto: '自动 · 免费优先',
-    microsoft: '微软翻译',
-    google: 'Google',
-    google2: 'Google 备用',
-    deepseek: 'DeepSeek',
-    siliconflow: 'SiliconFlow',
-    openai: 'OpenAI',
-    system: '系统内置',
-  };
-  return labels[provider] ?? provider;
+  return PROVIDER_LABELS[provider] ?? provider;
 }
 
 const TITLE_OPTIONS = [
@@ -158,7 +148,7 @@ export default function MeScreen() {
   const patchSettings = useAppStore((state) => state.patchSettings);
   const [syncing, setSyncing] = useState(false);
   const [dialog, setDialog] = useState<'title' | 'tab' | null>(null);
-  const version = Constants.expoConfig?.version ?? '1.2.8';
+  const version = Constants.expoConfig?.version ?? '1.2.11';
 
   const runSync = async () => {
     if (!settings.webdav.enabled) {

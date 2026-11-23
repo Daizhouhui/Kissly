@@ -98,7 +98,7 @@ async function fetchLatestAndroidRelease(): Promise<AndroidRelease | null> {
 
 export default function AboutScreen() {
   const theme = useAppTheme();
-  const currentVersion = cleanVersion(Constants.expoConfig?.version ?? '1.2.8');
+  const currentVersion = cleanVersion(Constants.expoConfig?.version ?? '1.2.11');
   const currentBuild =
     Platform.OS === 'android'
       ? Constants.expoConfig?.android?.versionCode

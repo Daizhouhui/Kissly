@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { useMemo, useEffect } from 'react';
+import { useMemo, useEffect, useRef } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -26,7 +26,12 @@ export default function PodcastScreen() {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
   const history = useAppStore((state) => state.history);
+  const subscriptionKey = useAppStore((state) =>
+    state.subscriptions.map((item) => item.channelId).join(',')
+  );
   const { items, loading, refreshing, loadingMore, hasMore, refresh, loadMore } = useFeed();
+  const autoPageCount = useRef(0);
+  const autoPaginationStopped = useRef(false);
 
   const episodes = useMemo(() => {
     const savedById = new Map(history.map((item) => [item.videoId, item]));
@@ -43,11 +48,18 @@ export default function PodcastScreen() {
   }, [history, items]);
 
   useEffect(() => {
-    if (loading || loadingMore || !hasMore) return;
+    autoPageCount.current = 0;
+    autoPaginationStopped.current = false;
+  }, [refreshing, subscriptionKey]);
+
+  useEffect(() => {
+    if (loading || loadingMore || !hasMore || autoPaginationStopped.current) return;
     if (episodes.length >= 8) return;
     const timer = setTimeout(() => {
+      autoPageCount.current += 1;
+      if (autoPageCount.current >= 4) autoPaginationStopped.current = true;
       void loadMore();
-    }, 120);
+    }, 160);
     return () => clearTimeout(timer);
   }, [episodes.length, hasMore, loadMore, loading, loadingMore]);
 

@@ -15,8 +15,28 @@ function normalizedItem(item: Subscription): Subscription {
     handle: item.handle,
     avatar: item.avatar,
     group: item.group,
+    subscriberCount: item.subscriberCount,
+    videoCount: item.videoCount,
     addedAt: Number(item.addedAt) || 0,
     order: typeof item.order === 'number' ? item.order : undefined,
+  };
+}
+
+function mergeCandidate(
+  local: Subscription,
+  remote: Subscription | undefined
+): Subscription {
+  if (!remote) return local;
+  return {
+    channelId: local.channelId,
+    title: remote.title || local.title,
+    handle: remote.handle || local.handle,
+    avatar: remote.avatar || local.avatar,
+    group: remote.group ?? local.group,
+    subscriberCount: remote.subscriberCount || local.subscriberCount,
+    videoCount: remote.videoCount || local.videoCount,
+    addedAt: Math.max(local.addedAt, remote.addedAt),
+    order: local.order ?? remote.order,
   };
 }
 
@@ -43,7 +63,13 @@ export function mergeSubscriptions(
 
   const candidates = new Map<string, Subscription>();
   for (const item of remote) candidates.set(item.channelId, normalizedItem(item));
-  for (const item of local) candidates.set(item.channelId, normalizedItem(item));
+  for (const item of local) {
+    const normalized = normalizedItem(item);
+    candidates.set(
+      item.channelId,
+      mergeCandidate(normalized, candidates.get(item.channelId))
+    );
+  }
 
   const surviving = Array.from(candidates.values()).filter((item) => {
     const deletedAt = tombstones[item.channelId];
@@ -135,6 +161,8 @@ export function subscriptionPayloadChanged(
       a.handle !== b.handle ||
       a.avatar !== b.avatar ||
       a.group !== b.group ||
+      a.subscriberCount !== b.subscriberCount ||
+      a.videoCount !== b.videoCount ||
       a.addedAt !== b.addedAt ||
       a.order !== b.order
     ) {
@@ -189,6 +217,8 @@ export function localSubscriptionChanged(
       a.handle !== b.handle ||
       a.avatar !== b.avatar ||
       a.group !== b.group ||
+      a.subscriberCount !== b.subscriberCount ||
+      a.videoCount !== b.videoCount ||
       a.addedAt !== b.addedAt ||
       a.order !== b.order
     );

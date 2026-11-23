@@ -70,6 +70,17 @@ function parseArray(content: string, expected: number): string[] | null {
   return null;
 }
 
+function statusOf(error: unknown): number | undefined {
+  const status = (error as { status?: unknown })?.status;
+  return typeof status === 'number' ? status : undefined;
+}
+
+function shouldRetryAiError(error: unknown): boolean {
+  const status = statusOf(error);
+  if (status === undefined) return true;
+  return status === 408 || status === 429 || status >= 500;
+}
+
 async function chat(
   config: AiConfig,
   texts: string[],
@@ -103,7 +114,11 @@ async function chat(
         },
       });
       if (response.status < 200 || response.status >= 300) {
-        throw new Error(`${config.id} ${response.status}: ${response.text.slice(0, 160)}`);
+        const error = new Error(
+          `${config.id} ${response.status}: ${response.text.slice(0, 160)}`
+        ) as Error & { status?: number };
+        error.status = response.status;
+        throw error;
       }
       const data = JSON.parse(response.text);
       const content =
@@ -120,6 +135,7 @@ async function chat(
       return parsed;
     } catch (error) {
       lastError = error;
+      if (!shouldRetryAiError(error) || attempt >= 1) break;
       await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
     }
   }
@@ -159,6 +175,10 @@ export async function aiTranslate(
     try {
       output.push(...(await chat(config, batch, from, to, contextTitle)));
     } catch (error) {
+      const status = statusOf(error);
+      if (!shouldRetryAiError(error) || status === 408 || status === 429) {
+        throw error;
+      }
       if (batch.length > 1) {
         // Fall back to smaller batches so one bad line cannot poison the block.
         for (const single of chunk(batch, 4)) {

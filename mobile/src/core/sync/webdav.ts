@@ -58,6 +58,19 @@ export function buildWebdavUrl(
     : `${root}/${folderPath}`;
 }
 
+export class WebdavConflictError extends Error {
+  readonly status = 412;
+
+  constructor(message = 'WebDAV 文件已被其他设备修改，请重新同步') {
+    super(message);
+    this.name = 'WebdavConflictError';
+  }
+}
+
+export function isWebdavConflictError(error: unknown): boolean {
+  return error instanceof WebdavConflictError;
+}
+
 export class WebdavClient {
   private base: string;
   private auth: string;
@@ -174,7 +187,7 @@ export class WebdavClient {
       etag ? { 'If-Match': etag } : undefined
     );
     if (response.status === 412) {
-      throw new Error('WebDAV 文件已被其他设备修改，请重新同步');
+      throw new WebdavConflictError();
     }
     if (response.status === 401 || response.status === 403) {
       throw new Error('WebDAV 认证失败');

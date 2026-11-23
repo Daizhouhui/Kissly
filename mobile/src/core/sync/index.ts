@@ -13,7 +13,7 @@ import {
   subscriptionPayloadChanged,
 } from './subscriptions';
 import type { SubscriptionTombstones } from './subscriptions';
-import { WebdavClient } from './webdav';
+import { isWebdavConflictError, WebdavClient } from './webdav';
 
 type SubscriptionsFile = {
   version: 2;
@@ -96,7 +96,7 @@ export async function syncNow(): Promise<string> {
       try {
         await client.putJson('subscriptions.json', payload, remoteSubs.etag);
       } catch (error) {
-        if (String(error).includes('412')) {
+        if (isWebdavConflictError(error)) {
           const retry = await client.getJson<SubscriptionsFile>(
             'subscriptions.json'
           );
@@ -192,7 +192,7 @@ export async function syncNow(): Promise<string> {
       try {
         await client.putJson('settings.json', settingsPayload, remoteSettings.etag);
       } catch (error) {
-        if (!String(error).includes('412')) throw error;
+        if (!isWebdavConflictError(error)) throw error;
         // Another device wrote between our GET and PUT. Re-merge both sides
         // instead of overwriting its newer keys with our stale snapshot.
         const retry = await client.getJson<SettingsFile>('settings.json');

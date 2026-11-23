@@ -34,6 +34,16 @@ function textOf(value: any): string {
   return '';
 }
 
+function durationFromText(text: string): number | undefined {
+  const parts = String(text || '')
+    .split(':')
+    .map(Number);
+  if (!parts.length || parts.some((part) => !Number.isFinite(part))) {
+    return undefined;
+  }
+  return parts.reduce((total, part) => total * 60 + part, 0);
+}
+
 function relativeMs(value: string): number {
   const text = String(value ?? '').toLowerCase();
   const match = text.match(
@@ -130,7 +140,13 @@ function publishedOf(value: any): number {
   return published ? relativeMs(published) : Date.now();
 }
 
-function parsePage(data: any, channelId: string, channelTitle: string, channelAvatar?: string): ChannelVideoPage {
+function parsePage(
+  data: any,
+  channelId: string,
+  channelTitle: string,
+  channelAvatar?: string,
+  sortByPublished = true
+): ChannelVideoPage {
   const items: VideoItem[] = [];
   const seen = new Set<string>();
   const continuations: string[] = [];
@@ -187,10 +203,36 @@ function parsePage(data: any, channelId: string, channelTitle: string, channelAv
         });
       }
     }
+    const playlistVideo = node.playlistVideoRenderer;
+    if (playlistVideo && typeof playlistVideo.videoId === 'string') {
+      const videoId = playlistVideo.videoId;
+      if (!seen.has(videoId)) {
+        seen.add(videoId);
+        const byline = playlistVideo.shortBylineText?.runs?.[0];
+        items.push({
+          videoId,
+          title: textOf(playlistVideo.title) || 'Untitled',
+          channelId:
+            byline?.navigationEndpoint?.browseEndpoint?.browseId || channelId,
+          channelTitle: byline?.text || channelTitle,
+          channelAvatar,
+          published: publishedOf(playlistVideo),
+          thumbnail:
+            thumbnailsOf(playlistVideo) ||
+            `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+          duration:
+            durationOf(playlistVideo) ||
+            durationFromText(textOf(playlistVideo.lengthText)),
+          viewCount: viewCountOf(playlistVideo),
+          isShort: false,
+        });
+      }
+    }
     for (const key of Object.keys(node)) {
       if (
         key === 'lockupViewModel' ||
         key === 'videoRenderer' ||
+        key === 'playlistVideoRenderer' ||
         key === 'continuationCommand'
       ) {
         continue;
@@ -201,7 +243,9 @@ function parsePage(data: any, channelId: string, channelTitle: string, channelAv
   visit(data);
 
   return {
-    items: items.sort((a, b) => b.published - a.published),
+    items: sortByPublished
+      ? items.sort((a, b) => b.published - a.published)
+      : items,
     continuation: continuations.length
       ? continuations[continuations.length - 1]
       : undefined,
@@ -256,7 +300,52 @@ export async function fetchChannelVideosPage(
   return page;
 }
 
-function parsePlaylistsPage(data: any): { items: ChannelPlaylist[]; continuation?: string } {
+export async function fetchPlaylistVideosPage(
+  playlistId: string,
+  options: {
+    continuation?: string;
+    channelId?: string;
+    channelTitle?: string;
+    channelAvatar?: string;
+  } = {}
+): Promise<ChannelVideoPage> {
+  const {
+    continuation,
+    channelId = '',
+    channelTitle = 'YouTube',
+    channelAvatar,
+  } = options;
+  const body: Record<string, unknown> = {
+    context: {
+      client: {
+        clientName: 'WEB',
+        clientVersion: '2.20260101.00.00',
+        hl: 'en',
+        gl: 'US',
+      },
+    },
+  };
+  if (continuation) body.continuation = continuation;
+  else body.browseId = `VL${playlistId}`;
+
+  const data = await httpJson(BROWSE_URL, {
+    method: 'POST',
+    timeoutMs: 20000,
+    headers: {
+      ...BROWSER_HEADERS,
+      'Content-Type': 'application/json',
+      Origin: 'https://www.youtube.com',
+      Referer: `https://www.youtube.com/playlist?list=${playlistId}`,
+    },
+    body,
+  });
+  return parsePage(data, channelId, channelTitle, channelAvatar, false);
+}
+
+function parsePlaylistsPage(data: any): {
+  items: ChannelPlaylist[];
+  continuation?: string;
+} {
   const items: ChannelPlaylist[] = [];
   const seen = new Set<string>();
   const continuations: string[] = [];

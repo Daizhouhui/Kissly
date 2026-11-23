@@ -112,7 +112,7 @@ check('an explicit provider keeps the same cue key in auto mode', () => {
     'deepseek'
   );
   const manualDeepseek = cueCacheKey('vid', 'en', 'auto', 'zh-CN', base);
-  assert.ok(auto.endsWith(':auto'));
+  assert.ok(auto.includes(':auto:'));
   assert.equal(deepseek, manualDeepseek);
   assert.notEqual(auto, deepseek);
 });
@@ -125,6 +125,36 @@ check('title cache keys include the provider/model scope', () => {
   });
   assert.notEqual(before, after);
   assert.ok(before.endsWith('|zh-CN|abc'));
+});
+
+check('automatic mode invalidates its alias cache when a model changes', () => {
+  const automatic = {
+    ...base,
+    provider: 'auto',
+    autoFreeOrder: ['microsoft'],
+    autoPaidOrder: ['deepseek'],
+  };
+  const before = cueCacheKey('vid', 'en', 'auto', 'zh-CN', automatic);
+  const after = cueCacheKey('vid', 'en', 'auto', 'zh-CN', {
+    ...automatic,
+    deepseekModel: 'deepseek-reasoner',
+  });
+  assert.notEqual(before, after);
+});
+
+check('automatic mode invalidates its alias cache when provider order changes', () => {
+  const automatic = {
+    ...base,
+    provider: 'auto',
+    autoFreeOrder: ['microsoft', 'google'],
+    autoPaidOrder: ['deepseek', 'openrouter'],
+  };
+  const before = cueCacheKey('vid', 'en', 'auto', 'zh-CN', automatic);
+  const after = cueCacheKey('vid', 'en', 'auto', 'zh-CN', {
+    ...automatic,
+    autoPaidOrder: ['openrouter', 'deepseek'],
+  });
+  assert.notEqual(before, after);
 });
 
 console.log(`translation-cache-key: ${count} assertions passed`);

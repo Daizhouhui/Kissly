@@ -289,6 +289,9 @@ function createHarness() {
     messages,
     runBridge,
     advance,
+    after(delay, fn) {
+      return setTimeoutFake(fn, delay);
+    },
     get kiss() {
       return window.__kiss;
     },
@@ -543,6 +546,107 @@ check('play after a fullscreen pause survives one late YouTube pause without loo
     h.player.playCalls <= 3,
     `explicit play plus one recovery should use at most 3 play calls, got ${h.player.playCalls}`
   );
+});
+
+check('rotation recovery waits for the surface to settle and issues one play command', () => {
+  const h = createHarness();
+  h.runBridge();
+  h.advance(500);
+  h.player.pauseVideo();
+  const before = h.player.playCalls;
+  h.player.autoPauseOnPlay = 99;
+  h.after(500, () => {
+    h.player.autoPauseOnPlay = 0;
+  });
+
+  h.kiss.orientation();
+  h.kiss.reconcile();
+  h.advance(200);
+  assert.equal(
+    h.player.playCalls,
+    before,
+    'a reconcile during surface recreation must not fight transient pauses'
+  );
+
+  h.kiss.orientation();
+  h.advance(649);
+  assert.equal(h.player.playCalls, before, 'repeated rotation events must extend one settle window');
+  h.advance(1);
+
+  assert.equal(h.player.playCalls, before + 1, 'the settled rotation should recover once');
+  assert.equal(h.video.paused, false);
+  assert.equal(h.player.playerState, 1);
+  assert.equal(h.lastTime().playing, true);
+});
+
+check('the loading overlay is gated by a decoded frame, not playback intent', () => {
+  const match = source.match(
+    /function shouldClearVideoLoading\(message: any\) \{[\s\S]*?\n\}/
+  );
+  assert.ok(match, 'missing pure video loading gate');
+  const gate = vm.runInNewContext(`(${match[0].replace('message: any', 'message')})`);
+
+  assert.equal(gate({ type: 'time', actualPlaying: true, playing: true, ready: false }), false);
+  assert.equal(gate({ type: 'time', actualPlaying: true, playing: true, ready: true }), true);
+  assert.equal(gate({ type: 'time', actualPlaying: false, playing: false, ready: false }), false);
+  assert.equal(gate({ type: 'time', actualPlaying: false, playing: false, ready: true }), true);
+  assert.equal(gate({ type: 'ready', actualPlaying: false, playing: true }), false);
+  assert.equal(gate({ type: 'ready', actualPlaying: false, playing: false }), true);
+});
+
+check('onLoadEnd refresh reuses the bridge instead of resetting playback state', () => {
+  const h = createHarness();
+  h.runBridge();
+  h.advance(100);
+  h.kiss.pause();
+  h.advance(100);
+  const original = h.bridge;
+  const beforePauseCalls = h.player.pauseCalls;
+
+  assert.equal(typeof h.kiss.refresh, 'function');
+  h.kiss.refresh();
+  h.advance(100);
+
+  assert.equal(h.bridge, original, 'refresh must not create a replacement state machine');
+  assert.equal(h.bridge.playIntent, 'pause');
+  assert.equal(h.video.paused, true);
+  assert.equal(h.player.pauseCalls, beforePauseCalls, 'refresh must not repeat pause commands');
+});
+
+check('a precision boundary emits one explicit cue-ended event', () => {
+  const h = createHarness();
+  h.runBridge();
+  h.video.paused = false;
+  h.player.playerState = 1;
+  h.video.currentTime = 29;
+
+  h.advance(100);
+  h.kiss.pauseAt(30);
+  h.advance(20);
+  h.video.currentTime = 31;
+  h.advance(32);
+  assert.equal(h.bridge.playIntent, 'pause');
+  assert.equal(h.messages.filter((message) => message.type === 'cue-ended').length, 1);
+  assert.equal(h.messages.find((message) => message.type === 'cue-ended')?.cueEnd, 30);
+
+  h.advance(200);
+  assert.equal(h.messages.filter((message) => message.type === 'cue-ended').length, 1);
+  assert.match(source, /message\.type === 'cue-ended'/);
+});
+
+check('returning from settings restores the previous play state', () => {
+  const match = source.match(/function focusPlaybackAction\([\s\S]*?\n\}/);
+  assert.ok(match, 'missing focus playback policy');
+  const body = match[0].replace(
+    /function focusPlaybackAction\([\s\S]*?\{/,
+    'function focusPlaybackAction(isNewEntry, shouldResume) {'
+  );
+  const action = vm.runInNewContext(`(${body})`);
+  assert.equal(action(true, true), 'reset');
+  assert.equal(action(true, false), 'reset');
+  assert.equal(action(false, true), 'play');
+  assert.equal(action(false, false), 'pause');
+  assert.match(source, /resumeOnFocusRef\.current = playingRef\.current/);
 });
 
 console.log(`player-playback-intent: ${count} checks passed`);

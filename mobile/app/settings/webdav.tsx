@@ -117,8 +117,15 @@ export default function WebdavSettingsScreen() {
             feedback="opacity"
             disabled={!passwordLoaded}
             onPress={async () => {
-              await persist();
-              Alert.alert('已保存', 'WebDAV 配置已保存。');
+              try {
+                await persist();
+                Alert.alert('已保存', 'WebDAV 配置已保存。');
+              } catch (error) {
+                Alert.alert(
+                  '保存失败',
+                  error instanceof Error ? error.message : String(error)
+                );
+              }
             }}
             hitSlop={8}
           >

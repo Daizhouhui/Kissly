@@ -23,10 +23,8 @@ export async function getSecret(name: SecretName): Promise<string> {
 }
 
 export async function setSecret(name: SecretName, value: string): Promise<void> {
-  try {
-    if (value) await SecureStore.setItemAsync(PREFIX + name, value);
-    else await SecureStore.deleteItemAsync(PREFIX + name);
-  } catch {}
+  if (value) await SecureStore.setItemAsync(PREFIX + name, value);
+  else await SecureStore.deleteItemAsync(PREFIX + name);
 }
 
 export async function getAllSecrets(): Promise<Record<SecretName, string>> {

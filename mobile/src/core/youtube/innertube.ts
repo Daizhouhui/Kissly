@@ -310,6 +310,20 @@ function withAndroidClient(baseUrl: string): string {
   return `${clean}${joiner}c=ANDROID`;
 }
 
+function captionIsComplete(cues: Cue[], durationSeconds: number): boolean {
+  if (!cues.length || durationSeconds <= 0) return false;
+  const lastEnd = cues.reduce((max, cue) => Math.max(max, cue.end), 0);
+  let gapSeconds = 0;
+  for (let index = 1; index < cues.length; index += 1) {
+    const gap = cues[index].start - cues[index - 1].end;
+    if (gap > 2.5) gapSeconds += gap;
+  }
+  return (
+    lastEnd >= durationSeconds * 0.92 &&
+    gapSeconds <= Math.max(8, durationSeconds * 0.12)
+  );
+}
+
 export async function fetchCaptionCues(
   track: CaptionTrack,
   durationSeconds = 0,
@@ -341,40 +355,61 @@ export async function fetchCaptionCues(
     },
     { label: 'srv3', rank: 3, url: withFormat(track.baseUrl, 'srv3') },
   ];
-  const results = await Promise.all(
-    variants.map(async (variant) => {
-      try {
-        const response = await httpText(variant.url, {
-          timeoutMs: 8000,
-          headers: {
-            ...BROWSER_HEADERS,
-            'User-Agent':
-              'com.google.android.youtube/21.03.36 (Linux; U; Android 14) gzip',
-            'X-Goog-Api-Format-Version': '2',
-            ...(visitorData ? { 'X-Goog-Visitor-Id': visitorData } : {}),
-            Accept: 'application/json,text/xml,text/vtt,text/plain,*/*',
-            Origin: 'https://m.youtube.com',
-            Referer: 'https://m.youtube.com/',
-          },
-        });
-        if (response.status !== 200 || !response.text.trim()) return null;
-        const cues = parseCaptionText(response.text, track.languageCode);
-        if (!cues.length) return null;
-        return {
-          cues,
-          score:
-            captionQualityScore(cues, durationSeconds) + variant.rank,
-        };
-      } catch {
-        // A single blocked format should not block the others.
-        return null;
-      }
-    })
-  );
+  type VariantResult = { cues: Cue[]; score: number } | null;
+  const fetchVariant = async (
+    variant: (typeof variants)[number],
+    timeoutMs: number
+  ): Promise<VariantResult> => {
+    try {
+      const response = await httpText(variant.url, {
+        timeoutMs,
+        headers: {
+          ...BROWSER_HEADERS,
+          'User-Agent':
+            'com.google.android.youtube/21.03.36 (Linux; U; Android 14) gzip',
+          'X-Goog-Api-Format-Version': '2',
+          ...(visitorData ? { 'X-Goog-Visitor-Id': visitorData } : {}),
+          Accept: 'application/json,text/xml,text/vtt,text/plain,*/*',
+          Origin: 'https://m.youtube.com',
+          Referer: 'https://m.youtube.com/',
+        },
+      });
+      if (response.status !== 200 || !response.text.trim()) return null;
+      const cues = parseCaptionText(response.text, track.languageCode);
+      if (!cues.length) return null;
+      return {
+        cues,
+        score: captionQualityScore(cues, durationSeconds) + variant.rank,
+      };
+    } catch {
+      return null;
+    }
+  };
 
-  const best = results.reduce<{ cues: Cue[]; score: number } | null>(
+  const candidates: NonNullable<VariantResult>[] = [];
+
+  // Most healthy tracks are complete in one of these two responses. Do not
+  // compete with the video's first-frame download by firing all seven formats.
+  for (const variant of variants.slice(0, 2)) {
+    const result = await fetchVariant(variant, 4000);
+    if (result) candidates.push(result);
+    if (result && captionIsComplete(result.cues, durationSeconds)) {
+      return result.cues;
+    }
+  }
+
+  // If both preferred responses are truncated or blocked, retain the old
+  // parallel fallback so worst-case latency stays bounded instead of becoming
+  // seven sequential eight-second waits.
+  const remaining = await Promise.all(
+    variants.slice(2).map((variant) => fetchVariant(variant, 8000))
+  );
+  for (const result of remaining) {
+    if (result) candidates.push(result);
+  }
+  const best = candidates.reduce<VariantResult>(
     (current, result) =>
-      result && (!current || result.score > current.score) ? result : current,
+      !current || result.score > current.score ? result : current,
     null
   );
   if (best) return best.cues;

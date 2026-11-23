@@ -318,7 +318,7 @@ export default function TranslationSettingsScreen() {
               delete next[profile.id];
               return next;
             });
-            void setSecret(openaiProfileSecretName(profile.id), '');
+            void setSecret(openaiProfileSecretName(profile.id), '').catch(() => {});
           },
         },
       ]
@@ -329,29 +329,36 @@ export default function TranslationSettingsScreen() {
     // Do not write the empty placeholders back over saved keys while the
     // SecureStore reads are still in flight.
     if (!secretsLoaded) return;
-    await Promise.all([
-      setSecret('deepseek', deepseekKey.trim()),
-      setSecret('siliconflow', siliconflowKey.trim()),
-      setSecret('openrouter', openrouterKey.trim()),
-      ...settings.openaiProfiles.map((profile) =>
-        setSecret(
-          openaiProfileSecretName(profile.id),
-          (openaiKeys[profile.id] ?? '').trim()
-        )
-      ),
-    ]);
-    // Keep the old single-key slot in sync for installs that downgrade.
-    const defaultProfile = settings.openaiProfiles.find(
-      (profile) => profile.id === 'default'
-    );
-    if (defaultProfile) {
-      await setSecret(
-        'openai',
-        (openaiKeys[defaultProfile.id] ?? '').trim()
+    try {
+      await Promise.all([
+        setSecret('deepseek', deepseekKey.trim()),
+        setSecret('siliconflow', siliconflowKey.trim()),
+        setSecret('openrouter', openrouterKey.trim()),
+        ...settings.openaiProfiles.map((profile) =>
+          setSecret(
+            openaiProfileSecretName(profile.id),
+            (openaiKeys[profile.id] ?? '').trim()
+          )
+        ),
+      ]);
+      // Keep the old single-key slot in sync for installs that downgrade.
+      const defaultProfile = settings.openaiProfiles.find(
+        (profile) => profile.id === 'default'
+      );
+      if (defaultProfile) {
+        await setSecret(
+          'openai',
+          (openaiKeys[defaultProfile.id] ?? '').trim()
+        );
+      }
+      patchSettings({ provider });
+      Alert.alert('已保存', '翻译引擎与密钥已更新。');
+    } catch (error) {
+      Alert.alert(
+        '保存失败',
+        error instanceof Error ? error.message : String(error)
       );
     }
-    patchSettings({ provider });
-    Alert.alert('已保存', '翻译引擎与密钥已更新。');
   };
 
   const test = async () => {
@@ -359,24 +366,33 @@ export default function TranslationSettingsScreen() {
       provider === 'auto'
         ? (settings.autoFreeOrder[0] ?? 'microsoft')
         : provider;
+    let temporarySecret: {
+      name: ReturnType<typeof openaiProfileSecretName> | 'deepseek' | 'siliconflow' | 'openrouter';
+      previous: string;
+    } | null = null;
     setTesting(true);
     try {
-      // The test must use the key currently typed in the field, not the one
-      // that happened to be saved before the user started editing.
-      if (provider === 'deepseek') await setSecret('deepseek', deepseekKey.trim());
-      if (provider === 'siliconflow') await setSecret('siliconflow', siliconflowKey.trim());
-      if (provider === 'openrouter') await setSecret('openrouter', openrouterKey.trim());
-      if (provider === 'openai') {
-        await setSecret(
-          openaiProfileSecretName(activeProfile.id),
-          (openaiKeys[activeProfile.id] ?? '').trim()
-        );
+      // The test must use the key currently typed in the field without
+      // persisting it. A failed test leaves the saved key untouched.
+      if (provider === 'deepseek' || provider === 'siliconflow' || provider === 'openrouter') {
+        const name = provider;
+        const previous = await getSecret(name);
+        temporarySecret = { name, previous };
+        await setSecret(name, (provider === 'deepseek' ? deepseekKey : provider === 'siliconflow' ? siliconflowKey : openrouterKey).trim());
+      } else if (provider === 'openai') {
+        const name = openaiProfileSecretName(activeProfile.id);
+        const previous = await getSecret(name);
+        temporarySecret = { name, previous };
+        await setSecret(name, (openaiKeys[activeProfile.id] ?? '').trim());
       }
       const text = await testTranslation(target);
       Alert.alert('连接成功', `返回：${text}`);
     } catch (error) {
       Alert.alert('连接失败', error instanceof Error ? error.message : String(error));
     } finally {
+      if (temporarySecret) {
+        await setSecret(temporarySecret.name, temporarySecret.previous).catch(() => {});
+      }
       setTesting(false);
     }
   };

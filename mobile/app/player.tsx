@@ -198,6 +198,8 @@ function playerBridgeScript(startAt = 0) {
     if (previous && previous.pauseFallbackTimer) clearTimeout(previous.pauseFallbackTimer);
     if (previous && previous.playConfirmTimer) clearTimeout(previous.playConfirmTimer);
     if (previous && previous.reconcileTimer) clearTimeout(previous.reconcileTimer);
+    if (previous && previous.orientationTimer) clearTimeout(previous.orientationTimer);
+    if (previous && previous.orientationConfirmTimer) clearTimeout(previous.orientationConfirmTimer);
     var storedIntent = '';
     var storedIntentUrl = '';
     try {
@@ -234,6 +236,10 @@ function playerBridgeScript(startAt = 0) {
       pauseFallbackTimer: null,
       playConfirmTimer: null,
       reconcileTimer: null,
+      orientationUntil: 0,
+      orientationTimer: null,
+      orientationConfirmTimer: null,
+      orientationPlayRequested: false,
       videoRef: null,
       startAt: requestedStart,
       startApplied:
@@ -413,6 +419,13 @@ function playerBridgeScript(startAt = 0) {
       var p = getPlayer();
       var current = v || getVideo();
       if (!current) return;
+      // Android pauses the WebView while its native surface is recreated.
+      // Preserve the user's intent, but never fight those transient pauses
+      // with play commands until the last rotation notification has settled.
+      if (orientationHoldActive()) {
+        scheduleOrientationSettle();
+        return;
+      }
       // Never issue another play command while YouTube and the raw video are
       // already playing. Repeated playVideo() calls during a rotation used to
       // make Android look like it was tapping pause/play in a loop.
@@ -503,6 +516,7 @@ function playerBridgeScript(startAt = 0) {
         try { v.__kissUserPaused = false; } catch(e) {}
       }
       var explicit = immediate !== false;
+      if (orientationHoldActive()) bridge.orientationPlayRequested = true;
       if (v) maybeStart(v, explicit);
       if (explicit) {
         // One bounded confirmation after an explicit tap. It recovers a
@@ -526,6 +540,7 @@ function playerBridgeScript(startAt = 0) {
     function pauseNow(reason){
       clearPauseAt();
       clearStartTimer();
+      bridge.orientationPlayRequested = false;
       if (bridge.playConfirmTimer) {
         clearTimeout(bridge.playConfirmTimer);
         bridge.playConfirmTimer = null;
@@ -1187,8 +1202,56 @@ function playerBridgeScript(startAt = 0) {
       bridge.pauseAtSawBeforeEnd = false;
     }
 
+    function orientationHoldActive(){
+      return Date.now() < (Number(bridge.orientationUntil) || 0);
+    }
+    function scheduleOrientationSettle(){
+      if (bridge.orientationTimer) clearTimeout(bridge.orientationTimer);
+      var delay = Math.max(0, (Number(bridge.orientationUntil) || 0) - Date.now());
+      bridge.orientationTimer = setTimeout(function(){
+        bridge.orientationTimer = null;
+        if (!bridge.alive) return;
+        var confirmExplicitPlay = bridge.orientationPlayRequested;
+        bridge.orientationPlayRequested = false;
+        reconcilePlayback('orientation-settled');
+        if (bridge.orientationConfirmTimer) {
+          clearTimeout(bridge.orientationConfirmTimer);
+          bridge.orientationConfirmTimer = null;
+        }
+        if (confirmExplicitPlay && bridge.playIntent === 'play') {
+          // A user tap during rotation gets one post-settle confirmation for
+          // a late native pause. Rotation alone never enters this retry path.
+          bridge.orientationConfirmTimer = setTimeout(function(){
+            bridge.orientationConfirmTimer = null;
+            if (!bridge.alive || bridge.playIntent !== 'play') return;
+            var current = getVideo();
+            if (current && !isActuallyPlaying(current, getPlayer())) {
+              requestPlayerPlay(current, true);
+            }
+          }, 400);
+        }
+      }, delay);
+    }
+    function beginOrientation(){
+      bridge.orientationUntil = Date.now() + 650;
+      clearPlayFallback();
+      clearStartTimer();
+      if (bridge.playConfirmTimer) {
+        clearTimeout(bridge.playConfirmTimer);
+        bridge.playConfirmTimer = null;
+      }
+      // All native/React orientation notifications extend the same quiet
+      // window. Only the final timer is allowed to reconcile playback.
+      scheduleOrientationSettle();
+      return true;
+    }
+
     function reconcilePlayback(reason){
       if (!bridge.alive || bridge.playIntent !== 'play') return true;
+      if (orientationHoldActive()) {
+        scheduleOrientationSettle();
+        return true;
+      }
       var v = getVideo();
       if (!v) return true;
       if (v.ended) {
@@ -1219,8 +1282,15 @@ function playerBridgeScript(startAt = 0) {
       reconcile: function(){
         return reconcilePlayback('reconcile');
       },
-      orientation: function(){
+      refresh: function(){
+        // onLoadEnd only needs a DOM rescan. Reinjecting the whole script used
+        // to initialize playback twice and restart pending timers on cold load.
+        bindTries = 0;
+        bind();
         return true;
+      },
+      orientation: function(){
+        return beginOrientation();
       },
       resetForEntry: function(){
         return playNow('entry', false);
@@ -1277,6 +1347,9 @@ function playerBridgeScript(startAt = 0) {
           }
           if (now < target) return;
           pauseNow('boundary');
+          // React must observe the semantic boundary even when this pause and
+          // the final time report arrive in the same WebView message batch.
+          send({ type: 'cue-ended', current: now, cueEnd: target });
         }, 16);
         return true;
       },
@@ -1400,10 +1473,10 @@ function playerBridgeScript(startAt = 0) {
       }, delay);
     }
     window.addEventListener('orientationchange', function(){
-      // Android can pause the WebView while the activity rotates. React sends
-      // its own bounded reconcile schedule; this is one additional check, not
-      // a feedback loop driven by every pause event.
-      scheduleReconcile(500);
+      // Android can pause the WebView while the activity rotates. Wait for
+      // both native and React rotation notifications to settle before issuing
+      // one recovery command; pause events themselves never trigger play.
+      beginOrientation();
     });
     function reconcileWhenVisible(){
       if (document.hidden) return;
@@ -1434,6 +1507,23 @@ function playerBridgeScript(startAt = 0) {
 })();
 true;
 `;
+}
+
+function focusPlaybackAction(
+  isNewEntry: boolean,
+  shouldResume: boolean
+): 'reset' | 'play' | 'pause' {
+  if (isNewEntry) return 'reset';
+  return shouldResume ? 'play' : 'pause';
+}
+
+function shouldClearVideoLoading(message: any) {
+  // `playing` is the user's intent and playerState=3 only means buffering;
+  // neither proves that Android has decoded a visible frame. A ready message
+  // is emitted only after isFrameReady, while time messages carry the flag.
+  const hasFrame = message.type === 'ready' || message.ready === true;
+  if (!hasFrame) return false;
+  return message.actualPlaying === true || message.playing === false;
 }
 
 function formatTime(value: number) {
@@ -1530,6 +1620,8 @@ export default function PlayerScreen() {
   const videoLoadingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [playing, setPlaying] = useState(false);
   const playingRef = useRef(false);
+  const focusedVideoIdRef = useRef<string | null>(null);
+  const resumeOnFocusRef = useRef(false);
   const mirrorPlaying = (value: boolean) => {
     playingRef.current = value;
     setPlaying(value);
@@ -2085,8 +2177,11 @@ export default function PlayerScreen() {
     settings.autoFallbackDeepSeek,
     settings.deepseekModel,
     settings.siliconflowModel,
+    settings.openrouterModel,
     settings.openaiBaseUrl,
     settings.openaiModel,
+    settings.autoFreeOrder,
+    settings.autoPaidOrder,
     settings.requestTimeoutMs,
   ]);
 
@@ -2253,15 +2348,18 @@ export default function PlayerScreen() {
 
   const scheduleOrientationResume = () => {
     clearOrientationResume();
-    // Android WebView can lose its playing state while the activity rotates
-    // or the window briefly loses focus. The bridge owns the play intent, so
-    // these retries only ask it to reconcile; they never decide from React's
-    // possibly stale `playing` flag.
-    [450, 1200, 2400].forEach((delay) => {
+    // Mark the transition immediately. The bridge coalesces native and React
+    // notifications into one quiet window, then owns the first recovery.
+    webRef.current?.injectJavaScript(
+      'window.__kiss && window.__kiss.orientation(); true;'
+    );
+    // Keep only two late, bounded checks for a pause delivered after the
+    // surface settles. Do not repeatedly unmute/setVolume during rotation.
+    [800, 1800].forEach((delay) => {
       orientationResumeTimers.current.push(
         setTimeout(() => {
           webRef.current?.injectJavaScript(
-            'window.__kiss && window.__kiss.reconcile(); window.__kiss && window.__kiss.audio(); true;'
+            'window.__kiss && window.__kiss.reconcile(); true;'
           );
         }, delay)
       );
@@ -2270,18 +2368,36 @@ export default function PlayerScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      const isNewEntry = focusedVideoIdRef.current !== videoId;
+      focusedVideoIdRef.current = videoId;
+      const shouldResume = !isNewEntry && resumeOnFocusRef.current;
+      const action = focusPlaybackAction(isNewEntry, shouldResume);
       const timer = setTimeout(() => {
-        webRef.current?.injectJavaScript(
-          'window.__kiss && window.__kiss.resetForEntry(); true;'
-        );
+        if (action === 'reset') {
+          webRef.current?.injectJavaScript(
+            'window.__kiss && window.__kiss.resetForEntry(); true;'
+          );
+        } else if (action === 'play') {
+          mirrorPlaying(true);
+          webRef.current?.injectJavaScript(
+            'window.__kiss && window.__kiss.play(); true;'
+          );
+        } else {
+          mirrorPlaying(false);
+          webRef.current?.injectJavaScript(
+            'window.__kiss && window.__kiss.pauseForScreen(); true;'
+          );
+        }
       }, 0);
       return () => {
         clearTimeout(timer);
+        resumeOnFocusRef.current = playingRef.current;
         webRef.current?.injectJavaScript(
           'window.__kiss && window.__kiss.pauseForScreen(); true;'
         );
+        void persistProgressRef.current();
       };
-    }, [])
+    }, [videoId])
   );
 
   useEffect(() => {
@@ -2585,22 +2701,22 @@ export default function PlayerScreen() {
     }
   }, [activeCue, blindMode, current, loopSentence, playing, repeatPass, settings.subtitle.autoNext, settings.subtitle.repeatCount, settings.subtitle.repeatInterval]);
 
-  useEffect(() => {
-    if (!blindMode || !precisionCue || !playing) return;
-    if (current <= precisionCue.end + 0.08) return;
-    const guardKey = `${precisionCue.start.toFixed(2)}-${precisionPass}`;
+  const runPrecisionBoundary = (alreadyPaused = false) => {
+    const cue = precisionCue;
+    if (!blindMode || !cue) return;
+    const guardKey = `${cue.start.toFixed(2)}-${precisionPass}`;
     if (blindGuardRef.current === guardKey) return;
     blindGuardRef.current = guardKey;
 
-    send('window.__kiss && window.__kiss.pause(); true;');
+    if (!alreadyPaused) send('window.__kiss && window.__kiss.pause(); true;');
     mirrorPlaying(false);
 
     if (precisionPass < listeningRepeatCount) {
       precisionTimerRef.current = setTimeout(() => {
-        seekTo(precisionCue.start + 0.01);
+        seekTo(cue.start + 0.01);
         setPrecisionPass((value) => value + 1);
         send('window.__kiss && window.__kiss.play(); true;');
-        armPrecisionPause(precisionCue);
+        armPrecisionPause(cue);
         mirrorPlaying(true);
       }, listeningRepeatInterval * 1000);
       return;
@@ -2618,6 +2734,14 @@ export default function PlayerScreen() {
         jumpPrecisionCue(1);
       }, Math.max(1200, listeningRepeatInterval * 1000));
     }
+  };
+
+  useEffect(() => {
+    // Fallback for a delayed/missing boundary event. The WebView normally
+    // sends cue-ended explicitly; this path preserves older cached pages.
+    if (!blindMode || !precisionCue || !playing) return;
+    if (current <= precisionCue.end + 0.08) return;
+    runPrecisionBoundary();
   }, [
     blindMode,
     current,
@@ -2639,17 +2763,23 @@ export default function PlayerScreen() {
       return;
     }
     if (!message || typeof message.type !== 'string') return;
+    if (message.type === 'cue-ended') {
+      if (typeof message.current === 'number') {
+        progressRef.current.current = message.current;
+        setCurrent(message.current);
+      }
+      runPrecisionBoundary(true);
+      return;
+    }
     if (message.type === 'ready') {
       webReadyRef.current = true;
       setReady(true);
       setVideoProblem('');
       if (typeof message.playing === 'boolean') mirrorPlaying(message.playing);
-      // A ready video is not necessarily a visible video. On a cold WebView
-      // load YouTube reports frame metadata before it paints the first frame;
-      // hiding the overlay here left the user staring at a black box. Keep the
-      // spinner until playback is real, unless the user intent is pause (then
-      // the paused frame is exactly what they should see).
-      if (message.playing !== true || message.actualPlaying === true) {
+      // A ready player can still have a black native surface. Reveal it only
+      // after a decoded frame exists and playback has actually started (or a
+      // deliberate pause has a real frame to show).
+      if (shouldClearVideoLoading(message)) {
         clearVideoLoadingTimer();
         setVideoLoading(false);
       }
@@ -2723,7 +2853,7 @@ export default function PlayerScreen() {
         setBufferedEnd(message.bufferedEnd);
       }
       if (typeof message.playing === 'boolean') mirrorPlaying(message.playing);
-      if (message.actualPlaying === true || message.playing === false) {
+      if (shouldClearVideoLoading(message)) {
         clearVideoLoadingTimer();
         setVideoLoading(false);
       }
@@ -3165,7 +3295,7 @@ export default function PlayerScreen() {
             armVideoLoadingFallback();
           }}
           onLoadEnd={() => {
-            send(playerBridgeScript(startAtRef.current));
+            send('window.__kiss && window.__kiss.refresh(); true;');
             armVideoLoadingFallback();
           }}
           onError={() => {

@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../../src/core/store';
 import { relativeTime } from '../../src/core/utils';
+import { resumeTarget } from '../../src/core/watchProgress';
 import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
 import { AppPressable } from '../../src/ui/app-pressable';
 import { useAppTheme } from '../../src/ui/theme';
@@ -185,13 +186,24 @@ export default function LearningScreen() {
             </Pressable>
           </View>
         ) : (
-          favorites.slice(0, 2).map((item) => (
+          favorites.slice(0, 2).map((item) => {
+            const startAt = resumeTarget({
+              progress: item.progress ?? 0,
+              resumeAt: undefined,
+              duration: item.duration,
+            });
+            return (
             <Pressable
               key={item.videoId}
               onPress={() =>
                 router.push({
                   pathname: '/player',
-                  params: { videoId: item.videoId, title: item.title, author: item.author },
+                  params: {
+                    videoId: item.videoId,
+                    title: item.title,
+                    author: item.author,
+                    ...(startAt > 0 ? { startAt: String(startAt) } : {}),
+                  },
                 } as any)
               }
               radius={RADIUS.card}
@@ -229,7 +241,8 @@ export default function LearningScreen() {
                 <Ionicons name="heart" size={19} color={theme.colors.primary} />
               </Pressable>
             </Pressable>
-          ))
+            );
+          })
         )}
 
         {history.length > 0 ? (
@@ -240,14 +253,21 @@ export default function LearningScreen() {
                 <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>全部</Text>
               </Pressable>
             </View>
-            {history.slice(0, 10).map((item) => (
+            {history.slice(0, 10).map((item) => {
+              const startAt = resumeTarget(item);
+              return (
               <Pressable
                 key={`history-${item.videoId}`}
                 radius={0}
                 onPress={() =>
                   router.push({
                     pathname: '/player',
-                    params: { videoId: item.videoId, title: item.title, author: item.author },
+                    params: {
+                      videoId: item.videoId,
+                      title: item.title,
+                      author: item.author,
+                      ...(startAt > 0 ? { startAt: String(startAt) } : {}),
+                    },
                   } as any)
                 }
                 style={{
@@ -269,12 +289,13 @@ export default function LearningScreen() {
                     {item.title}
                   </Text>
                   <Text style={{ color: theme.colors.textTertiary, fontSize: 10.5, marginTop: 4 }} numberOfLines={1}>
-                    {item.author} · {relativeTime(item.savedAt)}
+                    {item.author} · {relativeTime(item.lastWatchedAt ?? item.savedAt)}
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={16} color={theme.colors.textTertiary} />
               </Pressable>
-            ))}
+              );
+            })}
           </>
         ) : null}
       </ScrollView>

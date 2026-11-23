@@ -7,6 +7,8 @@ type CacheSettings = {
   openrouterModel?: string;
   openaiBaseUrl?: string;
   openaiModel?: string;
+  autoFreeOrder?: ProviderId[];
+  autoPaidOrder?: ProviderId[];
 };
 
 function normalized(value: string | undefined): string {
@@ -22,6 +24,17 @@ export function providerCacheScope(
   settings: CacheSettings,
   provider: ProviderId = settings.provider
 ): string {
+  if (provider === 'auto') {
+    return `auto:${JSON.stringify({
+      d: normalized(settings.deepseekModel),
+      s: normalized(settings.siliconflowModel),
+      r: normalized(settings.openrouterModel),
+      b: normalized(settings.openaiBaseUrl).replace(/\/+$/, ''),
+      m: normalized(settings.openaiModel),
+      f: settings.autoFreeOrder ?? [],
+      p: settings.autoPaidOrder ?? [],
+    })}`;
+  }
   switch (provider) {
     case 'deepseek':
       return `deepseek:${normalized(settings.deepseekModel)}`;

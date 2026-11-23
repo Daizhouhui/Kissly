@@ -6,7 +6,6 @@ import {
   ActivityIndicator,
   FlatList,
   Modal,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -21,6 +20,7 @@ import {
   ChannelPlaylist,
   fetchChannelPlaylistsPage,
   fetchChannelVideosPage,
+  fetchPlaylistVideosPage,
 } from '../src/core/youtube/channelVideos';
 import { fetchChannelFeed, fetchPlaylistFeed } from '../src/core/youtube/rss';
 import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
@@ -80,7 +80,9 @@ export default function ChannelScreen() {
   const [playlistError, setPlaylistError] = useState('');
   const [selectedPlaylist, setSelectedPlaylist] = useState<ChannelPlaylist | null>(null);
   const [playlistItems, setPlaylistItems] = useState<VideoItem[]>([]);
+  const [playlistContinuation, setPlaylistContinuation] = useState<string | undefined>();
   const [playlistVideosLoading, setPlaylistVideosLoading] = useState(false);
+  const [playlistLoadingMore, setPlaylistLoadingMore] = useState(false);
   const requestRef = useRef(0);
   const playlistRequestRef = useRef(0);
 
@@ -174,17 +176,62 @@ export default function ChannelScreen() {
     const requestId = ++playlistRequestRef.current;
     setSelectedPlaylist(playlist);
     setPlaylistItems([]);
+    setPlaylistContinuation(undefined);
     setPlaylistVideosLoading(true);
     try {
-      const videos = await fetchPlaylistFeed(playlist.playlistId);
+      const page = await fetchPlaylistVideosPage(playlist.playlistId, {
+        channelId,
+        channelTitle: title,
+        channelAvatar: avatar || undefined,
+      });
       if (requestId !== playlistRequestRef.current) return;
-      setPlaylistItems(videos);
+      setPlaylistItems(page.items);
+      setPlaylistContinuation(page.continuation);
     } catch {
-      if (requestId !== playlistRequestRef.current) return;
-      setPlaylistItems([]);
+      try {
+        const videos = await fetchPlaylistFeed(playlist.playlistId);
+        if (requestId !== playlistRequestRef.current) return;
+        setPlaylistItems(videos);
+        setPlaylistContinuation(undefined);
+      } catch {
+        if (requestId !== playlistRequestRef.current) return;
+        setPlaylistItems([]);
+      }
     } finally {
       if (requestId === playlistRequestRef.current) {
         setPlaylistVideosLoading(false);
+      }
+    }
+  };
+
+  const loadMorePlaylist = async () => {
+    if (
+      !selectedPlaylist ||
+      !playlistContinuation ||
+      playlistLoadingMore ||
+      playlistVideosLoading
+    ) {
+      return;
+    }
+    const requestId = playlistRequestRef.current;
+    setPlaylistLoadingMore(true);
+    try {
+      const page = await fetchPlaylistVideosPage(selectedPlaylist.playlistId, {
+        continuation: playlistContinuation,
+        channelId,
+        channelTitle: title,
+        channelAvatar: avatar || undefined,
+      });
+      if (requestId !== playlistRequestRef.current) return;
+      const seen = new Set(playlistItems.map((item) => item.videoId));
+      const fresh = page.items.filter((item) => !seen.has(item.videoId));
+      setPlaylistItems((current) => [...current, ...fresh]);
+      setPlaylistContinuation(page.continuation);
+    } catch {
+      // Keep the token so the user can retry after a transient failure.
+    } finally {
+      if (requestId === playlistRequestRef.current) {
+        setPlaylistLoadingMore(false);
       }
     }
   };
@@ -224,7 +271,7 @@ export default function ChannelScreen() {
   const popularItems = [...items].sort(
     (a, b) => (b.viewCount ?? 0) - (a.viewCount ?? 0) || b.published - a.published
   );
-  const data = tab === 'latest' ? latestItems.slice(0, visible) : tab === 'popular' ? popularItems : [];
+  const data = tab === 'latest' ? latestItems.slice(0, visible) : tab === 'popular' ? popularItems.slice(0, visible) : [];
   const averageDuration = items.length
     ? Math.round(items.reduce((sum, item) => sum + (item.duration ?? 0), 0) / items.length / 60)
     : 0;
@@ -424,7 +471,7 @@ export default function ChannelScreen() {
             onPress={() => openVideo(item)}
           />
         )}
-        onEndReached={tab === 'latest' ? loadMore : undefined}
+        onEndReached={tab === 'playlists' ? undefined : loadMore}
         onEndReachedThreshold={0.5}
         ListEmptyComponent={
           tab === 'playlists' ? (
@@ -446,7 +493,7 @@ export default function ChannelScreen() {
           ) : undefined
         }
         ListFooterComponent={
-          tab === 'latest' && items.length ? (
+          tab !== 'playlists' && items.length ? (
             <View style={{ paddingVertical: 14, alignItems: 'center', gap: 6 }}>
               {loadingMore ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
               <Text style={{ color: theme.colors.textTertiary, fontSize: 11 }}>
@@ -492,26 +539,50 @@ export default function ChannelScreen() {
                 <Ionicons name="close" size={21} color={theme.colors.text} />
               </AppPressable>
             </View>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {playlistVideosLoading ? (
-                <ActivityIndicator color={theme.colors.primary} style={{ marginTop: 26 }} />
-              ) : playlistItems.length ? (
-                playlistItems.map((item) => (
+            {playlistVideosLoading && !playlistItems.length ? (
+              <ActivityIndicator color={theme.colors.primary} style={{ marginTop: 26 }} />
+            ) : (
+              <FlatList
+                data={playlistItems}
+                keyExtractor={(item) => item.videoId}
+                onEndReached={loadMorePlaylist}
+                onEndReachedThreshold={0.5}
+                showsVerticalScrollIndicator={false}
+                renderItem={({ item }) => (
                   <VideoCard
-                    key={item.videoId}
                     item={{ ...item, channelAvatar: avatar || item.channelAvatar }}
                     onPress={() => {
                       setSelectedPlaylist(null);
                       openVideo(item);
                     }}
                   />
-                ))
-              ) : (
-                <Text style={{ color: theme.colors.textTertiary, fontSize: 12, marginTop: 20 }}>
-                  这个播放列表没有可读取的视频。
-                </Text>
-              )}
-            </ScrollView>
+                )}
+                ListEmptyComponent={
+                  <Text style={{ color: theme.colors.textTertiary, fontSize: 12, marginTop: 20 }}>
+                    这个播放列表没有可读取的视频。
+                  </Text>
+                }
+                ListFooterComponent={
+                  playlistLoadingMore ? (
+                    <ActivityIndicator
+                      color={theme.colors.primary}
+                      style={{ marginVertical: 16 }}
+                    />
+                  ) : playlistContinuation ? (
+                    <Text
+                      style={{
+                        color: theme.colors.textTertiary,
+                        fontSize: 11,
+                        textAlign: 'center',
+                        marginVertical: 12,
+                      }}
+                    >
+                      上滑加载更多
+                    </Text>
+                  ) : undefined
+                }
+              />
+            )}
           </View>
         </View>
       </Modal>
