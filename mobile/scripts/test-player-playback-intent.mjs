@@ -90,6 +90,10 @@ function createHarness() {
 
   player = {
     playerState: 1,
+    playCalls: 0,
+    pauseCalls: 0,
+    autoPauseOnPlay: 0,
+    autoPauseDelay: 220,
     classList: { contains() { return false; } },
     querySelector(selector) {
       if (selector === 'video.html5-main-video' || selector === 'video') {
@@ -107,10 +111,21 @@ function createHarness() {
       return this.playerState;
     },
     playVideo() {
+      this.playCalls += 1;
       this.playerState = 1;
       if (video.paused) video.play();
+      if (this.autoPauseOnPlay > 0) {
+        this.autoPauseOnPlay -= 1;
+        const owner = this;
+        setTimeoutFake(function () {
+          if (owner.playerState !== 1) return;
+          owner.playerState = 2;
+          if (!video.paused) video.pause();
+        }, this.autoPauseDelay);
+      }
     },
     pauseVideo() {
+      this.pauseCalls += 1;
       this.playerState = 2;
       if (!video.paused) video.pause();
     },
@@ -220,6 +235,7 @@ function createHarness() {
     location,
     innerWidth: 360,
     innerHeight: 800,
+    Date: { now() { return now; } },
     setTimeout: setTimeoutFake,
     clearTimeout: clearTimerFake,
     setInterval: setIntervalFake,
@@ -437,6 +453,96 @@ check('bridge reload routes video events through the current bridge', () => {
   harness.video.emit('timeupdate');
   assert.equal(harness.lastTime().current, 33);
   assert.equal(harness.lastTime().playing, true);
+});
+
+check('a paused YouTube player is reported as not playing even if the raw video flag says playing', () => {
+  const h = createHarness();
+  h.runBridge();
+  h.advance(100);
+  assert.equal(h.player.playerState, 1);
+  assert.equal(h.video.paused, false);
+
+  h.player.playerState = 2;
+  h.advance(950);
+  assert.equal(h.lastTime().actualPlaying, false, 'YouTube playerState=2 must override video.paused=false');
+  assert.equal(h.lastTime().playerState, 2);
+
+  h.kiss.reconcile();
+  h.advance(320);
+  assert.equal(h.player.playerState, 1, 'reconcile must revive a paused YouTube player');
+  assert.equal(h.video.paused, false);
+});
+
+check('repeated reconciles do not reissue play to an already playing YouTube player', () => {
+  const h = createHarness();
+  h.runBridge();
+  h.advance(100);
+  const before = h.player.playCalls;
+  assert.equal(h.video.paused, false);
+
+  h.kiss.reconcile();
+  h.advance(80);
+  h.kiss.reconcile();
+  h.advance(80);
+  h.kiss.setPlaying(true);
+  h.advance(80);
+
+  assert.equal(
+    h.player.playCalls,
+    before,
+    'a playing player must not receive duplicate playVideo commands'
+  );
+});
+
+check('pause events inside the orientation window do not create a play/pause feedback loop', () => {
+  const h = createHarness();
+  h.runBridge();
+  h.advance(100);
+  h.player.autoPauseOnPlay = 99;
+
+  h.kiss.orientation();
+  h.player.pauseVideo();
+  h.kiss.reconcile();
+  h.advance(1200);
+
+  assert.ok(
+    h.player.playCalls <= 2,
+    `orientation recovery looped ${h.player.playCalls} times; expected at most 2`
+  );
+});
+
+check('the ready message carries actual playback state for the loading overlay', () => {
+  const h = createHarness();
+  h.runBridge();
+  h.advance(120);
+  const ready = h.messages.find((message) => message && message.type === 'ready');
+  assert.ok(ready, 'bridge did not send ready');
+  assert.equal(typeof ready.actualPlaying, 'boolean');
+  assert.equal(ready.actualPlaying, true);
+  assert.equal(ready.playerState, 1);
+});
+
+check('play after a fullscreen pause survives one late YouTube pause without looping', () => {
+  const h = createHarness();
+  h.runBridge();
+  h.advance(100);
+  h.kiss.orientation();
+  h.kiss.pause();
+  h.advance(80);
+  assert.equal(h.video.paused, true);
+  assert.equal(h.bridge.playIntent, 'pause');
+
+  h.player.autoPauseOnPlay = 1;
+  h.kiss.setPlaying(true);
+  h.advance(1200);
+
+  assert.equal(h.bridge.playIntent, 'play');
+  assert.equal(h.player.playerState, 1);
+  assert.equal(h.video.paused, false);
+  assert.ok(
+    h.player.playCalls <= 3,
+    `explicit play plus one recovery should use at most 3 play calls, got ${h.player.playCalls}`
+  );
 });
 
 console.log(`player-playback-intent: ${count} checks passed`);

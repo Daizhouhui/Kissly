@@ -194,6 +194,10 @@ function playerBridgeScript(startAt = 0) {
     if (previous && previous.cssTimer) clearInterval(previous.cssTimer);
     if (previous && previous.startTimer) clearTimeout(previous.startTimer);
     if (previous && previous.pauseAtTimer) clearInterval(previous.pauseAtTimer);
+    if (previous && previous.playFallbackTimer) clearTimeout(previous.playFallbackTimer);
+    if (previous && previous.pauseFallbackTimer) clearTimeout(previous.pauseFallbackTimer);
+    if (previous && previous.playConfirmTimer) clearTimeout(previous.playConfirmTimer);
+    if (previous && previous.reconcileTimer) clearTimeout(previous.reconcileTimer);
     var storedIntent = '';
     var storedIntentUrl = '';
     try {
@@ -217,7 +221,6 @@ function playerBridgeScript(startAt = 0) {
       playIntent: initialIntent,
       pauseReason: previous ? String(previous.pauseReason || '') : '',
       frameReady: false,
-      orientationAt: 0,
       audioStrikes: 0,
       timer: null,
       cssTimer: null,
@@ -225,6 +228,12 @@ function playerBridgeScript(startAt = 0) {
       pauseAtTimer: null,
       pauseAtTarget: -1,
       pauseAtSawBeforeEnd: false,
+      commandSeq: 0,
+      lastPlayCommandAt: -10000,
+      playFallbackTimer: null,
+      pauseFallbackTimer: null,
+      playConfirmTimer: null,
+      reconcileTimer: null,
       videoRef: null,
       startAt: requestedStart,
       startApplied:
@@ -348,36 +357,167 @@ function playerBridgeScript(startAt = 0) {
         bridge.startTimer = null;
       }
     }
-    function requestPlayerPlay(v){
-      var p = getPlayer();
-      var current = v || getVideo();
-      // YouTube's own player state and the raw <video> state can disagree
-      // after Android rotates the activity. Drive both so YouTube does not
-      // immediately pause a video that was started behind its back.
-      try { if (p && typeof p.playVideo === 'function') p.playVideo(); } catch(e) {}
+    function playerState(p){
       try {
-        if (current && (current.paused || current.ended)) {
-          var result = current.play();
-          if (result && result.catch) result.catch(function(){});
+        if (p && typeof p.getPlayerState === 'function') {
+          var state = Number(p.getPlayerState());
+          return isFinite(state) ? state : NaN;
         }
       } catch(e) {}
+      return NaN;
+    }
+    function isPlayerPlayingState(state){
+      return state === 1 || state === 3;
+    }
+    function isPlayerPausedState(state){
+      return state === 0 || state === 2 || state === 5;
+    }
+    function isActuallyPlaying(v, p){
+      var state = playerState(p);
+      if (!v || v.ended) return false;
+      if (isPlayerPausedState(state)) return false;
+      if (v.paused) return false;
+      if (isPlayerPlayingState(state)) return true;
+      // Some embeds do not expose getPlayerState. In that case the raw element
+      // is the only signal we have.
+      return isFinite(state) ? false : true;
+    }
+    function safePlayVideo(v){
+      try {
+        if (!v) return false;
+        var result = v.play();
+        if (result && result.catch) result.catch(function(){});
+        return true;
+      } catch(e) {
+        return false;
+      }
+    }
+    function safePauseVideo(v){
+      try {
+        if (v && !v.paused) v.pause();
+      } catch(e) {}
+    }
+    function clearPlayFallback(){
+      if (bridge.playFallbackTimer) {
+        clearTimeout(bridge.playFallbackTimer);
+        bridge.playFallbackTimer = null;
+      }
+    }
+    function clearPauseFallback(){
+      if (bridge.pauseFallbackTimer) {
+        clearTimeout(bridge.pauseFallbackTimer);
+        bridge.pauseFallbackTimer = null;
+      }
+    }
+    function requestPlayerPlay(v, force){
+      var p = getPlayer();
+      var current = v || getVideo();
+      if (!current) return;
+      // Never issue another play command while YouTube and the raw video are
+      // already playing. Repeated playVideo() calls during a rotation used to
+      // make Android look like it was tapping pause/play in a loop.
+      if (isActuallyPlaying(current, p)) return;
+      var now = Date.now();
+      if (!force && now - (Number(bridge.lastPlayCommandAt) || 0) < 360) return;
+      bridge.lastPlayCommandAt = now;
+      bridge.commandSeq += 1;
+      var seq = bridge.commandSeq;
+      clearPlayFallback();
+      clearPauseFallback();
+      var askedPlayer = false;
+      if (p && typeof p.playVideo === 'function') {
+        try {
+          p.playVideo();
+          askedPlayer = true;
+        } catch(e) {}
+      }
+      if (!askedPlayer) {
+        if (current.paused || current.ended) safePlayVideo(current);
+        return;
+      }
+      // The YouTube API is the primary authority. Give it a moment to move both
+      // playerState and the real <video>, then nudge the raw element only once
+      // if it is still stuck. This avoids firing playVideo() and video.play()
+      // against each other in the same tick.
+      bridge.playFallbackTimer = setTimeout(function(){
+        bridge.playFallbackTimer = null;
+        if (!bridge.alive || bridge.playIntent !== 'play') return;
+        if (bridge.commandSeq !== seq) return;
+        var next = getVideo();
+        if (!next) return;
+        var state = playerState(getPlayer());
+        if (isPlayerPlayingState(state)) {
+          if (next.paused || next.ended) safePlayVideo(next);
+          return;
+        }
+        // If YouTube still reports paused/cued, do not start the raw element
+        // behind its back. That creates two disagreeing players and is exactly
+        // the state that produced the pause/play stutter. The bounded confirm
+        // in playNow gets one more chance through the player API.
+        if (!isFinite(state) && (next.paused || next.ended)) {
+          safePlayVideo(next);
+        }
+      }, force ? 260 : 320);
     }
     function requestPlayerPause(v){
       var p = getPlayer();
       var current = v || getVideo();
-      try { if (p && typeof p.pauseVideo === 'function') p.pauseVideo(); } catch(e) {}
-      try { if (current && !current.paused) current.pause(); } catch(e) {}
+      var state = playerState(p);
+      if (current && current.paused &&
+          (!isFinite(state) || state === 0 || state === 2)) {
+        return;
+      }
+      bridge.commandSeq += 1;
+      clearPlayFallback();
+      clearPauseFallback();
+      var askedPlayer = false;
+      if (p && typeof p.pauseVideo === 'function') {
+        try {
+          p.pauseVideo();
+          askedPlayer = true;
+        } catch(e) {}
+      }
+      if (!askedPlayer) {
+        safePauseVideo(current);
+        return;
+      }
+      // Pause through the player API first; only nudge the raw element if it
+      // is still running after YouTube has been told to stop.
+      bridge.pauseFallbackTimer = setTimeout(function(){
+        bridge.pauseFallbackTimer = null;
+        if (!bridge.alive || bridge.playIntent !== 'pause') return;
+        var next = getVideo();
+        if (next && !next.paused) safePauseVideo(next);
+      }, 180);
     }
     function playNow(reason, immediate){
       clearPauseAt();
       clearStartTimer();
       setPlayIntent(true, reason || 'user');
+      if (bridge.playConfirmTimer) {
+        clearTimeout(bridge.playConfirmTimer);
+        bridge.playConfirmTimer = null;
+      }
       var v = getVideo();
       if (v) {
         try { v.__kissUserPaused = false; } catch(e) {}
       }
-      if (v && immediate !== false) requestPlayerPlay(v);
-      if (v) maybeStart(v);
+      var explicit = immediate !== false;
+      if (v) maybeStart(v, explicit);
+      if (explicit) {
+        // One bounded confirmation after an explicit tap. It recovers a
+        // YouTube pause that arrives just after our command, but cannot turn
+        // into the old 180ms pause/play feedback loop.
+        bridge.playConfirmTimer = setTimeout(function(){
+          bridge.playConfirmTimer = null;
+          if (!bridge.alive || bridge.playIntent !== 'play') return;
+          var current = getVideo();
+          if (!current) return;
+          if (!isActuallyPlaying(current, getPlayer())) {
+            requestPlayerPlay(current, true);
+          }
+        }, 700);
+      }
       scheduleAudio(260);
       setTimeout(ensureAudio, 1000);
       setTimeout(report, 80);
@@ -386,6 +526,10 @@ function playerBridgeScript(startAt = 0) {
     function pauseNow(reason){
       clearPauseAt();
       clearStartTimer();
+      if (bridge.playConfirmTimer) {
+        clearTimeout(bridge.playConfirmTimer);
+        bridge.playConfirmTimer = null;
+      }
       setPlayIntent(false, reason || 'user');
       var v = getVideo();
       if (v) {
@@ -398,7 +542,13 @@ function playerBridgeScript(startAt = 0) {
     function announceReady(v){
       if (!isFrameReady(v) || bridge.frameReady) return;
       bridge.frameReady = true;
-      send({ type: 'ready', playing: bridge.playIntent === 'play' });
+      var p = getPlayer();
+      send({
+        type: 'ready',
+        playing: bridge.playIntent === 'play',
+        actualPlaying: isActuallyPlaying(v, p),
+        playerState: playerState(p)
+      });
     }
     function applyStart(v){
       if (bridge.startApplied) return;
@@ -414,22 +564,24 @@ function playerBridgeScript(startAt = 0) {
         report();
       } catch(e) {}
     }
-    function maybeStart(v){
+    function maybeStart(v, force){
       // The old first-frame gate paused an already playing video whenever a
       // rotation briefly reported readyState/videoWidth as zero. That gate is
       // gone. Here we only move the video toward the user's intent; we never
       // pause it just because its frame metadata is temporarily incomplete.
       if (!bridge.alive || !v || bridge.playIntent !== 'play') return;
-      announceReady(v);
+      var p = getPlayer();
       if (!isFrameReady(v)) {
+        if (!isActuallyPlaying(v, p)) requestPlayerPlay(v, force);
         // Slow network fallback: do not leave the player stuck if loadeddata
         // never arrives. This never changes playback intent.
         if (!bridge.startTimer) {
           bridge.startTimer = setTimeout(function(){
             bridge.startTimer = null;
             var current = getVideo();
-            if (current && bridge.playIntent === 'play' && (current.paused || current.ended)) {
-              requestPlayerPlay(current);
+            if (current && bridge.playIntent === 'play' &&
+                !isActuallyPlaying(current, getPlayer())) {
+              requestPlayerPlay(current, true);
             }
           }, 4500);
         }
@@ -437,10 +589,9 @@ function playerBridgeScript(startAt = 0) {
       }
       clearStartTimer();
       applyStart(v);
-      if (v.paused || v.ended) {
-        requestPlayerPlay(v);
-      }
-      scheduleAudio(250);
+      if (!isActuallyPlaying(v, p)) requestPlayerPlay(v, force);
+      announceReady(v);
+      if (isActuallyPlaying(v, getPlayer())) scheduleAudio(250);
     }
     function bufferedRange(v){
       var current = Number(v && v.currentTime) || 0;
@@ -480,7 +631,11 @@ function playerBridgeScript(startAt = 0) {
         // React mirrors intent, not the raw video flag. A rotation can make
         // the raw flag flap for a few frames while the user still wants play.
         playing: bridge.playIntent === 'play' && !v.ended,
-        actualPlaying: !v.paused && !v.ended,
+        // actualPlaying combines YouTube's playerState with the real element.
+        // The raw flag alone can stay true while YouTube has paused the player,
+        // which is how the UI used to look "playing" over a frozen picture.
+        actualPlaying: isActuallyPlaying(v, p),
+        playerState: playerState(p),
         pauseReason: bridge.pauseReason,
         ready: isFrameReady(v),
         rate: v.playbackRate,
@@ -519,7 +674,6 @@ function playerBridgeScript(startAt = 0) {
     }
     bridge.onVideoReady = function(v){
       if (!bridge.alive || bridge.videoRef !== v) return;
-      announceReady(v);
       maybeStart(v);
     };
     bridge.onVideoEvent = function(name, v){
@@ -529,13 +683,10 @@ function playerBridgeScript(startAt = 0) {
         report();
         return;
       }
-      if (name === 'pause' && bridge.playIntent === 'play' && bridge.orientationAt) {
-        // Only rescue a pause that happened inside the short rotation window.
-        // A later pause may be the user or YouTube itself.
-        if (Date.now() - bridge.orientationAt < 5000) {
-          scheduleReconcile(180);
-        }
-      }
+      // Do not turn a 'pause' event into an immediate play command. Android
+      // emits pause repeatedly while the WebView surface is being resized;
+      // reacting to each one created the audible pause/play stutter. Rotation
+      // recovery is handled by the bounded reconcile schedule instead.
       if (name === 'playing') {
         bridge.audioStrikes = 0;
         scheduleAudio(180);
@@ -1047,10 +1198,7 @@ function playerBridgeScript(startAt = 0) {
       }
       // Only restore the user's play intent. Never touch pauseAt here: a
       // blind-listening boundary must survive a fullscreen rotation.
-      if (v.paused) requestPlayerPlay(v);
       maybeStart(v);
-      announceReady(v);
-      scheduleAudio(180);
       setTimeout(report, 80);
       return true;
     }
@@ -1072,7 +1220,6 @@ function playerBridgeScript(startAt = 0) {
         return reconcilePlayback('reconcile');
       },
       orientation: function(){
-        bridge.orientationAt = Date.now();
         return true;
       },
       resetForEntry: function(){
@@ -1245,22 +1392,22 @@ function playerBridgeScript(startAt = 0) {
       setTimeout(bind, 400);
     }, true);
     function scheduleReconcile(delay){
-      setTimeout(function(){
+      if (bridge.reconcileTimer) clearTimeout(bridge.reconcileTimer);
+      bridge.reconcileTimer = setTimeout(function(){
+        bridge.reconcileTimer = null;
         if (!bridge.alive) return;
         reconcilePlayback('orientation');
       }, delay);
     }
     window.addEventListener('orientationchange', function(){
-      // Android can pause the WebView while the activity rotates. The intent
-      // is authoritative, so restore it after the new layout settles.
-      bridge.orientationAt = Date.now();
-      scheduleReconcile(320);
-      scheduleReconcile(1000);
+      // Android can pause the WebView while the activity rotates. React sends
+      // its own bounded reconcile schedule; this is one additional check, not
+      // a feedback loop driven by every pause event.
+      scheduleReconcile(500);
     });
     function reconcileWhenVisible(){
       if (document.hidden) return;
-      scheduleReconcile(80);
-      scheduleReconcile(600);
+      scheduleReconcile(300);
     }
     document.addEventListener('visibilitychange', function(){
       if (!document.hidden) reconcileWhenVisible();
@@ -2494,11 +2641,18 @@ export default function PlayerScreen() {
     if (!message || typeof message.type !== 'string') return;
     if (message.type === 'ready') {
       webReadyRef.current = true;
-      clearVideoLoadingTimer();
       setReady(true);
-      setVideoLoading(false);
       setVideoProblem('');
       if (typeof message.playing === 'boolean') mirrorPlaying(message.playing);
+      // A ready video is not necessarily a visible video. On a cold WebView
+      // load YouTube reports frame metadata before it paints the first frame;
+      // hiding the overlay here left the user staring at a black box. Keep the
+      // spinner until playback is real, unless the user intent is pause (then
+      // the paused frame is exactly what they should see).
+      if (message.playing !== true || message.actualPlaying === true) {
+        clearVideoLoadingTimer();
+        setVideoLoading(false);
+      }
       return;
     }
     if (message.type === 'caption-payload') {
@@ -2569,6 +2723,10 @@ export default function PlayerScreen() {
         setBufferedEnd(message.bufferedEnd);
       }
       if (typeof message.playing === 'boolean') mirrorPlaying(message.playing);
+      if (message.actualPlaying === true || message.playing === false) {
+        clearVideoLoadingTimer();
+        setVideoLoading(false);
+      }
       if (typeof message.ad === 'boolean') {
         progressRef.current.ad = message.ad;
         setAdShowing(message.ad);
