@@ -337,6 +337,11 @@ check('the bridge synchronizes both YouTube player and raw video play/pause', ()
   assert.match(bridge, /p\.pauseVideo\(\)/);
 });
 
+check('the watch page does not disable YouTube autoplay before bridge startup', () => {
+  assert.match(source, /&autoplay=1/);
+  assert.doesNotMatch(source, /&autoplay=0/);
+});
+
 check('React sends an explicit play/pause intent rather than a raw toggle', () => {
   assert.match(source, /window\.__kiss\.setPlaying/);
   assert.match(source, /const next = !playingRef\.current/);
@@ -497,6 +502,22 @@ check('repeated reconciles do not reissue play to an already playing YouTube pla
   );
 });
 
+check('reconcile does not restart a YouTube player that is buffering', () => {
+  const h = createHarness();
+  h.runBridge();
+  h.advance(100);
+  h.player.playerState = 3;
+  h.video.paused = true;
+  const before = h.player.playCalls;
+
+  h.kiss.reconcile();
+  h.advance(500);
+
+  assert.equal(h.player.playCalls, before);
+  assert.equal(h.player.playerState, 3);
+  assert.equal(h.video.paused, true);
+});
+
 check('pause events inside the orientation window do not create a play/pause feedback loop', () => {
   const h = createHarness();
   h.runBridge();
@@ -592,6 +613,27 @@ check('the loading overlay is gated by a decoded frame, not playback intent', ()
   assert.equal(gate({ type: 'time', actualPlaying: false, playing: false, ready: true }), true);
   assert.equal(gate({ type: 'ready', actualPlaying: false, playing: true }), false);
   assert.equal(gate({ type: 'ready', actualPlaying: false, playing: false }), true);
+});
+
+check('a long startup timeout reports a retryable playback problem instead of a black screen', () => {
+  const match = source.match(
+    /function videoLoadTimeoutProblem\([\s\S]*?\n\}/
+  );
+  assert.ok(match, 'missing video load timeout handler');
+  const body = match[0].replace(
+    /function videoLoadTimeoutProblem\([\s\S]*?\{/,
+    'function videoLoadTimeoutProblem(playingIntent, actualPlaying) {'
+  );
+  const problem = vm.runInNewContext(`(${body})`);
+
+  assert.match(problem(true, false), /超时/);
+  assert.equal(problem(true, true), '');
+  assert.equal(problem(false, false), '');
+});
+
+check('play controls display actual playback and allow retrying a stalled play intent', () => {
+  assert.match(source, /playingRef\.current && !actualPlayingRef\.current/);
+  assert.equal((source.match(/name=\{actualPlaying \? 'pause' : 'play'\}/g) || []).length, 3);
 });
 
 check('onLoadEnd refresh reuses the bridge instead of resetting playback state', () => {

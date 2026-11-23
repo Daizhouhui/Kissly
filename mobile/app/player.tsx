@@ -164,6 +164,8 @@ const WATCH_UA =
     ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1'
     : 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
 
+const VIDEO_LOAD_TIMEOUT_MS = 30_000;
+
 const WATCH_CSS = `
 html,body,ytm-app,ytm-app-root,#page-container,#content{background:#000!important;margin:0!important;padding:0!important;overflow:hidden!important;height:100%!important;width:100%!important;}
 ytm-header,ytm-header-bar,ytm-app-header,ytm-mobile-topbar-renderer,ytm-nav-bar,ytm-menu,#header,#masthead-container,
@@ -426,6 +428,9 @@ function playerBridgeScript(startAt = 0) {
         scheduleOrientationSettle();
         return;
       }
+      // YouTube already owns a buffering transition. Reissuing playVideo (or
+      // starting the raw element underneath it) can restart that transition.
+      if (playerState(p) === 3) return;
       // Never issue another play command while YouTube and the raw video are
       // already playing. Repeated playVideo() calls during a rotation used to
       // make Android look like it was tapping pause/play in a loop.
@@ -459,6 +464,7 @@ function playerBridgeScript(startAt = 0) {
         var next = getVideo();
         if (!next) return;
         var state = playerState(getPlayer());
+        if (state === 3) return;
         if (isPlayerPlayingState(state)) {
           if (next.paused || next.ended) safePlayVideo(next);
           return;
@@ -516,9 +522,10 @@ function playerBridgeScript(startAt = 0) {
         try { v.__kissUserPaused = false; } catch(e) {}
       }
       var explicit = immediate !== false;
-      if (orientationHoldActive()) bridge.orientationPlayRequested = true;
+      var deferredForOrientation = orientationHoldActive();
+      if (deferredForOrientation) bridge.orientationPlayRequested = true;
       if (v) maybeStart(v, explicit);
-      if (explicit) {
+      if (explicit && !deferredForOrientation) {
         // One bounded confirmation after an explicit tap. It recovers a
         // YouTube pause that arrives just after our command, but cannot turn
         // into the old 180ms pause/play feedback loop.
@@ -1526,6 +1533,12 @@ function shouldClearVideoLoading(message: any) {
   return message.actualPlaying === true || message.playing === false;
 }
 
+function videoLoadTimeoutProblem(playingIntent: boolean, actualPlaying: boolean) {
+  return playingIntent && !actualPlaying
+    ? '连接 YouTube 超时，请检查网络后重试。'
+    : '';
+}
+
 function formatTime(value: number) {
   if (!isFinite(value) || value < 0) value = 0;
   const total = Math.floor(value);
@@ -1618,13 +1631,19 @@ export default function PlayerScreen() {
   const [ready, setReady] = useState(false);
   const [videoLoading, setVideoLoading] = useState(true);
   const videoLoadingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [playing, setPlaying] = useState(false);
-  const playingRef = useRef(false);
+  const [playing, setPlaying] = useState(true);
+  const playingRef = useRef(true);
+  const [actualPlaying, setActualPlaying] = useState(false);
+  const actualPlayingRef = useRef(false);
   const focusedVideoIdRef = useRef<string | null>(null);
   const resumeOnFocusRef = useRef(false);
   const mirrorPlaying = (value: boolean) => {
     playingRef.current = value;
     setPlaying(value);
+  };
+  const mirrorActualPlaying = (value: boolean) => {
+    actualPlayingRef.current = value;
+    setActualPlaying(value);
   };
   const [adShowing, setAdShowing] = useState(false);
   const [blocked, setBlocked] = useState(false);
@@ -1847,10 +1866,18 @@ export default function PlayerScreen() {
       setControlsVisible(true);
       return;
     }
-    if (!controlsVisible || !playing || videoLoading) return;
+    if (!controlsVisible || !actualPlaying || videoLoading) return;
     const timer = setTimeout(() => setControlsVisible(false), 3000);
     return () => clearTimeout(timer);
-  }, [adShowing, blindMode, controlsVisible, hideVideo, playing, videoLoading, videoProblem]);
+  }, [
+    actualPlaying,
+    adShowing,
+    blindMode,
+    controlsVisible,
+    hideVideo,
+    videoLoading,
+    videoProblem,
+  ]);
 
   useEffect(() => {
     setRepeatPass(0);
@@ -2353,17 +2380,15 @@ export default function PlayerScreen() {
     webRef.current?.injectJavaScript(
       'window.__kiss && window.__kiss.orientation(); true;'
     );
-    // Keep only two late, bounded checks for a pause delivered after the
-    // surface settles. Do not repeatedly unmute/setVolume during rotation.
-    [800, 1800].forEach((delay) => {
-      orientationResumeTimers.current.push(
-        setTimeout(() => {
-          webRef.current?.injectJavaScript(
-            'window.__kiss && window.__kiss.reconcile(); true;'
-          );
-        }, delay)
-      );
-    });
+    // Keep one late check for a pause delivered after the surface settles.
+    // Multiple retries can fight Android's WebView surface recreation.
+    orientationResumeTimers.current.push(
+      setTimeout(() => {
+        webRef.current?.injectJavaScript(
+          'window.__kiss && window.__kiss.reconcile(); true;'
+        );
+      }, 1500)
+    );
   };
 
   useFocusEffect(
@@ -2482,11 +2507,13 @@ export default function PlayerScreen() {
   const armVideoLoadingFallback = () => {
     clearVideoLoadingTimer();
     videoLoadingTimer.current = setTimeout(() => {
-      // Never leave a permanent black overlay on top of YouTube. If the page
-      // loaded but the player did not report ready (consent, login, error page),
-      // reveal the actual web page so the user can see and act on it.
+      const problem = videoLoadTimeoutProblem(
+        playingRef.current,
+        actualPlayingRef.current
+      );
+      if (problem) setVideoProblem(problem);
       setVideoLoading(false);
-    }, 9000);
+    }, VIDEO_LOAD_TIMEOUT_MS);
   };
 
   useEffect(() => {
@@ -2498,11 +2525,17 @@ export default function PlayerScreen() {
   };
 
   const togglePlay = () => {
+    if (playingRef.current && !actualPlayingRef.current) {
+      send('window.__kiss && window.__kiss.setPlaying(true); true;');
+      setBlocked(false);
+      return;
+    }
     // Send the next intent explicitly instead of asking the bridge to toggle
     // the raw <video>. Raw state and React state can disagree for a moment
     // after rotation, which used to make the first tap pause a playing video.
     const next = !playingRef.current;
     mirrorPlaying(next);
+    if (!next) mirrorActualPlaying(false);
     send(
       `window.__kiss && window.__kiss.setPlaying(${next ? 'true' : 'false'}); true;`
     );
@@ -2776,6 +2809,9 @@ export default function PlayerScreen() {
       setReady(true);
       setVideoProblem('');
       if (typeof message.playing === 'boolean') mirrorPlaying(message.playing);
+      if (typeof message.actualPlaying === 'boolean') {
+        mirrorActualPlaying(message.actualPlaying);
+      }
       // A ready player can still have a black native surface. Reveal it only
       // after a decoded frame exists and playback has actually started (or a
       // deliberate pause has a real frame to show).
@@ -2853,6 +2889,10 @@ export default function PlayerScreen() {
         setBufferedEnd(message.bufferedEnd);
       }
       if (typeof message.playing === 'boolean') mirrorPlaying(message.playing);
+      if (typeof message.actualPlaying === 'boolean') {
+        mirrorActualPlaying(message.actualPlaying);
+        if (message.actualPlaying) setVideoProblem('');
+      }
       if (shouldClearVideoLoading(message)) {
         clearVideoLoadingTimer();
         setVideoLoading(false);
@@ -2867,6 +2907,9 @@ export default function PlayerScreen() {
       return;
     }
     if (message.type === 'problem') {
+      clearVideoLoadingTimer();
+      setVideoLoading(false);
+      mirrorActualPlaying(false);
       setReady(false);
       setAdShowing(false);
       setVideoProblem('这个视频限制了站内播放，可能需要登录、年龄验证或作者关闭了外站播放。');
@@ -2878,6 +2921,7 @@ export default function PlayerScreen() {
     setReady(false);
     setAdShowing(false);
     mirrorPlaying(false);
+    mirrorActualPlaying(false);
     setCurrent(0);
     startAtRef.current = Math.max(0, progressRef.current.current);
     setVideoLoading(true);
@@ -3225,7 +3269,7 @@ export default function PlayerScreen() {
     !adShowing &&
     !blindMode &&
     !hideVideo;
-  const webUrl = `https://m.youtube.com/watch?v=${videoId}&hl=zh-CN&autoplay=0`;
+  const webUrl = `https://m.youtube.com/watch?v=${videoId}&hl=zh-CN&autoplay=1`;
 
   if (!videoId) {
     return (
@@ -3287,6 +3331,8 @@ export default function PlayerScreen() {
           onLoadStart={() => {
             webReadyRef.current = false;
             setReady(false);
+            mirrorActualPlaying(false);
+            setVideoProblem('');
             setVideoLoading(true);
             setBufferedStart(0);
             setBufferedEnd(0);
@@ -3301,6 +3347,7 @@ export default function PlayerScreen() {
           onError={() => {
             webReadyRef.current = false;
             clearVideoLoadingTimer();
+            mirrorActualPlaying(false);
             setReady(false);
             setVideoLoading(false);
             setVideoProblem('播放器加载失败，请检查网络后重试，或在浏览器中打开该视频。');
@@ -3369,7 +3416,7 @@ export default function PlayerScreen() {
       ) : null}
       {!landscape && videoTappable && controlsVisible ? (
         <Pressable style={styles.centerPlay} onPress={togglePlay}>
-          <Ionicons name={playing ? 'pause' : 'play'} size={34} color="#FFFFFF" />
+          <Ionicons name={actualPlaying ? 'pause' : 'play'} size={34} color="#FFFFFF" />
         </Pressable>
       ) : null}
       {!landscape && !hideVideo && !blindMode && !adShowing && nativeVideo && controlsVisible ? (
@@ -3533,7 +3580,7 @@ export default function PlayerScreen() {
         haptic="light"
         style={[styles.playButton, { backgroundColor: theme.colors.primary }]}
       >
-        <Ionicons name={playing ? 'pause' : 'play'} size={24} color="#FFFFFF" />
+        <Ionicons name={actualPlaying ? 'pause' : 'play'} size={24} color="#FFFFFF" />
       </RipplePressable>
       <RipplePressable
         onPress={() => (blindMode ? jumpPrecisionCue(1) : jumpCue(1))}
@@ -3800,7 +3847,7 @@ export default function PlayerScreen() {
               haptic="light"
               style={styles.landPlay}
             >
-              <Ionicons name={playing ? 'pause' : 'play'} size={30} color="#FFFFFF" />
+              <Ionicons name={actualPlaying ? 'pause' : 'play'} size={30} color="#FFFFFF" />
             </Pressable>
             <Pressable
               onPress={() => jumpCue(1)}
