@@ -1,4 +1,4 @@
-import { Settings } from './types';
+import type { Settings } from './types';
 
 export const KOOFIR_WEBDAV_URL = 'https://app.koofr.net/dav/Koofr';
 export const WEBDAV_FOLDER = 'Kissly';
@@ -10,16 +10,18 @@ export const DEFAULT_SETTINGS: Settings = {
   interfaceLang: 'zh-CN',
   provider: 'auto',
   autoFallbackDeepSeek: true,
+  autoFreeOrder: ['microsoft', 'google', 'google2'],
+  autoPaidOrder: ['deepseek', 'siliconflow', 'openrouter', 'openai'],
   translateTitles: true,
   titleTranslationMode: 'bilingual',
   defaultTab: 'video',
-  discoverLayout: 'grid',
+  discoverLayout: 'list',
   theme: 'system',
-  themeAccent: 'sage',
+  themeAccent: 'youtube',
   keepAwake: true,
   speechRate: 0.9,
   speechPitch: 1,
-  designVersion: 3,
+  designVersion: 4,
   subtitle: {
     fontSize: 20,
     landscapeFontSize: 24,
@@ -52,6 +54,16 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   deepseekModel: 'deepseek-chat',
   siliconflowModel: 'Qwen/Qwen3.5-9B',
+  openrouterModel: 'openai/gpt-4o-mini',
+  openaiProfiles: [
+    {
+      id: 'default',
+      name: 'OpenAI 兼容',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini',
+    },
+  ],
+  openaiProfileId: 'default',
   openaiBaseUrl: 'https://api.openai.com/v1',
   openaiModel: 'gpt-4o-mini',
   requestTimeoutMs: 20000,
@@ -88,11 +100,12 @@ export const PROVIDER_LABELS: Record<string, string> = {
   google2: 'Google 备用（公共预设）',
   deepseek: 'DeepSeek',
   siliconflow: 'SiliconFlow',
+  openrouter: 'OpenRouter',
   openai: 'OpenAI 兼容',
 };
 
 export const PROVIDER_HINTS: Record<string, string> = {
-  auto: '依次尝试微软、谷歌和 Google 备用免费接口；全部失败后，再按设置决定是否切到 DeepSeek。',
+  auto: '自动模式先查已缓存字幕；没有缓存时按你设置的免费顺序尝试，全部失败后再按付费顺序尝试。',
   system:
     '调用手机系统自带的离线翻译。Android 需要 Google Play 服务，首次使用需下载语言包（每种约 30 MB），下载后不联网也能翻译。',
   microsoft: 'Edge 的内部免费接口，无需 Key，适合批量字幕，偶发限流。',
@@ -101,5 +114,6 @@ export const PROVIDER_HINTS: Record<string, string> = {
     'Kiss Translator 内置的公共 Google 备用预设，自动链的最后备用，也可手动选择；共享 key 可能限流或失效。',
   deepseek: '按 token 计费，质量最好，需要 API Key。',
   siliconflow: '需要 API Key，可选免费模型，适合国内网络。',
-  openai: '任意 OpenAI 兼容服务，自填 Base URL、模型和 Key。',
+  openrouter: '聚合多家模型，需要 OpenRouter API Key；可在模型名里选免费或付费模型。',
+  openai: '任意 OpenAI 兼容服务，可保存多套 Base URL、模型和 Key。',
 };

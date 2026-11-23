@@ -5,8 +5,9 @@ import { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useAppStore } from '../src/core/store';
+import { HISTORY_LIMIT, useAppStore } from '../src/core/store';
 import { relativeTime } from '../src/core/utils';
+import { resumeTarget } from '../src/core/watchProgress';
 import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
 import { appAlert as Alert } from '../src/ui/app-alert';
 import { AppPressable } from '../src/ui/app-pressable';
@@ -75,7 +76,9 @@ export default function HistoryScreen() {
         subtitle={
           manage
             ? `已选 ${selectedIds.size} 项`
-            : `${history.length} 个最近打开的视频`
+            : history.length >= HISTORY_LIMIT
+              ? `最近 ${HISTORY_LIMIT} 个视频 · 更早的记录会自动清理`
+              : `${history.length} 个最近打开的视频`
         }
         right={
           history.length ? (
@@ -128,9 +131,15 @@ export default function HistoryScreen() {
                     toggleSelection(item.videoId);
                     return;
                   }
+                  const startAt = resumeTarget(item);
                   router.push({
                     pathname: '/player',
-                    params: { videoId: item.videoId, title: item.title, author: item.author },
+                    params: {
+                      videoId: item.videoId,
+                      title: item.title,
+                      author: item.author,
+                      ...(startAt > 0 ? { startAt: String(startAt) } : {}),
+                    },
                   } as any);
                 }}
                 style={styles.row}
@@ -149,7 +158,7 @@ export default function HistoryScreen() {
                     {item.author || 'YouTube'}
                   </Text>
                   <Text style={{ color: theme.colors.textTertiary, fontSize: 10.5, marginTop: 4 }}>
-                    打开于 {relativeTime(item.savedAt)}
+                    最近观看 {relativeTime(item.lastWatchedAt ?? item.savedAt)}
                   </Text>
                 </View>
                 {manage ? (

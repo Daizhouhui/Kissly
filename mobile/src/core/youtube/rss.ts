@@ -16,6 +16,10 @@ const parser = new XMLParser({
 const FEED_TTL = 10 * 60 * 1000;
 const memory = new Map<string, { at: number; items: VideoItem[] }>();
 
+export function clearFeedMemoryCache() {
+  memory.clear();
+}
+
 function textOf(value: any): string {
   if (!value) return '';
   if (typeof value === 'string') return value;

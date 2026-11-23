@@ -4,17 +4,15 @@ import { router } from 'expo-router';
 import { ReactNode, useState } from 'react';
 import {
   ActivityIndicator,
-  Linking,
   Modal,
   ScrollView,
-  Share,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { targetLabel } from '../../src/core/defaults';
+import { PROVIDER_LABELS, targetLabel } from '../../src/core/defaults';
 import { useAppStore } from '../../src/core/store';
 import { syncNow } from '../../src/core/sync';
 import { relativeTime } from '../../src/core/utils';
@@ -121,17 +119,7 @@ function Group({ children, first }: { children: ReactNode; first?: boolean }) {
 }
 
 function providerLabel(provider: string) {
-  const labels: Record<string, string> = {
-    auto: '自动 · 免费优先',
-    microsoft: '微语',
-    google: 'Google',
-    google2: 'Google 备用',
-    deepseek: 'DeepSeek',
-    siliconflow: 'SiliconFlow',
-    openai: 'OpenAI',
-    system: '系统内置',
-  };
-  return labels[provider] ?? provider;
+  return PROVIDER_LABELS[provider] ?? provider;
 }
 
 const TITLE_OPTIONS = [
@@ -144,7 +132,6 @@ const TAB_OPTIONS = [
   { id: 'video' as const, label: '视频', desc: '打开应用进入视频流' },
   { id: 'podcast' as const, label: '播客', desc: '打开应用进入长节目' },
   { id: 'learning' as const, label: '学习', desc: '打开应用进入学习页' },
-  { id: 'me' as const, label: '我的', desc: '打开应用进入设置' },
 ];
 
 export default function MeScreen() {
@@ -158,7 +145,7 @@ export default function MeScreen() {
   const patchSettings = useAppStore((state) => state.patchSettings);
   const [syncing, setSyncing] = useState(false);
   const [dialog, setDialog] = useState<'title' | 'tab' | null>(null);
-  const version = Constants.expoConfig?.version ?? '1.2.8';
+  const version = Constants.expoConfig?.version ?? '1.2.11';
 
   const runSync = async () => {
     if (!settings.webdav.enabled) {
@@ -239,12 +226,6 @@ export default function MeScreen() {
             title="发音与朗读"
             value={speechLabel}
             onPress={() => router.push('/settings/voice' as any)}
-          />
-          <MeRow
-            icon="download-outline"
-            title="导出"
-            subtitle="历史、收藏、订阅与设置"
-            onPress={() => router.push('/settings/export' as any)}
             last
           />
         </Group>
@@ -253,7 +234,7 @@ export default function MeScreen() {
           <MeRow
             icon="globe-outline"
             title="语言设置"
-            value={`English · ${targetLabel(settings.targetLang)}`}
+            value={`${targetLabel(settings.learningLang)} · ${targetLabel(settings.targetLang)}`}
             onPress={() => router.push('/settings/language' as any)}
           />
           <MeRow
@@ -269,6 +250,13 @@ export default function MeScreen() {
             title="标题翻译"
             value={titleValue}
             onPress={() => setDialog('title')}
+          />
+          <MeRow
+            icon="document-text-outline"
+            title="字幕样式"
+            subtitle="字号、显示方式与位置"
+            value={`${settings.subtitle.fontSize}px`}
+            onPress={() => router.push('/settings/subtitle' as any)}
           />
           <MeRow
             icon="phone-portrait-outline"
@@ -288,26 +276,10 @@ export default function MeScreen() {
             onPress={() => router.push('/settings/webdav' as any)}
           />
           <MeRow
-            icon="share-social-outline"
-            title="分享 Kissly"
-            onPress={() =>
-              Share.share({
-                message: 'Kissly：在 YouTube 里读懂每一句话。https://github.com/Daizhouhui/Kissly',
-              }).catch(() => {})
-            }
-          />
-          <MeRow
-            icon="chatbubble-ellipses-outline"
-            title="反馈问题"
-            onPress={() =>
-              Linking.openURL('https://github.com/Daizhouhui/Kissly/issues').catch(() => {})
-            }
-          />
-          <MeRow
-            icon="information-circle-outline"
-            title="关于"
-            value={version}
-            onPress={() => router.push('/settings/about' as any)}
+            icon="ellipsis-horizontal-circle-outline"
+            title="更多设置"
+            subtitle="导出、缓存、重置与检查更新"
+            onPress={() => router.push('/settings/more' as any)}
             last
           />
         </Group>

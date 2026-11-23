@@ -3,7 +3,16 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 import { DEFAULT_SETTINGS } from './defaults';
-import { FavoriteItem, SentenceFavorite, Settings, Subscription } from './types';
+import { migrateSettingsForDesign } from './settingsMigration';
+import {
+  changedSettingKeys,
+  isSyncedSettingKey,
+  stampsForAllKeys,
+} from './settingsSync';
+import type { SettingsStamps } from './settingsSync';
+import { normalizeSettings } from './settingsNormalize';
+import { HistoryItem, FavoriteItem, SentenceFavorite, Settings, Subscription } from './types';
+import { HistoryPatch, mergeHistoryEntry } from './watchProgress';
 
 type DeepPartial<T> = {
   [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K];
@@ -27,7 +36,19 @@ function deepMerge<T>(base: T, patch: unknown): T {
   return result as T;
 }
 
+/**
+ * Order arrays arrive from AsyncStorage and WebDAV. Always repair them before
+ * they reach the translator or the reorder controls.
+ */
+
 export type SyncState = 'idle' | 'syncing' | 'ok' | 'error';
+
+export type ToggleSentenceFavoriteResult = 'added' | 'removed' | 'limit';
+
+export const SENTENCE_FAVORITE_LIMIT = 500;
+
+/** Keeps AsyncStorage and the history list bounded; surfaced in the UI. */
+export const HISTORY_LIMIT = 120;
 
 export type YoutubeLoginStatus = 'unknown' | 'loggedIn' | 'loggedOut';
 
@@ -50,13 +71,15 @@ function sortByOrder(items: Subscription[]): Subscription[] {
 type AppState = {
   hydrated: boolean;
   settings: Settings;
+  /** Per-key write time for WebDAV settings merge. */
+  settingsStamps: SettingsStamps;
   settingsUpdatedAt: number;
   subscriptions: Subscription[];
   subscriptionTombstones: SubscriptionTombstones;
   subscriptionOrderUpdatedAt: number;
   favorites: FavoriteItem[];
   sentenceFavorites: SentenceFavorite[];
-  history: FavoriteItem[];
+  history: HistoryItem[];
   lastSyncAt: number;
   syncState: SyncState;
   syncMessage: string;
@@ -64,7 +87,12 @@ type AppState = {
   youtubeLoginCheckedAt: number;
   setHydrated: (value: boolean) => void;
   patchSettings: (patch: DeepPartial<Settings>) => void;
-  replaceSettings: (settings: Settings, updatedAt?: number) => void;
+  resetSettings: () => void;
+  replaceSettings: (
+    settings: Settings,
+    updatedAt?: number,
+    stamps?: SettingsStamps
+  ) => void;
   addSubscription: (item: Subscription) => void;
   addSubscriptions: (items: Subscription[]) => void;
   updateSubscription: (channelId: string, patch: Partial<Subscription>) => void;
@@ -80,10 +108,10 @@ type AppState = {
   toggleFavorite: (item: FavoriteItem) => boolean;
   removeFavorite: (videoId: string) => void;
   removeFavorites: (videoIds: string[]) => void;
-  toggleSentenceFavorite: (item: SentenceFavorite) => boolean;
+  toggleSentenceFavorite: (item: SentenceFavorite) => ToggleSentenceFavoriteResult;
   removeSentenceFavorite: (id: string) => void;
   removeSentenceFavorites: (ids: string[]) => void;
-  recordHistory: (item: FavoriteItem) => void;
+  recordHistory: (item: HistoryPatch) => void;
   removeHistory: (videoIds: string[]) => void;
   clearHistory: () => void;
   setSync: (state: SyncState, message?: string, at?: number) => void;
@@ -95,6 +123,7 @@ export const useAppStore = create<AppState>()(
     (set, get) => ({
       hydrated: false,
       settings: DEFAULT_SETTINGS,
+      settingsStamps: {},
       settingsUpdatedAt: 0,
       subscriptions: [],
       subscriptionTombstones: {},
@@ -109,15 +138,50 @@ export const useAppStore = create<AppState>()(
       youtubeLoginCheckedAt: 0,
       setHydrated: (value) => set({ hydrated: value }),
       patchSettings: (patch) =>
-        set((state) => ({
-          settings: deepMerge(state.settings, patch),
-          settingsUpdatedAt: Date.now(),
-        })),
-      replaceSettings: (settings, updatedAt) =>
-        set({
-          settings: deepMerge(DEFAULT_SETTINGS, settings),
-          settingsUpdatedAt: updatedAt ?? Date.now(),
+        set((state) => {
+          const next = normalizeSettings(deepMerge(state.settings, patch));
+          const now = Date.now();
+          const stamps = { ...state.settingsStamps };
+          let touchedSyncedKey = false;
+          for (const key of changedSettingKeys(state.settings, next)) {
+            if (typeof key !== 'string' || !isSyncedSettingKey(key)) continue;
+            stamps[key] = now;
+            touchedSyncedKey = true;
+          }
+          return {
+            settings: next,
+            settingsStamps: stamps,
+            // A theme or WebDAV edit is device-local and must not make the
+            // whole settings file look newer than the other device's copy.
+            settingsUpdatedAt: touchedSyncedKey
+              ? now
+              : state.settingsUpdatedAt,
+          };
         }),
+      resetSettings: () => {
+        const now = Date.now();
+        const current = get().settings;
+        // "Reset preferences" must not sign the user out of WebDAV. Keep the
+        // whole connection block (URL, username, folder, enabled) so a reset
+        // of language/translation/subtitle settings does not wipe credentials.
+        const defaults = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as Settings;
+        set({
+          settings: {
+            ...defaults,
+            webdav: { ...(current.webdav ?? defaults.webdav) },
+          },
+          settingsStamps: stampsForAllKeys(now),
+          settingsUpdatedAt: now,
+        });
+      },
+      replaceSettings: (settings, updatedAt, stamps) => {
+        const at = updatedAt ?? Date.now();
+        set({
+          settings: normalizeSettings(deepMerge(DEFAULT_SETTINGS, settings)),
+          settingsStamps: stamps ? { ...stamps } : stampsForAllKeys(at),
+          settingsUpdatedAt: at,
+        });
+      },
       addSubscription: (item) => {
         const exists = get().subscriptions.some(
           (sub) => sub.channelId === item.channelId
@@ -222,12 +286,18 @@ export const useAppStore = create<AppState>()(
               (fav) => fav.id !== item.id
             ),
           }));
-          return false;
+          return 'removed';
+        }
+        if (get().sentenceFavorites.length >= SENTENCE_FAVORITE_LIMIT) {
+          return 'limit';
         }
         set((state) => ({
-          sentenceFavorites: [item, ...state.sentenceFavorites].slice(0, 500),
+          sentenceFavorites: [item, ...state.sentenceFavorites].slice(
+            0,
+            SENTENCE_FAVORITE_LIMIT
+          ),
         }));
-        return true;
+        return 'added';
       },
       removeSentenceFavorite: (id) =>
         set((state) => ({
@@ -241,8 +311,14 @@ export const useAppStore = create<AppState>()(
       },
       recordHistory: (item) =>
         set((state) => {
-          const others = state.history.filter((entry) => entry.videoId !== item.videoId);
-          return { history: [item, ...others].slice(0, 120) };
+          const previous = state.history.find(
+            (entry) => entry.videoId === item.videoId
+          );
+          const merged = mergeHistoryEntry(previous, item, Date.now());
+          const others = state.history.filter(
+            (entry) => entry.videoId !== item.videoId
+          );
+          return { history: [merged, ...others].slice(0, HISTORY_LIMIT) };
         }),
       removeHistory: (videoIds) => {
         const targets = new Set(videoIds);
@@ -278,6 +354,7 @@ export const useAppStore = create<AppState>()(
         sentenceFavorites: state.sentenceFavorites,
         history: state.history,
         lastSyncAt: state.lastSyncAt,
+        settingsStamps: state.settingsStamps,
         settingsUpdatedAt: state.settingsUpdatedAt,
         youtubeLoginStatus: state.youtubeLoginStatus,
         youtubeLoginCheckedAt: state.youtubeLoginCheckedAt,
@@ -289,23 +366,19 @@ export const useAppStore = create<AppState>()(
             (saved?.settings as { designVersion?: number } | undefined)
               ?.designVersion ?? 0
           ) || 0;
-        const mergedSettings = deepMerge(DEFAULT_SETTINGS, saved?.settings);
-        // 1.x shipped with a blue iOS-like palette, 1.2 used violet. Move
-        // installs that still carry the untouched default onto the Android
-        // reference sage palette exactly once.
-        if (previousDesign < 1 && mergedSettings.themeAccent === 'blue') {
-          mergedSettings.themeAccent = 'sage';
-        }
-        if (previousDesign < 3 && mergedSettings.themeAccent === 'violet') {
-          mergedSettings.themeAccent = 'sage';
-        }
-        if (previousDesign < 3 && mergedSettings.discoverLayout === 'list') {
-          mergedSettings.discoverLayout = 'grid';
-        }
-        mergedSettings.designVersion = 3;
+        const mergedSettings = migrateSettingsForDesign(
+          previousDesign,
+          normalizeSettings(deepMerge(DEFAULT_SETTINGS, saved?.settings))
+        );
+        const settingsUpdatedAt = saved?.settingsUpdatedAt ?? 0;
+        const savedStamps = saved?.settingsStamps;
         return {
           ...current,
           settings: mergedSettings,
+          settingsStamps:
+            savedStamps && Object.keys(savedStamps).length
+              ? savedStamps
+              : stampsForAllKeys(settingsUpdatedAt),
           subscriptions: withOrder(sortByOrder(saved?.subscriptions ?? [])),
           subscriptionTombstones: saved?.subscriptionTombstones ?? {},
           subscriptionOrderUpdatedAt: saved?.subscriptionOrderUpdatedAt ?? 0,
@@ -313,13 +386,18 @@ export const useAppStore = create<AppState>()(
           sentenceFavorites: saved?.sentenceFavorites ?? [],
           history: saved?.history ?? [],
           lastSyncAt: saved?.lastSyncAt ?? 0,
-          settingsUpdatedAt: saved?.settingsUpdatedAt ?? 0,
+          settingsUpdatedAt,
           youtubeLoginStatus: saved?.youtubeLoginStatus ?? 'unknown',
           youtubeLoginCheckedAt: saved?.youtubeLoginCheckedAt ?? 0,
         };
       },
-      onRehydrateStorage: () => (state) => {
-        state?.setHydrated(true);
+      onRehydrateStorage: (currentState) => (state, error) => {
+        if (error) {
+          console.error('Kissly storage rehydrate failed', error);
+        }
+        // A corrupt AsyncStorage entry can make `state` undefined. Without this
+        // fallback the splash screen would stay up and the app would look dead.
+        (state ?? currentState).setHydrated(true);
       },
     }
   )

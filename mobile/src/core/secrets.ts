@@ -3,10 +3,16 @@ import * as SecureStore from 'expo-secure-store';
 export type SecretName =
   | 'deepseek'
   | 'siliconflow'
+  | 'openrouter'
   | 'openai'
-  | 'webdavPassword';
+  | 'webdavPassword'
+  | `openaiProfile:${string}`;
 
 const PREFIX = 'kissmobile.secret.';
+
+export function openaiProfileSecretName(id: string): SecretName {
+  return `openaiProfile:${id}`;
+}
 
 export async function getSecret(name: SecretName): Promise<string> {
   try {
@@ -17,16 +23,15 @@ export async function getSecret(name: SecretName): Promise<string> {
 }
 
 export async function setSecret(name: SecretName, value: string): Promise<void> {
-  try {
-    if (value) await SecureStore.setItemAsync(PREFIX + name, value);
-    else await SecureStore.deleteItemAsync(PREFIX + name);
-  } catch {}
+  if (value) await SecureStore.setItemAsync(PREFIX + name, value);
+  else await SecureStore.deleteItemAsync(PREFIX + name);
 }
 
 export async function getAllSecrets(): Promise<Record<SecretName, string>> {
   const names: SecretName[] = [
     'deepseek',
     'siliconflow',
+    'openrouter',
     'openai',
     'webdavPassword',
   ];

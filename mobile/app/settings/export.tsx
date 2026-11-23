@@ -77,7 +77,15 @@ export default function ExportScreen() {
 
   const exportHistory = async () => {
     const rows = [
-      ['videoId', 'title', 'author', 'progress', 'duration', 'savedAt'],
+      [
+        'videoId',
+        'title',
+        'author',
+        'progress',
+        'duration',
+        'savedAt',
+        'lastWatchedAt',
+      ],
       ...history.map((item) => [
         item.videoId,
         item.title,
@@ -85,6 +93,7 @@ export default function ExportScreen() {
         item.progress ?? 0,
         item.duration ?? 0,
         new Date(item.savedAt).toISOString(),
+        new Date(item.lastWatchedAt ?? item.savedAt).toISOString(),
       ]),
     ];
     await shareText(
@@ -113,7 +122,7 @@ export default function ExportScreen() {
 
   const exportSubscriptions = async () => {
     const rows = [
-      ['channelId', 'title', 'handle', 'url'],
+      ['channelId', 'title', 'handle', 'url', 'group'],
       ...subscriptions.map((item) => [
         item.channelId,
         item.title,
@@ -121,6 +130,7 @@ export default function ExportScreen() {
         item.handle
           ? `https://www.youtube.com/@${item.handle.replace(/^@/, '')}`
           : `https://www.youtube.com/channel/${item.channelId}`,
+        item.group ?? '',
       ]),
     ];
     await shareText(

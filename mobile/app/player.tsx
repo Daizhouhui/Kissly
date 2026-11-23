@@ -9,7 +9,10 @@ import { ReactNode, forwardRef, useEffect, useMemo, useRef, useState } from 'rea
 import {
   ActivityIndicator,
   Animated,
+  AppState,
   BackHandler,
+  Easing,
+  FlatList,
   Platform,
   ScrollView,
   Share,
@@ -21,18 +24,22 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 
-import { getSettings, useAppStore } from '@/src/core/store';
+import { getSettings, SENTENCE_FAVORITE_LIMIT, useAppStore } from '@/src/core/store';
+import { findCueIndexAt } from '@/src/core/cueIndex';
 import { getSecret } from '@/src/core/secrets';
 import {
   AiConfig,
   aiAnalyzeSentence,
   deepseekConfig,
   openaiConfig,
+  openrouterConfig,
   siliconflowConfig,
 } from '@/src/core/translate/ai';
+import { getActiveOpenAiKey } from '@/src/core/translate/credentials';
 import { providerDisplayName, translateCueList } from '@/src/core/translate';
 import { removeKeysByPrefix } from '@/src/core/storage';
 import { CaptionTrack, Cue, SubtitleMode } from '@/src/core/types';
+import { parseStartAt } from '@/src/core/watchProgress';
 import {
   captionQualityScore,
   fetchCaptionCues,
@@ -45,6 +52,10 @@ import {
   saveCachedCaptions,
 } from '@/src/core/youtube/captionCache';
 import { parseCaptionText } from '@/src/core/youtube/parse';
+import {
+  loadCachedVideoInfo,
+  saveVideoInfo,
+} from '@/src/core/youtube/videoInfoCache';
 import { fontWeightFor, fontFamilyFor, sentenceCues } from '@/src/ui/subtitleStyle';
 import { appAlert as Alert } from '@/src/ui/app-alert';
 import { AppPressable, AppPressableProps } from '@/src/ui/app-pressable';
@@ -64,7 +75,60 @@ const radiusStyle = (radius: number) => ({
   ...CONTINUOUS_CORNER,
 });
 
-function CueFade({
+// Portrait player gutter: keeps the back arrow, video, timestamps,
+// transcript text and progress bar on one left edge.
+const PLAYER_GUTTER = 20;
+const CONTROLS_HIDE_DELAY_MS = 3000;
+const SEEK_GRAB_RADIUS = 22;
+const SEEK_CONFIRM_TIMEOUT_MS = 900;
+
+function CueFade(props: {
+  active: boolean;
+  paused: boolean;
+  visible: boolean;
+  past: boolean;
+  children: ReactNode;
+}) {
+  if (!props.visible) {
+    return (
+      <View style={{ opacity: props.past ? 0.6 : 0.4 }}>
+        {props.children}
+      </View>
+    );
+  }
+  return <CueFadeAnimated {...props} />;
+}
+
+/**
+ * The play triangle needs only a very slight optical nudge: its glyph bounds
+ * are already close to the center, and 1/6 of the icon size overshoots to the
+ * right. 1/12 keeps its visual mass a touch right of the dead center while the
+ * pause glyph stays perfectly symmetric.
+ */
+function PlayPauseIcon({
+  playing,
+  size,
+  color = '#FFFFFF',
+}: {
+  playing: boolean;
+  size: number;
+  color?: string;
+}) {
+  if (playing) {
+    return <Ionicons name="pause" size={size} color={color} />;
+  }
+  return (
+    <Ionicons
+      name="play"
+      size={size}
+      color={color}
+      style={{ transform: [{ translateX: size / 12 }] }}
+    />
+  );
+}
+
+
+function CueFadeAnimated({
   active,
   paused,
   visible,
@@ -137,6 +201,7 @@ const WATCH_UA =
     ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1'
     : 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
 
+
 const WATCH_CSS = `
 html,body,ytm-app,ytm-app-root,#page-container,#content{background:#000!important;margin:0!important;padding:0!important;overflow:hidden!important;height:100%!important;width:100%!important;}
 ytm-header,ytm-header-bar,ytm-app-header,ytm-mobile-topbar-renderer,ytm-nav-bar,ytm-menu,#header,#masthead-container,
@@ -156,28 +221,46 @@ max-width:none!important;max-height:none!important;min-height:0!important;paddin
 video{object-fit:contain!important;background:#000!important;}
 `;
 
-function playerBridgeScript() {
+function playerBridgeScript(startAt = 0) {
   return `
 (function(){
   try {
+    var requestedStart = ${JSON.stringify(Math.max(0, Number(startAt) || 0))};
     var previous = window.__kissBridge;
-    if (previous) previous.alive = false;
-    if (previous && previous.timer) clearInterval(previous.timer);
-    if (previous && previous.cssTimer) clearInterval(previous.cssTimer);
-    if (previous && previous.qualityTimer) clearInterval(previous.qualityTimer);
-    if (previous && previous.startTimer) clearTimeout(previous.startTimer);
-    var bridge = window.__kissBridge = {
-      mode: 'mobile-watch',
-      alive: true,
-      wantPlay: previous ? previous.wantPlay : true,
-      userPaused: previous ? previous.userPaused : false,
-      frameReady: false,
-      timer: null,
-      cssTimer: null,
-      qualityTimer: null,
-      startTimer: null,
-      videoRef: null
-    };
+    if (previous) {
+      previous.alive = false;
+      if (previous.timer) clearInterval(previous.timer);
+      if (previous.cssTimer) clearInterval(previous.cssTimer);
+      if (previous.startTimer) clearTimeout(previous.startTimer);
+    }
+    // Re-injections into the same document (orientation changes / Fast Refresh)
+    // must keep one shared bridge object. Event listeners from the previous
+    // injection still call report() and would otherwise update a detached
+    // object, producing contradictory buffering states.
+    var bridge = previous || {};
+    window.__kissBridge = bridge;
+    bridge.mode = 'mobile-watch';
+    bridge.alive = true;
+    bridge.wantPlay = previous ? previous.wantPlay : true;
+    bridge.userPaused = previous ? previous.userPaused : false;
+    bridge.frameReady = previous ? !!previous.frameReady : false;
+    bridge.buffering = previous ? !!previous.buffering : false;
+    bridge.timer = null;
+    bridge.cssTimer = null;
+    bridge.startTimer = null;
+    bridge.videoRef = previous ? previous.videoRef : null;
+    bridge.captionCache = previous ? previous.captionCache : null;
+    bridge.startAt = requestedStart;
+    bridge.startApplied =
+      requestedStart <= 0 ||
+      (previous &&
+        previous.startAt === requestedStart &&
+        !!previous.startApplied);
+    bridge.pauseAtTimer = previous ? previous.pauseAtTimer : null;
+    bridge.pauseAtTarget = previous ? previous.pauseAtTarget : -1;
+    bridge.pauseAtSawBeforeEnd = previous
+      ? !!previous.pauseAtSawBeforeEnd
+      : false;
     function injectCss(){
       try {
         var old = document.getElementById('kiss-watch-css');
@@ -273,17 +356,51 @@ function playerBridgeScript() {
       if (audioFixTimer) clearTimeout(audioFixTimer);
       audioFixTimer = setTimeout(function(){ ensureAudio(); }, delay || 250);
     }
-    function setQuality(){
-      try {
-        var p = getPlayer();
-        if (p && p.setPlaybackQualityRange) {
-          p.setPlaybackQualityRange('hd1080','hd1080');
-          if (p.setPlaybackQuality) p.setPlaybackQuality('hd1080');
-        }
-      } catch(e) {}
-    }
     function isFrameReady(v){
       return !!(v && v.readyState >= 2 && v.videoWidth > 0);
+    }
+    function applyStart(v){
+      if (bridge.startApplied) return;
+      if (!v || v.readyState < 1) return;
+      var duration = Number(v.duration) || 0;
+      var target = Math.max(0, Number(bridge.startAt) || 0);
+      if (duration > 0) target = Math.min(target, Math.max(0, duration - 1));
+      try {
+        if (Math.abs((Number(v.currentTime) || 0) - target) > 0.5) {
+          v.currentTime = target;
+        }
+        bridge.startApplied = true;
+        report();
+      } catch(e) {}
+    }
+    function bufferedRange(v){
+      var current = Number(v && v.currentTime) || 0;
+      try {
+        var ranges = v.buffered;
+        if (!ranges || !ranges.length) return { start: current, end: current };
+        var start = current;
+        var end = current;
+        for (var i = 0; i < ranges.length; i += 1) {
+          var rangeStart = Number(ranges.start(i));
+          var rangeEnd = Number(ranges.end(i));
+          if (!isFinite(rangeStart) || !isFinite(rangeEnd)) continue;
+          if (rangeStart <= current + 0.5 && rangeEnd >= current - 0.5) {
+            if (rangeEnd > end) end = rangeEnd;
+            if (rangeStart < start || start === current) start = rangeStart;
+          }
+        }
+        return { start: start, end: end };
+      } catch(e) {
+        return { start: current, end: current };
+      }
+    }
+    function clearPauseAt(){
+      if (bridge.pauseAtTimer) {
+        clearInterval(bridge.pauseAtTimer);
+        bridge.pauseAtTimer = null;
+      }
+      bridge.pauseAtTarget = -1;
+      bridge.pauseAtSawBeforeEnd = false;
     }
     function announceReady(v){
       if (!isFrameReady(v) || bridge.frameReady) return;
@@ -322,6 +439,7 @@ function playerBridgeScript() {
         clearTimeout(bridge.startTimer);
         bridge.startTimer = null;
       }
+      applyStart(v);
       if (v.paused || v.ended) {
         try {
           var result = v.play();
@@ -330,18 +448,43 @@ function playerBridgeScript() {
       }
       scheduleAudio(250);
     }
+    function installPauseGuard(v){
+      if (!v || v.__kissPauseGuarded) return;
+      v.__kissPauseGuarded = true;
+      var rawPause = v.pause.bind(v);
+      v.pause = function(){
+        var active = window.__kissBridge;
+        var wantsPlay =
+          active && active.alive && active.wantPlay && !active.userPaused;
+        var visible = true;
+        try { visible = document.visibilityState !== 'hidden'; } catch(e) {}
+        if (wantsPlay && visible && !v.ended && !isAdShowing()) {
+          // YouTube pauses itself on some internal buffering/visibility
+          // transitions (notably right after leaving fullscreen). This app
+          // owns playback intent, so ignore those pauses while the user
+          // still wants to play. A real pause sets userPaused first.
+          return;
+        }
+        return rawPause.apply(v, arguments);
+      };
+    }
     function report(){
       var v = getVideo();
       var p = getPlayer();
       if (!v) return;
+      installPauseGuard(v);
       var quality = '';
       try { quality = p && p.getPlaybackQuality ? p.getPlaybackQuality() : ''; } catch(e) {}
+      var buffer = bufferedRange(v);
       send({
         type: 'time',
         current: Number(v.currentTime) || 0,
         duration: Number(v.duration) || 0,
+        bufferedStart: buffer.start,
+        bufferedEnd: buffer.end,
         playing: !v.paused && !v.ended,
         ready: isFrameReady(v),
+        buffering: !!(!v.paused && !v.ended && (bridge.buffering || v.seeking || v.readyState < 3)),
         rate: v.playbackRate,
         quality: quality,
         ad: isAdShowing()
@@ -356,6 +499,7 @@ function playerBridgeScript() {
         if (bindTries < 14) setTimeout(bind, 700);
         return;
       }
+      installPauseGuard(v);
       if (bridge.videoRef !== v) {
         bridge.videoRef = v;
         bridge.frameReady = false;
@@ -364,28 +508,34 @@ function playerBridgeScript() {
           bridge.startTimer = null;
         }
       }
-      if (!isFrameReady(v) && !v.paused) {
-        // Some YouTube builds autoplay before the first frame is decoded.
-        // Hold the picture until loadeddata so audio cannot lead the video.
-        try { v.pause(); } catch(e) {}
-      }
+      applyStart(v);
       if (!v.__kissBound) {
         v.__kissBound = true;
         ['timeupdate','play','playing','pause','ended','durationchange','loadedmetadata','seeking','seeked','ratechange'].forEach(function(name){
-          v.addEventListener(name, report);
+          v.addEventListener(name, function(){
+            if (name === 'seeking') bridge.buffering = true;
+            if (name === 'playing' || name === 'pause' || name === 'ended' || name === 'seeked') {
+              bridge.buffering = false;
+            }
+            report();
+          });
+        });
+        v.addEventListener('waiting', function(){
+          bridge.buffering = true;
+          report();
+        });
+        v.addEventListener('stalled', function(){
+          bridge.buffering = true;
+          report();
+        });
+        v.addEventListener('canplay', function(){
+          bridge.buffering = false;
+          report();
         });
         v.addEventListener('playing', function(){
+          bridge.buffering = false;
           scheduleAudio(180);
           setTimeout(ensureAudio, 900);
-          // Keep the first frame on auto quality so it appears quickly, then
-          // upgrade to 1080p only after playback has started.
-          if (!v.__kissQualityStarted) {
-            v.__kissQualityStarted = true;
-            setTimeout(setQuality, 1800);
-          }
-          if (!bridge.qualityTimer) {
-            bridge.qualityTimer = setInterval(setQuality, 5000);
-          }
         });
         v.addEventListener('loadedmetadata', function(){
           scheduleAudio(180);
@@ -420,9 +570,6 @@ function playerBridgeScript() {
       if (isFrameReady(v)) {
         announceReady(v);
         maybeStart(v);
-      }
-      if (!bridge.qualityTimer && !v.paused) {
-        bridge.qualityTimer = setInterval(setQuality, 5000);
       }
       if (!bridge.timer) {
         bridge.timer = setInterval(report, 900);
@@ -525,15 +672,28 @@ function playerBridgeScript() {
       return payload;
     }
 
+    function pageVideoId(){
+      try {
+        var match = String(location.href).match(/[?&]v=([^&]+)/);
+        return match ? match[1] : '';
+      } catch(e) {
+        return '';
+      }
+    }
     bridge.captionDeliver = function(payload){
       if (!payload) return;
-      var videoId = bridge.captionVideoId || '';
+      var videoId = bridge.captionVideoId || pageVideoId();
       if (videoId && payload.url && String(payload.url).indexOf(videoId) < 0) {
         return;
       }
       if (typeof bridge.captionFinish === 'function') {
         bridge.captionFinish(payload);
+        return;
       }
+      // The player often fetches its own caption track before React asks for
+      // it (or while the request is still being prepared). Keep the latest
+      // payload so a cold start does not lose it and time out.
+      bridge.captionCache = payload;
     };
 
     function installCaptionInterceptors(){
@@ -866,6 +1026,7 @@ function playerBridgeScript() {
 
     window.__kiss = {
       play: function(){
+        clearPauseAt();
         bridge.userPaused = false;
         bridge.wantPlay = true;
         var v = getVideo();
@@ -876,6 +1037,7 @@ function playerBridgeScript() {
         return true;
       },
       pause: function(){
+        clearPauseAt();
         bridge.userPaused = true;
         bridge.wantPlay = false;
         if (bridge.startTimer) {
@@ -910,19 +1072,74 @@ function playerBridgeScript() {
         setTimeout(report, 80);
         return true;
       },
-      seek: function(seconds){ var v=getVideo(); try{ if(v){ v.currentTime=Math.max(0, Number(seconds)||0); } }catch(e){}; return true; },
+      seek: function(seconds){
+        clearPauseAt();
+        var v=getVideo();
+        try{ if(v){ v.currentTime=Math.max(0, Number(seconds)||0); } }catch(e){}
+        return true;
+      },
+      pauseAt: function(seconds){
+        var target = Number(seconds);
+        if (!isFinite(target) || target < 0) {
+          clearPauseAt();
+          return true;
+        }
+        clearPauseAt();
+        bridge.pauseAtTarget = target;
+        bridge.pauseAtTimer = setInterval(function(){
+          if (!bridge.alive || bridge.userPaused || !bridge.wantPlay) {
+            clearPauseAt();
+            return;
+          }
+          var v = getVideo();
+          if (!v) return;
+          if (v.ended) {
+            clearPauseAt();
+            report();
+            return;
+          }
+          var now = Number(v.currentTime) || 0;
+          if (!bridge.pauseAtSawBeforeEnd) {
+            // A seek may not have landed yet. If currentTime is still past the
+            // target, wait for it to drop back before considering a pause.
+            if (now > target) return;
+            bridge.pauseAtSawBeforeEnd = true;
+          }
+          if (now < target) return;
+          clearPauseAt();
+          window.__kiss.pause();
+          send({ type: 'cue-ended', current: now, cueEnd: target });
+        }, 16);
+        return true;
+      },
       rate: function(rate){ var v=getVideo(); try{ if(v)v.playbackRate=Number(rate)||1; }catch(e){}; return true; },
       mute: function(muted){ var v=getVideo(); try{ if(v)v.muted=!!muted; }catch(e){}; return true; },
       audio: function(){ ensureAudio(); return true; },
-      quality: function(){ setQuality(); return true; },
       captions: function(lang, tracks, videoId){
+        var requestedId = String(videoId || '');
+        if (
+          bridge.captionCache &&
+          requestedId &&
+          String(bridge.captionCache.url || '').indexOf(requestedId) < 0
+        ) {
+          bridge.captionCache = null;
+        }
+        if (bridge.captionCache) {
+          var cached = bridge.captionCache;
+          bridge.captionCache = null;
+          send(cached);
+          return true;
+        }
         if (bridge.captionBusy) return true;
         bridge.captionBusy = true;
-        bridge.captionVideoId = String(videoId || '');
+        bridge.captionVideoId = requestedId;
         var finished = false;
+        // The player's own caption download is the only path YouTube still
+        // serves without a proof-of-origin token. Give a cold start enough
+        // time to reach it instead of failing at 15 seconds.
         var timer = setTimeout(function(){
           if (!finished) fail('timeout');
-        }, 15000);
+        }, 25000);
         function finish(payload){
           if (finished) return;
           finished = true;
@@ -938,6 +1155,11 @@ function playerBridgeScript() {
         bridge.captionFinish = function(payload){
           if (payload) finish(payload);
         };
+        // Turn on the player's captions immediately. That makes YouTube
+        // request its own (servable) timedtext URL while we try the direct
+        // metadata URLs in parallel.
+        var activatedEarly = false;
+        try { activatedEarly = activateCaptions(lang); } catch(e) {}
         (async function(){
           try {
             var direct = await fetchCaptionTextFromTracks(tracks || []);
@@ -982,7 +1204,7 @@ function playerBridgeScript() {
             }
           } catch(e) {}
           if (finished) return;
-          var activated = activateCaptions(lang);
+          var activated = activatedEarly || activateCaptions(lang);
           if (!activated) {
             var tries = 0;
             var tryAgain = function(){
@@ -1017,7 +1239,6 @@ function playerBridgeScript() {
         var nextVideo = getVideo();
         if (nextVideo) {
           nextVideo.__kissUserPaused = false;
-          nextVideo.__kissQualityStarted = false;
         }
       }
       bindTries = 0;
@@ -1083,10 +1304,20 @@ function sentenceFavoriteId(videoId: string, start: number) {
 }
 
 export default function PlayerScreen() {
-  const params = useLocalSearchParams<{ videoId?: string; title?: string; author?: string }>();
+  const params = useLocalSearchParams<{
+    videoId?: string;
+    title?: string;
+    author?: string;
+    startAt?: string;
+  }>();
   const videoId = String(params.videoId ?? '');
   const initialTitle = String(params.title ?? '');
   const initialAuthor = String(params.author ?? '');
+  const initialStartAt = useMemo(
+    () => parseStartAt(params.startAt),
+    [params.startAt]
+  );
+  const startAtRef = useRef(initialStartAt);
   const insets = useSafeAreaInsets();
   const theme = useAppTheme();
   const windowSize = useWindowDimensions();
@@ -1100,9 +1331,20 @@ export default function PlayerScreen() {
   const recordHistory = useAppStore((state) => state.recordHistory);
   const webRef = useRef<any>(null);
   const scrollRef = useRef<any>(null);
-  const cueOffsets = useRef<Record<number, number>>({});
-  const recordedRef = useRef(false);
-  const progressRef = useRef({ current: 0, duration: 0 });
+  const pendingScrollRef = useRef<{
+    index: number;
+    viewPosition: number;
+    attempts: number;
+  } | null>(null);
+  const progressRef = useRef({
+    current: 0,
+    duration: 0,
+    bufferedStart: 0,
+    bufferedEnd: 0,
+    ad: false,
+    lastDuration: 0,
+  });
+  const persistProgressRef = useRef<() => void>(() => {});
   const webReadyRef = useRef(false);
   const webCaptionRequestRef = useRef<{
     resolve: (cues: Cue[]) => void;
@@ -1115,12 +1357,69 @@ export default function PlayerScreen() {
   // 153, which was the root cause of the old "video unavailable" screen.
   const [ready, setReady] = useState(false);
   const [videoLoading, setVideoLoading] = useState(true);
+  const [videoBuffering, setVideoBuffering] = useState(false);
+  const videoBufferingRef = useRef(false);
+  const videoBufferingShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const videoBufferingHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const applyVideoBuffering = (next: boolean) => {
+    if (next) {
+      if (videoBufferingHideTimerRef.current) {
+        clearTimeout(videoBufferingHideTimerRef.current);
+        videoBufferingHideTimerRef.current = null;
+      }
+      if (videoBufferingRef.current || videoBufferingShowTimerRef.current) return;
+      videoBufferingShowTimerRef.current = setTimeout(() => {
+        videoBufferingShowTimerRef.current = null;
+        videoBufferingRef.current = true;
+        setVideoBuffering(true);
+      }, 120);
+      return;
+    }
+    if (videoBufferingShowTimerRef.current) {
+      clearTimeout(videoBufferingShowTimerRef.current);
+      videoBufferingShowTimerRef.current = null;
+    }
+    if (!videoBufferingRef.current || videoBufferingHideTimerRef.current) return;
+    videoBufferingHideTimerRef.current = setTimeout(() => {
+      videoBufferingHideTimerRef.current = null;
+      videoBufferingRef.current = false;
+      setVideoBuffering(false);
+    }, 250);
+  };
+  const resetVideoBuffering = () => {
+    if (videoBufferingShowTimerRef.current) {
+      clearTimeout(videoBufferingShowTimerRef.current);
+      videoBufferingShowTimerRef.current = null;
+    }
+    if (videoBufferingHideTimerRef.current) {
+      clearTimeout(videoBufferingHideTimerRef.current);
+      videoBufferingHideTimerRef.current = null;
+    }
+    videoBufferingRef.current = false;
+    setVideoBuffering(false);
+  };
+  useEffect(
+    () => () => {
+      if (videoBufferingShowTimerRef.current) {
+        clearTimeout(videoBufferingShowTimerRef.current);
+      }
+      if (videoBufferingHideTimerRef.current) {
+        clearTimeout(videoBufferingHideTimerRef.current);
+      }
+    },
+    []
+  );
   const videoLoadingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [playing, setPlaying] = useState(false);
+  const mirrorPlaying = (value: boolean) => {
+    setPlaying(value);
+  };
   const [adShowing, setAdShowing] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [bufferedStart, setBufferedStart] = useState(0);
+  const [bufferedEnd, setBufferedEnd] = useState(0);
   const [quality, setQuality] = useState('');
   const [videoProblem, setVideoProblem] = useState('');
   const [fullscreen, setFullscreen] = useState(false);
@@ -1141,6 +1440,7 @@ export default function PlayerScreen() {
   const [sheetParent, setSheetParent] = useState<'main' | 'listening'>('main');
   const [fontSizeTarget, setFontSizeTarget] = useState<'portrait' | 'landscape'>('portrait');
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [controlsActivity, setControlsActivity] = useState(0);
   const [videoStageSize, setVideoStageSize] = useState({ width: 0, height: 0 });
   const [sourceCues, setSourceCues] = useState<Cue[]>([]);
   const [translatedCues, setTranslatedCues] = useState<Cue[] | null>(null);
@@ -1153,7 +1453,39 @@ export default function PlayerScreen() {
   const [status, setStatus] = useState('正在读取字幕…');
   const [progressWidth, setProgressWidth] = useState(0);
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
+  const [seeking, setSeeking] = useState(false);
   const seekPreviewRef = useRef<number | null>(null);
+  const seekDragRef = useRef<{
+    mode: 'relative' | 'absolute';
+    startPageX: number;
+    startValue: number;
+    trackLeft: number;
+    width: number;
+    duration: number;
+  } | null>(null);
+  const pendingSeekRef = useRef<number | null>(null);
+  const pendingSeekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seekGrow = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(seekGrow, {
+      toValue: seeking ? 1 : 0,
+      duration: 180,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [seeking, seekGrow]);
+
+  useEffect(
+    () => () => {
+      if (pendingSeekTimerRef.current) {
+        clearTimeout(pendingSeekTimerRef.current);
+        pendingSeekTimerRef.current = null;
+      }
+    },
+    []
+  );
+
   const [trackKey, setTrackKey] = useState('');
   const [toast, setToast] = useState('');
   const [rate, setRate] = useState(1);
@@ -1185,8 +1517,6 @@ export default function PlayerScreen() {
   const repeatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const precisionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const repeatBusyRef = useRef(false);
-  const transcriptScrollRef = useRef(0);
-  const transcriptHeightRef = useRef(0);
   const followingTranscriptRef = useRef(true);
   const transcriptInitializedRef = useRef(false);
   const [followingTranscript, setFollowingTranscript] = useState(true);
@@ -1209,6 +1539,10 @@ export default function PlayerScreen() {
   const hideVideo = settings.subtitle.hideVideo;
   const hideTitle = settings.subtitle.hideTitle ?? true;
   const scrollMode = settings.subtitle.scrollMode;
+  const showOnVideo = settings.subtitle.showOnVideo ?? true;
+  const transcriptVisible = settings.subtitle.transcript ?? true;
+  const subtitlePosition = settings.subtitle.position ?? 'bottom';
+  const subtitleBackground = settings.subtitle.backgroundOpacity ?? 0.55;
   const learningLang = settings.learningLang;
   const originalFont = fontFamilyFor(settings.subtitle.originalFont, 'source');
   const translationFont = fontFamilyFor(settings.subtitle.translationFont, 'translation');
@@ -1219,16 +1553,27 @@ export default function PlayerScreen() {
     [settings.subtitle.sentenceMode, sourceCues, translatedCues]
   );
 
-  const activeIndex = useMemo(() => {
-    if (!cues.length) return -1;
-    const t = current;
-    let latest = -1;
-    for (let i = 0; i < cues.length; i += 1) {
-      if (cues[i].start <= t + 0.12) latest = i;
-      else break;
+  const activeIndex = useMemo(
+    () => findCueIndexAt(cues, current, 0.12),
+    [cues, current]
+  );
+  const transcriptViewabilityConfig = useRef({
+    minimumViewTime: 80,
+    itemVisiblePercentThreshold: 20,
+  }).current;
+  const onTranscriptViewableItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: Array<{ index?: number | null }> }) => {
+      const indices = viewableItems
+        .map((item) => (typeof item.index === 'number' ? item.index : -1))
+        .filter((index) => index >= 0);
+      const first = indices.length ? Math.min(...indices) : -1;
+      const last = indices.length ? Math.max(...indices) : -1;
+      const currentRange = visibleCueRangeRef.current;
+      if (currentRange.first === first && currentRange.last === last) return;
+      visibleCueRangeRef.current = { first, last };
+      setVisibleCueRange({ first, last });
     }
-    return latest;
-  }, [cues, current]);
+  ).current;
 
   const activeCue = activeIndex >= 0 ? cues[activeIndex] : null;
   const precisionCue =
@@ -1312,6 +1657,13 @@ export default function PlayerScreen() {
     };
   }, [settings.keepAwake]);
 
+  const controlsOverlayOpen = rateSheet || modeMenu || sheet;
+
+  const keepControlsVisible = () => {
+    setControlsVisible(true);
+    setControlsActivity((value) => value + 1);
+  };
+
   useEffect(() => {
     if (
       Platform.OS === 'web' ||
@@ -1323,10 +1675,32 @@ export default function PlayerScreen() {
       setControlsVisible(true);
       return;
     }
-    if (!controlsVisible || !playing || videoLoading) return;
-    const timer = setTimeout(() => setControlsVisible(false), 3000);
+    if (
+      !controlsVisible ||
+      !playing ||
+      videoLoading ||
+      videoBuffering ||
+      controlsOverlayOpen
+    ) {
+      return;
+    }
+    const timer = setTimeout(
+      () => setControlsVisible(false),
+      CONTROLS_HIDE_DELAY_MS
+    );
     return () => clearTimeout(timer);
-  }, [adShowing, blindMode, controlsVisible, hideVideo, playing, videoLoading, videoProblem]);
+  }, [
+    playing,
+    adShowing,
+    blindMode,
+    controlsVisible,
+    controlsActivity,
+    controlsOverlayOpen,
+    hideVideo,
+    videoLoading,
+    videoBuffering,
+    videoProblem,
+  ]);
 
   useEffect(() => {
     setRepeatPass(0);
@@ -1391,7 +1765,7 @@ export default function PlayerScreen() {
         }
         webCaptionRequestRef.current = null;
         reject(new Error('播放器字幕读取超时'));
-      }, 28000);
+      }, 40000);
       webCaptionRequestRef.current = { resolve, reject, timer };
       let attempts = 0;
       const invoke = () => {
@@ -1502,14 +1876,24 @@ export default function PlayerScreen() {
         setSourceCues(cached.cues);
         setMetaTitle(initialTitle);
         setMetaAuthor(initialAuthor);
-        void getVideoMeta(videoId)
-          .then((meta) => {
+        void (async () => {
+          const info = await loadCachedVideoInfo(videoId);
+          if (cancelled) return;
+          if (info) {
+            setMetaTitle(info.title || initialTitle);
+            setMetaAuthor(info.author || initialAuthor);
+            setMetaChannelId(info.channelId ?? '');
+            if (info.channelId) return;
+          }
+          try {
+            const meta = await getVideoMeta(videoId);
             if (cancelled) return;
             setMetaTitle(meta.title || initialTitle);
             setMetaAuthor(meta.author || initialAuthor);
             setMetaChannelId(meta.channelId ?? '');
-          })
-          .catch(() => {});
+            void saveVideoInfo(videoId, meta);
+          } catch {}
+        })();
         await translate(
           cached.cues,
           cached.trackKey,
@@ -1526,6 +1910,7 @@ export default function PlayerScreen() {
         setMetaTitle(meta.title || initialTitle);
         setMetaAuthor(meta.author || initialAuthor);
         setMetaChannelId(meta.channelId ?? '');
+        void saveVideoInfo(videoId, meta);
         const tracks = pickCaptionTracks(
           meta.captionTracks,
           learningLang.startsWith('en') ? 'en' : learningLang
@@ -1633,26 +2018,53 @@ export default function PlayerScreen() {
     initialTitle,
     learningLang,
     captionReloadToken,
+    // The player opens settings on top of itself. When the user changes the
+    // engine, model or target language and comes back, retranslate instead of
+    // leaving the old provider's subtitles on screen.
+    settings.provider,
+    settings.sourceLang,
+    settings.targetLang,
+    settings.autoFallbackDeepSeek,
+    settings.deepseekModel,
+    settings.siliconflowModel,
+    settings.openrouterModel,
+    settings.openaiBaseUrl,
+    settings.openaiModel,
+    settings.autoFreeOrder,
+    settings.autoPaidOrder,
+    settings.requestTimeoutMs,
   ]);
 
   useEffect(() => {
     if (!videoId) return;
     const persist = () => {
       const state = progressRef.current;
-      if (!state.duration) return;
-      const previous = useAppStore
-        .getState()
-        .history.find((entry) => entry.videoId === videoId);
+      if (!state.duration || state.ad) return;
+      // Do not create/reset an entry before playback actually moved. This is
+      // what used to wipe the previous resume point on a quick peek.
+      if (state.current < 1) return;
+      const durationChanged =
+        state.lastDuration > 0 &&
+        Math.abs(state.duration - state.lastDuration) / state.duration > 0.2;
+      if (durationChanged) {
+        // Ads and quality switches temporarily change the element duration.
+        // Skip one sample instead of recording a bogus fraction.
+        state.lastDuration = state.duration;
+        return;
+      }
+      state.lastDuration = state.duration;
       recordHistory({
         videoId,
         title: metaTitle || initialTitle || videoId,
         author: metaAuthor || initialAuthor,
         thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-        savedAt: previous?.savedAt ?? Date.now(),
         progress: Math.max(0, Math.min(1, state.current / state.duration)),
+        resumeAt: state.current,
         duration: state.duration,
+        lastWatchedAt: Date.now(),
       });
     };
+    persistProgressRef.current = persist;
     const timer = setInterval(persist, 15000);
     return () => {
       clearInterval(timer);
@@ -1661,18 +2073,23 @@ export default function PlayerScreen() {
   }, [videoId, metaTitle, metaAuthor, initialAuthor, initialTitle, recordHistory]);
 
   useEffect(() => {
-    if (recordedRef.current) return;
-    recordedRef.current = true;
-    const thumb = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-    recordHistory({
-      videoId,
-      title: metaTitle || initialTitle || videoId,
-      author: metaAuthor || initialAuthor,
-      thumbnail: thumb,
-      savedAt: Date.now(),
-      progress: 0,
-    });
-  }, [videoId, metaTitle, metaAuthor, initialAuthor, initialTitle, recordHistory]);
+    if (!playing) persistProgressRef.current();
+  }, [playing]);
+
+  // Safety net for builds where setting currentTime before the first frame is
+  // ignored: after ready, if playback still sits near 0, seek once.
+  useEffect(() => {
+    if (!ready || !initialStartAt) return;
+    const timer = setTimeout(() => {
+      const state = progressRef.current;
+      if (state.ad) return;
+      if (state.current >= initialStartAt - 2) return;
+      webRef.current?.injectJavaScript(
+        `window.__kiss && window.__kiss.seek(${initialStartAt}); true;`
+      );
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [ready, initialStartAt]);
 
   useEffect(() => {
     followingTranscriptRef.current = true;
@@ -1680,18 +2097,65 @@ export default function PlayerScreen() {
     transcriptInitializedRef.current = false;
   }, [videoId, trackKey]);
 
+  const scrollToCueIndex = (
+    index: number,
+    animated = true,
+    viewPosition = 0.38
+  ) => {
+    if (index < 0) return;
+    pendingScrollRef.current = { index, viewPosition, attempts: 0 };
+    scrollRef.current?.scrollToIndex({ index, animated, viewPosition });
+  };
+
+  const handleScrollToIndexFailed = (info: any) => {
+    const pending = pendingScrollRef.current;
+    if (!pending || pending.attempts >= 2) return;
+    pending.attempts += 1;
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollToOffset({
+        offset: Math.max(0, Number(info.averageItemLength || 0) * pending.index),
+        animated: false,
+      });
+      setTimeout(() => {
+        scrollRef.current?.scrollToIndex({
+          index: pending.index,
+          animated: true,
+          viewPosition: pending.viewPosition,
+        });
+      }, 160);
+    });
+  };
+
   const scrollTranscriptToActive = (animated = true) => {
-    if (!followingTranscriptRef.current) return false;
-    const y = cueOffsets.current[activeIndex];
-    if (typeof y !== 'number') return false;
-    scrollRef.current?.scrollTo({ y, animated });
+    if (activeIndex < 0 || !followingTranscriptRef.current) return false;
+    const view = visibleCueRangeRef.current;
+    const activeVisible =
+      view.first >= 0 &&
+      activeIndex >= view.first &&
+      activeIndex <= view.last;
+    if (scrollMode === 'page' && activeVisible) {
+      transcriptInitializedRef.current = true;
+      return false;
+    }
+    scrollToCueIndex(
+      activeIndex,
+      animated,
+      scrollMode === 'page' ? 0.08 : 0
+    );
     return true;
   };
 
-  const maybeResumeTranscriptFollow = (offsetY: number) => {
+  const maybeResumeTranscriptFollow = () => {
     if (followingTranscriptRef.current) return;
-    const activeY = cueOffsets.current[activeIndex];
-    if (typeof activeY !== 'number' || Math.abs(offsetY - activeY) > 24) return;
+    const view = visibleCueRangeRef.current;
+    if (
+      activeIndex < 0 ||
+      view.first < 0 ||
+      activeIndex < view.first ||
+      activeIndex > view.last
+    ) {
+      return;
+    }
     followingTranscriptRef.current = true;
     setFollowingTranscript(true);
   };
@@ -1717,7 +2181,7 @@ export default function PlayerScreen() {
       }, delay)
     );
     return () => timers.forEach((timer) => clearTimeout(timer));
-  }, [activeIndex, trackKey]);
+  }, [activeIndex, scrollMode, trackKey]);
 
   useEffect(() => {
     return () => {
@@ -1748,6 +2212,13 @@ export default function PlayerScreen() {
       );
     });
   };
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') scheduleOrientationResume();
+    });
+    return () => sub.remove();
+  }, []);
 
   const exitFullscreen = async () => {
     const wasPlaying = playing;
@@ -1798,6 +2269,9 @@ export default function PlayerScreen() {
           clearTimeout(precisionTimerRef.current);
           precisionTimerRef.current = null;
         }
+        webRef.current?.injectJavaScript(
+          'window.__kiss && window.__kiss.pauseAt(-1); true;'
+        );
         return true;
       }
       if (fullscreen || landscape) {
@@ -1818,8 +2292,8 @@ export default function PlayerScreen() {
     clearVideoLoadingTimer();
     videoLoadingTimer.current = setTimeout(() => {
       // Never leave a permanent black overlay on top of YouTube. If the page
-      // loaded but the player did not report ready (consent, login, error page),
-      // reveal the actual web page so the user can see and act on it.
+      // loaded but the player did not report ready (consent, login, error
+      // page), reveal the actual web page so the user can see and act on it.
       setVideoLoading(false);
     }, 9000);
   };
@@ -1860,6 +2334,32 @@ export default function PlayerScreen() {
     setControlsVisible((value) => !value);
   };
 
+  const armPrecisionPause = (cue: Cue | null | undefined) => {
+    if (!cue) return;
+    // The bridge watches currentTime every 16 ms and pauses at the exact cue
+    // boundary. The React-side guard below remains as a fallback for an old
+    // WebView that did not receive the new bridge script.
+    send(`window.__kiss && window.__kiss.pauseAt(${cue.end}); true;`);
+  };
+
+  const clearPrecisionPause = () => {
+    send('window.__kiss && window.__kiss.pauseAt(-1); true;');
+  };
+
+  useEffect(() => {
+    // Re-arm after an orientation reload or a fresh WebView bridge. Without
+    // this, the first bridge injection pauses correctly but the replacement
+    // bridge loses the scheduled boundary.
+    if (!ready || !blindMode || !playing || !precisionCue) return;
+    armPrecisionPause(precisionCue);
+  }, [
+    blindMode,
+    playing,
+    precisionCue?.end,
+    precisionCue?.start,
+    ready,
+  ]);
+
   const togglePrecisionPlay = () => {
     if (precisionTimerRef.current) {
       clearTimeout(precisionTimerRef.current);
@@ -1867,7 +2367,7 @@ export default function PlayerScreen() {
     }
     if (playing) {
       send('window.__kiss && window.__kiss.pause(); true;');
-      setPlaying(false);
+      mirrorPlaying(false);
       setBlocked(false);
       return;
     }
@@ -1884,7 +2384,8 @@ export default function PlayerScreen() {
       );
     }
     send('window.__kiss && window.__kiss.play(); true;');
-    setPlaying(true);
+    armPrecisionPause(precisionCue);
+    mirrorPlaying(true);
     setBlocked(false);
   };
 
@@ -1899,29 +2400,88 @@ export default function PlayerScreen() {
     setFollowingTranscript(true);
     transcriptInitializedRef.current = true;
     seekTo(cue.start);
-    setTimeout(() => {
-      const y = cueOffsets.current[index];
-      if (typeof y === 'number') {
-        scrollRef.current?.scrollTo({ y, animated: true });
-      }
-    }, 80);
+    setTimeout(() => scrollToCueIndex(index, true, 0.22), 80);
   };
 
-  const previewSeekAt = (locationX: number) => {
-    if (!duration || !progressWidth) return null;
-    const ratio = Math.max(0, Math.min(1, locationX / progressWidth));
-    const value = Math.round(ratio * duration * 10) / 10;
-    seekPreviewRef.current = value;
-    setSeekPreview(value);
-    return value;
+  const clearPendingSeek = () => {
+    if (pendingSeekTimerRef.current) {
+      clearTimeout(pendingSeekTimerRef.current);
+      pendingSeekTimerRef.current = null;
+    }
+    pendingSeekRef.current = null;
+  };
+
+  const setSeekPreviewValue = (value: number, limit = duration) => {
+    const max = Math.max(0, limit || 0);
+    const next = Math.round(Math.max(0, Math.min(max, value)) * 10) / 10;
+    seekPreviewRef.current = next;
+    setSeekPreview(next);
+  };
+
+  const cancelSeekDrag = () => {
+    seekDragRef.current = null;
+    seekPreviewRef.current = null;
+    clearPendingSeek();
+    setSeekPreview(null);
+    setSeeking(false);
+  };
+
+  const beginSeekDrag = (locationX: number, pageX: number) => {
+    if (!duration || progressWidth <= 0) return;
+    clearPendingSeek();
+    const playhead = Math.max(0, Math.min(duration, current));
+    const thumbX = (playhead / duration) * progressWidth;
+    // Touching the knob should grab it, not teleport it to the finger. Touching
+    // the rest of the rail keeps the familiar tap-to-seek behaviour.
+    const nearThumb = Math.abs(locationX - thumbX) <= SEEK_GRAB_RADIUS;
+    const touchValue =
+      (Math.max(0, Math.min(progressWidth, locationX)) / progressWidth) * duration;
+    const startValue = nearThumb ? playhead : touchValue;
+    seekDragRef.current = {
+      mode: nearThumb ? 'relative' : 'absolute',
+      startPageX: pageX,
+      startValue,
+      trackLeft: pageX - locationX,
+      width: progressWidth,
+      duration,
+    };
+    setSeekPreviewValue(startValue, duration);
+  };
+
+  const moveSeekDrag = (pageX: number) => {
+    const drag = seekDragRef.current;
+    if (!drag || drag.width <= 0) return;
+    const value =
+      drag.mode === 'relative'
+        ? drag.startValue +
+          ((pageX - drag.startPageX) / drag.width) * drag.duration
+        : ((pageX - drag.trackLeft) / drag.width) * drag.duration;
+    setSeekPreviewValue(value, drag.duration);
   };
 
   const commitPreviewSeek = () => {
+    if (!seekDragRef.current) return;
     const value = seekPreviewRef.current;
+    seekDragRef.current = null;
     if (value == null) return;
-    seekPreviewRef.current = null;
-    seekTo(value);
-    setSeekPreview(null);
+    const target = Math.max(0, Math.min(duration || value, value));
+    seekPreviewRef.current = target;
+    setSeekPreview(target);
+    pendingSeekRef.current = target;
+    if (pendingSeekTimerRef.current) {
+      clearTimeout(pendingSeekTimerRef.current);
+      pendingSeekTimerRef.current = null;
+    }
+    // Keep the preview on the target until the WebView confirms the seek, so
+    // stale `current` frames cannot snap the thumb back for a moment.
+    pendingSeekTimerRef.current = setTimeout(() => {
+      if (pendingSeekRef.current === target) {
+        pendingSeekRef.current = null;
+        seekPreviewRef.current = null;
+        setSeekPreview(null);
+      }
+    }, SEEK_CONFIRM_TIMEOUT_MS);
+    seekTo(target);
   };
 
   const jumpCue = (direction: -1 | 1) => {
@@ -1958,7 +2518,8 @@ export default function PlayerScreen() {
     );
     seekTo(target.start + 0.02);
     send('window.__kiss && window.__kiss.play(); true;');
-    setPlaying(true);
+    armPrecisionPause(target);
+    mirrorPlaying(true);
   };
 
   const applyRate = (value: number) => {
@@ -1993,7 +2554,7 @@ export default function PlayerScreen() {
       repeatTimerRef.current = setTimeout(() => {
         seekTo(activeCue.start + 0.01);
         send('window.__kiss && window.__kiss.play(); true;');
-        setPlaying(true);
+        mirrorPlaying(true);
         setRepeatPass((value) => value + 1);
         repeatBusyRef.current = false;
       }, pauseMs);
@@ -2005,26 +2566,27 @@ export default function PlayerScreen() {
       jumpCue(1);
     } else {
       send('window.__kiss && window.__kiss.pause(); true;');
-      setPlaying(false);
+      mirrorPlaying(false);
     }
   }, [activeCue, blindMode, current, loopSentence, playing, repeatPass, settings.subtitle.autoNext, settings.subtitle.repeatCount, settings.subtitle.repeatInterval]);
 
-  useEffect(() => {
-    if (!blindMode || !precisionCue || !playing) return;
-    if (current <= precisionCue.end + 0.08) return;
-    const guardKey = `${precisionCue.start.toFixed(2)}-${precisionPass}`;
+  const runPrecisionBoundary = (alreadyPaused = false) => {
+    const cue = precisionCue;
+    if (!blindMode || !cue) return;
+    const guardKey = `${cue.start.toFixed(2)}-${precisionPass}`;
     if (blindGuardRef.current === guardKey) return;
     blindGuardRef.current = guardKey;
 
-    send('window.__kiss && window.__kiss.pause(); true;');
-    setPlaying(false);
+    if (!alreadyPaused) send('window.__kiss && window.__kiss.pause(); true;');
+    mirrorPlaying(false);
 
     if (precisionPass < listeningRepeatCount) {
       precisionTimerRef.current = setTimeout(() => {
-        seekTo(precisionCue.start + 0.01);
+        seekTo(cue.start + 0.01);
         setPrecisionPass((value) => value + 1);
         send('window.__kiss && window.__kiss.play(); true;');
-        setPlaying(true);
+        armPrecisionPause(cue);
+        mirrorPlaying(true);
       }, listeningRepeatInterval * 1000);
       return;
     }
@@ -2041,6 +2603,14 @@ export default function PlayerScreen() {
         jumpPrecisionCue(1);
       }, Math.max(1200, listeningRepeatInterval * 1000));
     }
+  };
+
+  useEffect(() => {
+    // Fallback for a delayed/missing boundary event. The WebView normally
+    // sends cue-ended explicitly; this path preserves older cached pages.
+    if (!blindMode || !precisionCue || !playing) return;
+    if (current <= precisionCue.end + 0.08) return;
+    runPrecisionBoundary();
   }, [
     blindMode,
     current,
@@ -2062,10 +2632,19 @@ export default function PlayerScreen() {
       return;
     }
     if (!message || typeof message.type !== 'string') return;
+    if (message.type === 'cue-ended') {
+      if (typeof message.current === 'number') {
+        progressRef.current.current = message.current;
+        setCurrent(message.current);
+      }
+      runPrecisionBoundary(true);
+      return;
+    }
     if (message.type === 'ready') {
       webReadyRef.current = true;
       clearVideoLoadingTimer();
       setReady(true);
+      resetVideoBuffering();
       setVideoLoading(false);
       setVideoProblem('');
       return;
@@ -2121,24 +2700,73 @@ export default function PlayerScreen() {
       return;
     }
     if (message.type === 'time') {
-      if (typeof message.current === 'number') {
-        progressRef.current.current = message.current;
-        setCurrent(message.current);
+      const isAd = message.ad === true;
+      if (typeof message.ad === 'boolean') {
+        const wasAd = progressRef.current.ad;
+        progressRef.current.ad = message.ad;
+        setAdShowing(message.ad);
+        if (message.ad && !wasAd) {
+          cancelSeekDrag();
+          resetVideoBuffering();
+        }
       }
-      if (typeof message.duration === 'number' && message.duration > 0) {
-        progressRef.current.duration = message.duration;
-        setDuration(message.duration);
+      if (isAd) resetVideoBuffering();
+      if (!isAd) {
+        if (typeof message.current === 'number') {
+          progressRef.current.current = message.current;
+          setCurrent(message.current);
+        }
+        if (typeof message.duration === 'number' && message.duration > 0) {
+          progressRef.current.duration = message.duration;
+          setDuration(message.duration);
+        }
+        if (typeof message.bufferedStart === 'number') {
+          progressRef.current.bufferedStart = message.bufferedStart;
+          setBufferedStart(message.bufferedStart);
+        }
+        if (typeof message.bufferedEnd === 'number') {
+          progressRef.current.bufferedEnd = message.bufferedEnd;
+          setBufferedEnd(message.bufferedEnd);
+        }
+        if (typeof message.buffering === 'boolean') {
+          applyVideoBuffering(message.buffering);
+        } else if (message.ready === false) {
+          applyVideoBuffering(!videoLoading);
+        }
+        const pending = pendingSeekRef.current;
+        if (
+          pending != null &&
+          typeof message.current === 'number' &&
+          Math.abs(message.current - pending) <= 1
+        ) {
+          pendingSeekRef.current = null;
+          if (pendingSeekTimerRef.current) {
+            clearTimeout(pendingSeekTimerRef.current);
+            pendingSeekTimerRef.current = null;
+          }
+          seekPreviewRef.current = null;
+          setSeekPreview(null);
+        }
       }
       if (typeof message.playing === 'boolean') setPlaying(message.playing);
-      if (typeof message.ad === 'boolean') setAdShowing(message.ad);
       if (message.quality) setQuality(String(message.quality));
-      if (message.ready) setReady(true);
-      if (message.ready) webReadyRef.current = true;
+      if (message.ready) {
+        setReady(true);
+        webReadyRef.current = true;
+        // The frame is decodable, so reveal the player now even if the one-shot
+        // `ready` message was missed while the WebView was reloading.
+        clearVideoLoadingTimer();
+        setVideoLoading(false);
+      }
       return;
     }
     if (message.type === 'problem') {
+      clearVideoLoadingTimer();
+      setVideoLoading(false);
+      setPlaying(false);
       setReady(false);
       setAdShowing(false);
+      resetVideoBuffering();
       setVideoProblem('这个视频限制了站内播放，可能需要登录、年龄验证或作者关闭了外站播放。');
     }
   };
@@ -2147,8 +2775,10 @@ export default function PlayerScreen() {
     setVideoProblem('');
     setReady(false);
     setAdShowing(false);
+    resetVideoBuffering();
     setPlaying(false);
     setCurrent(0);
+    startAtRef.current = Math.max(0, progressRef.current.current);
     setVideoLoading(true);
     armVideoLoadingFallback();
     webRef.current?.reload();
@@ -2176,7 +2806,7 @@ export default function PlayerScreen() {
   };
 
   const toggleCueFavorite = (cue: Cue) => {
-    const added = toggleSentenceFavorite({
+    const result = toggleSentenceFavorite({
       id: sentenceFavoriteId(videoId, cue.start),
       videoId,
       videoTitle: metaTitle || initialTitle || videoId,
@@ -2188,7 +2818,11 @@ export default function PlayerScreen() {
       translation: cue.translation,
       savedAt: Date.now(),
     });
-    setToast(added ? '已收藏这句' : '已取消句子收藏');
+    if (result === 'limit') {
+      setToast(`句子收藏已满 ${SENTENCE_FAVORITE_LIMIT} 条，请先清理`);
+      return;
+    }
+    setToast(result === 'added' ? '已收藏这句' : '已取消句子收藏');
   };
 
   const exitPrecision = () => {
@@ -2198,6 +2832,7 @@ export default function PlayerScreen() {
     setPrecisionPass(1);
     setPrecisionCueIndex(-1);
     blindGuardRef.current = '';
+    clearPrecisionPause();
     if (precisionTimerRef.current) {
       clearTimeout(precisionTimerRef.current);
       precisionTimerRef.current = null;
@@ -2227,8 +2862,9 @@ export default function PlayerScreen() {
     seekTo(target.start + 0.02);
     if (!playing) {
       send('window.__kiss && window.__kiss.play(); true;');
-      setPlaying(true);
+      mirrorPlaying(true);
     }
+    armPrecisionPause(target);
   };
 
   const togglePrecision = () => {
@@ -2258,11 +2894,13 @@ export default function PlayerScreen() {
 
   const getConfiguredAiConfig = async (): Promise<AiConfig | null> => {
     const currentSettings = getSettings();
-    const [deepseekKey, siliconflowKey, openaiKey] = await Promise.all([
-      getSecret('deepseek'),
-      getSecret('siliconflow'),
-      getSecret('openai'),
-    ]);
+    const [deepseekKey, siliconflowKey, openrouterKey, openaiKey] =
+      await Promise.all([
+        getSecret('deepseek'),
+        getSecret('siliconflow'),
+        getSecret('openrouter'),
+        getActiveOpenAiKey(currentSettings),
+      ]);
     const candidates: Array<AiConfig | null> = [
       currentSettings.provider === 'deepseek' && deepseekKey
         ? deepseekConfig(
@@ -2275,6 +2913,13 @@ export default function PlayerScreen() {
         ? siliconflowConfig(
             siliconflowKey,
             currentSettings.siliconflowModel,
+            currentSettings.requestTimeoutMs
+          )
+        : null,
+      currentSettings.provider === 'openrouter' && openrouterKey
+        ? openrouterConfig(
+            openrouterKey,
+            currentSettings.openrouterModel,
             currentSettings.requestTimeoutMs
           )
         : null,
@@ -2300,6 +2945,13 @@ export default function PlayerScreen() {
       return siliconflowConfig(
         siliconflowKey,
         currentSettings.siliconflowModel,
+        currentSettings.requestTimeoutMs
+      );
+    }
+    if (openrouterKey) {
+      return openrouterConfig(
+        openrouterKey,
+        currentSettings.openrouterModel,
         currentSettings.requestTimeoutMs
       );
     }
@@ -2472,6 +3124,7 @@ export default function PlayerScreen() {
     !adShowing &&
     !blindMode &&
     !hideVideo;
+  const showVideoBuffering = videoBuffering && !adShowing && !videoProblem;
   const webUrl = `https://m.youtube.com/watch?v=${videoId}&hl=zh-CN&autoplay=0`;
 
   if (!videoId) {
@@ -2529,16 +3182,21 @@ export default function PlayerScreen() {
           sharedCookiesEnabled
           thirdPartyCookiesEnabled
           userAgent={WATCH_UA}
-          injectedJavaScript={playerBridgeScript()}
+          injectedJavaScript={playerBridgeScript(startAtRef.current)}
           onMessage={handleMessage}
           onLoadStart={() => {
             webReadyRef.current = false;
             setReady(false);
+            setVideoProblem('');
             setVideoLoading(true);
+            setBufferedStart(0);
+            setBufferedEnd(0);
+            progressRef.current.bufferedStart = 0;
+            progressRef.current.bufferedEnd = 0;
             armVideoLoadingFallback();
           }}
           onLoadEnd={() => {
-            send(playerBridgeScript());
+            send(playerBridgeScript(startAtRef.current));
             armVideoLoadingFallback();
           }}
           onError={() => {
@@ -2610,15 +3268,24 @@ export default function PlayerScreen() {
           </Text>
         </View>
       ) : null}
-      {!landscape && videoTappable && controlsVisible ? (
-        <Pressable style={styles.centerPlay} onPress={togglePlay}>
-          <Ionicons name={playing ? 'pause' : 'play'} size={34} color="#FFFFFF" />
+      {!landscape && videoTappable && (controlsVisible || showVideoBuffering) ? (
+        <Pressable
+          style={styles.centerPlay}
+          onPress={togglePlay}
+          accessibilityRole="button"
+          accessibilityLabel={showVideoBuffering ? '正在缓冲' : playing ? '暂停' : '播放'}
+        >
+          {showVideoBuffering ? (
+            <ActivityIndicator size="large" color="#FFFFFF" />
+          ) : (
+            <PlayPauseIcon playing={playing} size={34} />
+          )}
         </Pressable>
       ) : null}
       {!landscape && !hideVideo && !blindMode && !adShowing && nativeVideo && controlsVisible ? (
         <View style={styles.qualityChip} pointerEvents="none">
           <Text style={styles.qualityChipText}>
-            {quality ? quality.toUpperCase() : 'HD1080'} · 优先
+            {quality ? quality.toUpperCase() : 'AUTO'} · 自适应
           </Text>
         </View>
       ) : null}
@@ -2658,24 +3325,66 @@ export default function PlayerScreen() {
     </View>
   );
 
+  const bufferStartRatio = duration
+    ? Math.max(0, Math.min(1, bufferedStart / duration))
+    : 0;
+  const bufferEndRatio = duration
+    ? Math.max(0, Math.min(1, bufferedEnd / duration))
+    : 0;
+  const bufferLeft = bufferStartRatio * progressWidth;
+  const bufferWidth = Math.max(0, (bufferEndRatio - bufferStartRatio) * progressWidth);
+  const progressRailHeight = seekGrow.interpolate({
+    inputRange: [0, 1],
+    outputRange: [4, 8],
+  });
+  const progressThumbScale = seekGrow.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.34],
+  });
+
   const progress = (
     <View
       style={styles.progressTouch}
-      pointerEvents={blindMode ? 'none' : 'auto'}
-      onLayout={(event) => setProgressWidth(event.nativeEvent.layout.width)}
+      pointerEvents={blindMode || adShowing ? 'none' : 'auto'}
+      onLayout={(event) => {
+        if (seekDragRef.current) return;
+        setProgressWidth(event.nativeEvent.layout.width);
+      }}
       onStartShouldSetResponder={() => true}
       onMoveShouldSetResponder={() => true}
       onResponderGrant={(event) => {
-        previewSeekAt(event.nativeEvent.locationX);
+        setSeeking(true);
+        beginSeekDrag(event.nativeEvent.locationX, event.nativeEvent.pageX);
       }}
       onResponderMove={(event) => {
-        previewSeekAt(event.nativeEvent.locationX);
+        moveSeekDrag(event.nativeEvent.pageX);
       }}
-      onResponderRelease={() => commitPreviewSeek()}
-      onResponderTerminate={() => commitPreviewSeek()}
+      onResponderRelease={() => {
+        commitPreviewSeek();
+        setSeeking(false);
+      }}
+      onResponderTerminate={() => {
+        commitPreviewSeek();
+        setSeeking(false);
+      }}
       onResponderTerminationRequest={() => false}
     >
-      <View style={[styles.progressRail, { backgroundColor: theme.colors.surfaceAlt }]}>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.progressRail,
+          { backgroundColor: theme.colors.surfaceAlt, height: progressRailHeight },
+        ]}
+      >
+        <View
+          style={[
+            styles.progressBuffer,
+            {
+              left: bufferLeft,
+              width: bufferWidth,
+            },
+          ]}
+        />
         <View
           style={[
             styles.progressFill,
@@ -2693,12 +3402,14 @@ export default function PlayerScreen() {
             },
           ]}
         />
-      </View>
-      <View
+      </Animated.View>
+      <Animated.View
+        pointerEvents="none"
         style={[
           styles.progressThumb,
           {
             backgroundColor: theme.colors.primary,
+            transform: [{ scale: progressThumbScale }],
             left: duration
               ? Math.max(
                   0,
@@ -2758,7 +3469,7 @@ export default function PlayerScreen() {
         haptic="light"
         style={[styles.playButton, { backgroundColor: theme.colors.primary }]}
       >
-        <Ionicons name={playing ? 'pause' : 'play'} size={24} color="#FFFFFF" />
+        <PlayPauseIcon playing={playing} size={24} />
       </RipplePressable>
       <RipplePressable
         onPress={() => (blindMode ? jumpPrecisionCue(1) : jumpCue(1))}
@@ -2913,8 +3624,16 @@ export default function PlayerScreen() {
 
   const landscapeOverlay = landscape ? (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      {showVideoBuffering && !controlsVisible ? (
+        <View style={styles.landBuffering} pointerEvents="none">
+          <ActivityIndicator size="large" color="#FFFFFF" />
+        </View>
+      ) : null}
       <Pressable
         feedback="none"
+        // YouTube's ad UI (including Skip Ad) lives in the WebView. Keep the
+        // full-screen tap catcher out of the way while an ad is playing.
+        pointerEvents={adShowing ? 'none' : 'auto'}
         style={StyleSheet.absoluteFill}
         onPress={(event) =>
           handleVideoStageTap(event, windowSize.width, windowSize.height)
@@ -2931,21 +3650,42 @@ export default function PlayerScreen() {
             >
               <Text style={styles.landTime}>{formatTime(seekPreview ?? current)}</Text>
               <View
+                pointerEvents={adShowing ? 'none' : 'auto'}
                 style={styles.landProgressTouch}
-                onLayout={(event) => setProgressWidth(event.nativeEvent.layout.width)}
+                onLayout={(event) => {
+                  if (seekDragRef.current) return;
+                  setProgressWidth(event.nativeEvent.layout.width);
+                }}
                 onStartShouldSetResponder={() => true}
                 onMoveShouldSetResponder={() => true}
                 onResponderGrant={(event) => {
-                  previewSeekAt(event.nativeEvent.locationX);
+                  keepControlsVisible();
+                  beginSeekDrag(event.nativeEvent.locationX, event.nativeEvent.pageX);
                 }}
                 onResponderMove={(event) => {
-                  previewSeekAt(event.nativeEvent.locationX);
+                  keepControlsVisible();
+                  moveSeekDrag(event.nativeEvent.pageX);
                 }}
-                onResponderRelease={() => commitPreviewSeek()}
-                onResponderTerminate={() => commitPreviewSeek()}
+                onResponderRelease={() => {
+                  keepControlsVisible();
+                  commitPreviewSeek();
+                }}
+                onResponderTerminate={() => {
+                  keepControlsVisible();
+                  commitPreviewSeek();
+                }}
                 onResponderTerminationRequest={() => false}
               >
-                <View style={styles.landProgressRail}>
+                <View pointerEvents="none" style={styles.landProgressRail}>
+                  <View
+                    style={[
+                      styles.landProgressBuffer,
+                      {
+                        left: bufferLeft,
+                        width: bufferWidth,
+                      },
+                    ]}
+                  />
                   <View
                     style={[
                       styles.landProgressFill,
@@ -2970,7 +3710,10 @@ export default function PlayerScreen() {
               pressableRef={landscapeCcButtonRef}
               collapsable={false}
               haptic={false}
-              onPress={openLandscapeModeMenu}
+              onPress={() => {
+                keepControlsVisible();
+                openLandscapeModeMenu();
+              }}
               style={styles.landIconButton}
             >
               <MaterialCommunityIcons
@@ -2981,7 +3724,10 @@ export default function PlayerScreen() {
             </RipplePressable>
             <RipplePressable
               haptic={false}
-              onPress={openRateSheet}
+              onPress={() => {
+                keepControlsVisible();
+                openRateSheet();
+              }}
               style={styles.landTopRatePill}
             >
               <Text style={styles.landRateText}>{rateLabel}</Text>
@@ -2996,7 +3742,11 @@ export default function PlayerScreen() {
             </RipplePressable>
             <RipplePressable
               haptic={false}
-              onPress={blindMode ? openListeningSettings : openMainSettings}
+              onPress={() => {
+                keepControlsVisible();
+                if (blindMode) openListeningSettings();
+                else openMainSettings();
+              }}
               style={styles.landIconButton}
             >
               <Ionicons name="ellipsis-horizontal" size={19} color="#FFFFFF" />
@@ -3005,21 +3755,34 @@ export default function PlayerScreen() {
 
           <View style={styles.landCenter}>
             <Pressable
-              onPress={() => jumpCue(-1)}
+              onPress={() => {
+                keepControlsVisible();
+                jumpCue(-1);
+              }}
               haptic="light"
               style={styles.landTransportButton}
             >
               <Ionicons name="play-skip-back" size={18} color="#FFFFFF" />
             </Pressable>
             <Pressable
-              onPress={togglePlay}
+              onPress={() => {
+                keepControlsVisible();
+                togglePlay();
+              }}
               haptic="light"
               style={styles.landPlay}
             >
-              <Ionicons name={playing ? 'pause' : 'play'} size={30} color="#FFFFFF" />
+              {showVideoBuffering ? (
+                <ActivityIndicator size="large" color="#FFFFFF" />
+              ) : (
+                <PlayPauseIcon playing={playing} size={30} />
+              )}
             </Pressable>
             <Pressable
-              onPress={() => jumpCue(1)}
+              onPress={() => {
+                keepControlsVisible();
+                jumpCue(1);
+              }}
               haptic="light"
               style={styles.landTransportButton}
             >
@@ -3029,13 +3792,21 @@ export default function PlayerScreen() {
         </>
       ) : null}
 
-      {activeCue ? (
+      {showOnVideo && activeCue ? (
         <View
           style={[
             styles.landSubWrap,
-            {
-              bottom: controlsVisible ? Math.max(28, insets.bottom + 18) : Math.max(20, insets.bottom + 12),
-            },
+            subtitlePosition === 'top'
+              ? {
+                  top: controlsVisible
+                    ? Math.max(56, insets.top + 44)
+                    : Math.max(18, insets.top + 12),
+                }
+              : {
+                  bottom: controlsVisible
+                    ? Math.max(28, insets.bottom + 18)
+                    : Math.max(20, insets.bottom + 12),
+                },
           ]}
           pointerEvents="none"
         >
@@ -3043,9 +3814,10 @@ export default function PlayerScreen() {
             style={[
               styles.landSubBox,
               {
-                backgroundColor: controlsVisible
-                  ? 'rgba(16,13,24,0.6)'
-                  : 'rgba(0,0,0,0.28)',
+                backgroundColor:
+                  subtitleBackground > 0
+                    ? `rgba(16,13,24,${subtitleBackground})`
+                    : 'transparent',
               },
             ]}
           >
@@ -3120,196 +3892,168 @@ export default function PlayerScreen() {
     </View>
   ) : null;
 
-  const updateVisibleCueRange = (offset: number) => {
-    const height = transcriptHeightRef.current;
-    const offsets = cueOffsets.current;
-    if (!height || !cues.length) return;
-    const top = Math.max(0, offset - 24);
-    const bottom = offset + height + 24;
-    let first = -1;
-    let last = -1;
-    for (let index = 0; index < cues.length; index += 1) {
-      const y = offsets[index];
-      if (typeof y !== 'number') continue;
-      const rowBottom = offsets[index + 1] ?? y + 80;
-      if (rowBottom > top) {
-        first = index;
-        break;
-      }
-    }
-    if (first >= 0) {
-      for (let index = first; index < cues.length; index += 1) {
-        const y = offsets[index];
-        if (typeof y !== 'number') continue;
-        if (y > bottom) break;
-        last = index;
-      }
-    }
-    const current = visibleCueRangeRef.current;
-    if (current.first === first && current.last === last) return;
-    visibleCueRangeRef.current = { first, last };
-    setVisibleCueRange({ first, last });
+  const renderTranscriptCue = (cue: Cue, index: number) => {
+    const active = index === activeIndex;
+    const past = index < activeIndex;
+    const visible =
+      index >= visibleCueRange.first && index <= visibleCueRange.last;
+    const saved = active
+      ? sentenceFavorites.some(
+          (fav) => fav.id === sentenceFavoriteId(videoId, cue.start)
+        )
+      : false;
+    return (
+      <View style={styles.cue}>
+        {active ? (
+          <View style={styles.cueHeader}>
+            <Pressable
+              onPress={() => seekFromTranscript(cue, index)}
+              hitSlop={6}
+              accessibilityLabel="跳到本句"
+            >
+              <Text style={[styles.cueTime, { color: theme.colors.textTertiary }]}>
+                {formatTime(cue.start)}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => toggleCueFavorite(cue)}
+              hitSlop={8}
+              accessibilityLabel={saved ? '取消收藏这句' : '收藏这句'}
+              style={styles.cueHeart}
+            >
+              <Ionicons
+                name={saved ? 'heart' : 'heart-outline'}
+                size={22}
+                color={saved ? theme.colors.primary : theme.colors.textTertiary}
+              />
+            </Pressable>
+          </View>
+        ) : null}
+        <Pressable onPress={() => seekFromTranscript(cue, index)}>
+          <CueFade
+            active={active}
+            paused={!playing}
+            visible={visible}
+            past={past}
+          >
+            {showOriginal ? (
+              <Text
+                style={[
+                  styles.cueOriginal,
+                  {
+                    color: active ? theme.colors.primary : theme.colors.text,
+                    fontSize: Math.max(14, fontSize),
+                    lineHeight: transcriptOriginalLineHeight,
+                    fontFamily: originalFont,
+                    fontWeight: originalWeight,
+                  },
+                  active && { fontWeight: '800' },
+                ]}
+              >
+                {cue.text}
+              </Text>
+            ) : null}
+            {showTranslation && cue.translation ? (
+              <Text
+                style={[
+                  styles.cueTranslation,
+                  {
+                    color: theme.colors.textSecondary,
+                    fontSize: Math.max(12, fontSize - (showOriginal ? 3 : 0)),
+                    lineHeight: transcriptTranslationLineHeight,
+                    marginTop: showOriginal ? 10 : 0,
+                    fontFamily: translationFont,
+                    fontWeight: translationWeight,
+                  },
+                  active && {
+                    color: showOriginal
+                      ? theme.colors.text
+                      : theme.colors.primary,
+                  },
+                ]}
+              >
+                {cue.translation}
+              </Text>
+            ) : null}
+            {showTranslation && !cue.translation && translationPending ? (
+              <CueTranslationSkeleton
+                text={cue.text}
+                color={theme.colors.border}
+                height={Math.max(
+                  9,
+                  Math.round(
+                    Math.max(12, fontSize - (showOriginal ? 3 : 0)) * 0.62
+                  )
+                )}
+                marginTop={showOriginal ? 10 : 0}
+                opacity={active ? 1 : past ? 0.5 : 0.38}
+              />
+            ) : null}
+          </CueFade>
+        </Pressable>
+      </View>
+    );
   };
 
   const transcript = (
     <View style={styles.transcriptWrap}>
-      <ScrollView
+      <FlatList
         ref={scrollRef}
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 10, paddingBottom: 240 }}
+        data={cues}
+        keyExtractor={(cue, index) => `${cue.start}-${index}`}
+        renderItem={({ item, index }) => renderTranscriptCue(item, index)}
+        extraData={`${activeIndex}|${playing}|${visibleCueRange.first}|${visibleCueRange.last}`}
+        initialNumToRender={12}
+        maxToRenderPerBatch={10}
+        updateCellsBatchingPeriod={40}
+        windowSize={5}
+        removeClippedSubviews={false}
+        contentContainerStyle={{
+          paddingHorizontal: PLAYER_GUTTER - 8,
+          paddingTop: 10,
+          paddingBottom: 240,
+          flexGrow: cues.length === 0 ? 1 : 0,
+        }}
         showsVerticalScrollIndicator={false}
         alwaysBounceVertical
-        scrollEventThrottle={16}
-        onScroll={(event) => {
-          const offset = event.nativeEvent.contentOffset.y;
-          transcriptScrollRef.current = offset;
-          updateVisibleCueRange(offset);
-        }}
         onScrollBeginDrag={() => {
+          pendingScrollRef.current = null;
           followingTranscriptRef.current = false;
           setFollowingTranscript(false);
         }}
-        onMomentumScrollEnd={(event) => {
-          maybeResumeTranscriptFollow(event.nativeEvent.contentOffset.y);
+        onMomentumScrollEnd={() => {
+          maybeResumeTranscriptFollow();
         }}
         onContentSizeChange={() => {
-          updateVisibleCueRange(transcriptScrollRef.current);
           if (!followingTranscriptRef.current || transcriptInitializedRef.current) return;
           requestAnimationFrame(() => scrollTranscriptToActive(false));
         }}
-        onLayout={(event) => {
-          transcriptHeightRef.current = event.nativeEvent.layout.height;
-          requestAnimationFrame(() =>
-            updateVisibleCueRange(transcriptScrollRef.current)
-          );
+        onLayout={() => {
           if (!followingTranscriptRef.current) return;
           requestAnimationFrame(() => scrollTranscriptToActive(false));
         }}
-      >
-        {cues.length === 0 ? (
+        onViewableItemsChanged={onTranscriptViewableItemsChanged}
+        viewabilityConfig={transcriptViewabilityConfig}
+        onScrollToIndexFailed={handleScrollToIndexFailed}
+        ListEmptyComponent={
           <View style={styles.emptyTranscript}>
-            <Ionicons name="document-text-outline" size={34} color={theme.colors.textTertiary} />
-            <Text style={[styles.emptyTranscriptText, { color: theme.colors.textSecondary }]}>
+            <Ionicons
+              name="document-text-outline"
+              size={34}
+              color={theme.colors.textTertiary}
+            />
+            <Text
+              style={[
+                styles.emptyTranscriptText,
+                { color: theme.colors.textSecondary },
+              ]}
+            >
               {status || '这个视频还没有可用字幕'}
             </Text>
           </View>
-        ) : (
-          cues.map((cue, index) => {
-            const active = index === activeIndex;
-            const past = index < activeIndex;
-            const visible =
-              index >= visibleCueRange.first && index <= visibleCueRange.last;
-            const saved = active
-              ? sentenceFavorites.some((fav) => fav.id === sentenceFavoriteId(videoId, cue.start))
-              : false;
-            return (
-              <View
-                key={`${cue.start}-${index}`}
-                onLayout={(event) => {
-                  cueOffsets.current[index] = event.nativeEvent.layout.y;
-                  if (index === activeIndex) {
-                    requestAnimationFrame(() =>
-                      updateVisibleCueRange(transcriptScrollRef.current)
-                    );
-                  }
-                  if (index === activeIndex && followingTranscriptRef.current) {
-                    const y = event.nativeEvent.layout.y;
-                    const animated = transcriptInitializedRef.current;
-                    transcriptInitializedRef.current = true;
-                    requestAnimationFrame(() => {
-                      if (followingTranscriptRef.current) {
-                        scrollRef.current?.scrollTo({ y, animated });
-                      }
-                    });
-                  }
-                }}
-                style={styles.cue}
-              >
-                {active ? (
-                  <View style={styles.cueHeader}>
-                    <Pressable
-                      onPress={() => seekFromTranscript(cue, index)}
-                      hitSlop={6}
-                      accessibilityLabel="跳到本句"
-                    >
-                      <Text style={[styles.cueTime, { color: theme.colors.textTertiary }]}>
-                        {formatTime(cue.start)}
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => toggleCueFavorite(cue)}
-                      hitSlop={8}
-                      accessibilityLabel={saved ? '取消收藏这句' : '收藏这句'}
-                      style={styles.cueHeart}
-                    >
-                      <Ionicons
-                        name={saved ? 'heart' : 'heart-outline'}
-                        size={22}
-                        color={saved ? theme.colors.primary : theme.colors.textTertiary}
-                      />
-                    </Pressable>
-                  </View>
-                ) : null}
-                <Pressable onPress={() => seekFromTranscript(cue, index)}>
-                  <CueFade
-                    active={active}
-                    paused={!playing}
-                    visible={visible}
-                    past={past}
-                  >
-                  {showOriginal ? (
-                    <Text
-                      style={[
-                        styles.cueOriginal,
-                        {
-                          color: active
-                            ? theme.colors.primary
-                            : theme.colors.text,
-                          fontSize: Math.max(14, fontSize),
-                          lineHeight: transcriptOriginalLineHeight,
-                          fontFamily: originalFont,
-                          fontWeight: originalWeight,
-                        },
-                        active && { fontWeight: '800' },
-                      ]}
-                    >
-                      {cue.text}
-                    </Text>
-                  ) : null}
-                  {showTranslation && cue.translation ? (
-                    <Text
-                      style={[
-                        styles.cueTranslation,
-                        {
-                          color: theme.colors.textSecondary,
-                          fontSize: Math.max(12, fontSize - (showOriginal ? 3 : 0)),
-                          lineHeight: transcriptTranslationLineHeight,
-                          marginTop: showOriginal ? 10 : 0,
-                          fontFamily: translationFont,
-                          fontWeight: translationWeight,
-                        },
-                        active && { color: showOriginal ? theme.colors.text : theme.colors.primary },
-                      ]}
-                    >
-                      {cue.translation}
-                    </Text>
-                  ) : null}
-                  {showTranslation && !cue.translation && translationPending ? (
-                    <CueTranslationSkeleton
-                      text={cue.text}
-                      color={theme.colors.border}
-                      height={Math.max(9, Math.round(Math.max(12, fontSize - (showOriginal ? 3 : 0)) * 0.62))}
-                      marginTop={showOriginal ? 10 : 0}
-                      opacity={active ? 1 : past ? 0.5 : 0.38}
-                    />
-                  ) : null}
-                  </CueFade>
-                </Pressable>
-              </View>
-            );
-          })
-        )}
-      </ScrollView>
+        }
+      />
       {!followingTranscript && activeCue ? (
         <Pressable
           onPress={resumeTranscriptFollow}
@@ -3631,7 +4375,7 @@ export default function PlayerScreen() {
               onPress={openListeningSettings}
               hitSlop={10}
             >
-              <Ionicons name="ellipsis-horizontal" size={22} color={theme.colors.text} />
+              <Ionicons name="ellipsis-vertical" size={22} color={theme.colors.text} />
             </Pressable>
           </>
         ) : (
@@ -3697,7 +4441,7 @@ export default function PlayerScreen() {
               onPress={openMainSettings}
               hitSlop={10}
             >
-              <Ionicons name="ellipsis-horizontal" size={22} color={theme.colors.text} />
+              <Ionicons name="ellipsis-vertical" size={22} color={theme.colors.text} />
             </Pressable>
           </>
         )}
@@ -3708,7 +4452,7 @@ export default function PlayerScreen() {
       {!landscape ? (
         <View style={{ flex: 1 }}>
           {blindMode ? (
-            <View style={{ paddingHorizontal: 18, paddingTop: 10 }}>
+            <View style={{ paddingHorizontal: PLAYER_GUTTER, paddingTop: 10 }}>
               {progress}
             </View>
           ) : null}
@@ -3730,7 +4474,7 @@ export default function PlayerScreen() {
                   </View>
                 </View>
               ) : null}
-              {transcript}
+              {transcriptVisible ? transcript : null}
             </>
           )}
           {controls}
@@ -4931,6 +5675,7 @@ export default function PlayerScreen() {
       // source captions and every saved batch for this video, then reload.
       await clearCachedCaptions(videoId, learningLang);
       await removeKeysByPrefix(`cues:v3:${videoId}:`);
+      await removeKeysByPrefix(`cues:v4:${videoId}:`);
       setSourceCues([]);
       setTranslatedCues(null);
       setTrackKey('');
@@ -5036,7 +5781,7 @@ const styles = StyleSheet.create({
   headerSubtitle: { color: '#8D849D', fontSize: 11, marginTop: 2 },
   headerProvider: { color: '#8D849D', fontSize: 10.5, fontWeight: '600' },
   videoFrame: {
-    marginHorizontal: 14,
+    marginHorizontal: PLAYER_GUTTER,
     backgroundColor: '#000000',
     overflow: 'hidden',
     ...radiusStyle(RADIUS.card),
@@ -5208,9 +5953,10 @@ const styles = StyleSheet.create({
   cueTranslation: { color: '#746B85', lineHeight: 24, marginTop: 0 },
   emptyTranscript: { alignItems: 'center', paddingTop: 36, gap: 10 },
   emptyTranscriptText: { color: '#8D849D', fontSize: 12, textAlign: 'center', lineHeight: 18, paddingHorizontal: 20 },
-  controls: { backgroundColor: '#120E1B', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#241C33', paddingHorizontal: 18, paddingTop: 6 },
+  controls: { backgroundColor: '#120E1B', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#241C33', paddingHorizontal: PLAYER_GUTTER, paddingTop: 6 },
   progressTouch: { height: 22, justifyContent: 'center' },
   progressRail: { height: 4, ...radiusStyle(RADIUS.pill), backgroundColor: '#2B2340', overflow: 'hidden' },
+  progressBuffer: { position: 'absolute', top: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.22)' },
   progressFill: { height: '100%', ...radiusStyle(RADIUS.pill), backgroundColor: '#446B5B' },
   progressThumb: {
     position: 'absolute',
@@ -5254,7 +6000,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.1,
   },
   loopButton: {
-    width: 38,
+    width: 44,
     height: 34,
     ...radiusStyle(RADIUS.pill),
     alignItems: 'center',
@@ -5339,6 +6085,8 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   landTime: {
+    width: 50,
+    textAlign: 'center',
     color: '#EDE9F7',
     fontSize: 13,
     fontVariant: ['tabular-nums'],
@@ -5358,6 +6106,7 @@ const styles = StyleSheet.create({
   },
   landProgressTouch: { flex: 1, height: 28, justifyContent: 'center', minWidth: 80 },
   landProgressRail: { height: 4, ...radiusStyle(RADIUS.pill), backgroundColor: 'rgba(255,255,255,0.28)', overflow: 'hidden' },
+  landProgressBuffer: { position: 'absolute', top: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.42)' },
   landProgressFill: { height: '100%', backgroundColor: '#FFFFFF' },
   landIconButton: {
     width: 40,
@@ -5395,6 +6144,20 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(18,15,23,0.55)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  landBuffering: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    width: 62,
+    height: 62,
+    marginLeft: -31,
+    marginTop: -31,
+    ...radiusStyle(RADIUS.pill),
+    backgroundColor: 'rgba(18,15,23,0.62)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 7,
   },
   landPlay: {
     width: 62,
@@ -5438,7 +6201,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 6,
   },
   landSubTranslation: {
-    color: '#E9E3F5',
+    color: '#FFFFFF',
     lineHeight: 24,
     textAlign: 'center',
     marginTop: 2,

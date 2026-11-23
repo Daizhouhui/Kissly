@@ -147,7 +147,7 @@ async function fetchPlayerWithClient(
     const response = await httpJson(url, {
       method: 'POST',
       body,
-      timeoutMs: 20000,
+      timeoutMs: 15000,
       headers: {
         ...BROWSER_HEADERS,
         ...client.headers,
@@ -166,7 +166,7 @@ async function fetchPlayerFromWatchPage(videoId: string): Promise<any | null> {
   try {
     const url = `https://www.youtube.com/watch?v=${videoId}&hl=en&bpctr=9999999999&has_verified=1`;
     const response = await httpText(url, {
-      timeoutMs: 25000,
+      timeoutMs: 15000,
       headers: {
         ...BROWSER_HEADERS,
         Accept:
@@ -181,6 +181,8 @@ async function fetchPlayerFromWatchPage(videoId: string): Promise<any | null> {
 }
 
 export async function getVideoMeta(videoId: string): Promise<VideoMeta> {
+  // Query one client at a time. Firing every client at once competes with the
+  // WebView's own video requests and made the first frame arrive much later.
   let fallback: VideoMeta | null = null;
   for (const client of CLIENTS) {
     const response = await fetchPlayerWithClient(videoId, client);
@@ -277,6 +279,20 @@ function withAndroidClient(baseUrl: string): string {
   return `${clean}${joiner}c=ANDROID`;
 }
 
+function captionIsComplete(cues: Cue[], durationSeconds: number): boolean {
+  if (!cues.length || durationSeconds <= 0) return false;
+  const lastEnd = cues.reduce((max, cue) => Math.max(max, cue.end), 0);
+  let gapSeconds = 0;
+  for (let index = 1; index < cues.length; index += 1) {
+    const gap = cues[index].start - cues[index - 1].end;
+    if (gap > 2.5) gapSeconds += gap;
+  }
+  return (
+    lastEnd >= durationSeconds * 0.92 &&
+    gapSeconds <= Math.max(8, durationSeconds * 0.12)
+  );
+}
+
 export async function fetchCaptionCues(
   track: CaptionTrack,
   durationSeconds = 0,
@@ -308,12 +324,14 @@ export async function fetchCaptionCues(
     },
     { label: 'srv3', rank: 3, url: withFormat(track.baseUrl, 'srv3') },
   ];
-  let best: Cue[] = [];
-  let bestScore = -Infinity;
-  for (const variant of variants) {
+  type VariantResult = { cues: Cue[]; score: number } | null;
+  const fetchVariant = async (
+    variant: (typeof variants)[number],
+    timeoutMs: number
+  ): Promise<VariantResult> => {
     try {
       const response = await httpText(variant.url, {
-        timeoutMs: 10000,
+        timeoutMs,
         headers: {
           ...BROWSER_HEADERS,
           'User-Agent':
@@ -325,32 +343,45 @@ export async function fetchCaptionCues(
           Referer: 'https://m.youtube.com/',
         },
       });
-      if (response.status !== 200 || !response.text.trim()) continue;
+      if (response.status !== 200 || !response.text.trim()) return null;
       const cues = parseCaptionText(response.text, track.languageCode);
-      if (!cues.length) continue;
-      const score = captionQualityScore(cues, durationSeconds) + variant.rank;
-      if (score > bestScore) {
-        bestScore = score;
-        best = cues;
-      }
-      if (variant.label === 'vtt' && durationSeconds > 0) {
-        const lastEnd = cues.reduce((max, cue) => Math.max(max, cue.end), 0);
-        const covered = cues.reduce(
-          (sum, cue) => sum + Math.max(0, cue.end - cue.start),
-          0
-        );
-        // Only skip the remaining formats when the VTT really covers the
-        // whole video. Otherwise a partial VTT must be compared against the
-        // json3/srv3 responses.
-        if (covered / durationSeconds >= 0.92 && lastEnd / durationSeconds >= 0.95) {
-          return cues;
-        }
-      }
+      if (!cues.length) return null;
+      return {
+        cues,
+        score: captionQualityScore(cues, durationSeconds) + variant.rank,
+      };
     } catch {
-      // Try the next caption format.
+      return null;
+    }
+  };
+
+  const candidates: NonNullable<VariantResult>[] = [];
+
+  // Most healthy tracks are complete in one of these two responses. Do not
+  // compete with the video's first-frame download by firing all seven formats.
+  for (const variant of variants.slice(0, 2)) {
+    const result = await fetchVariant(variant, 4000);
+    if (result) candidates.push(result);
+    if (result && captionIsComplete(result.cues, durationSeconds)) {
+      return result.cues;
     }
   }
-  if (best.length) return best;
+
+  // If both preferred responses are truncated or blocked, retain the old
+  // parallel fallback so worst-case latency stays bounded instead of becoming
+  // seven sequential eight-second waits.
+  const remaining = await Promise.all(
+    variants.slice(2).map((variant) => fetchVariant(variant, 8000))
+  );
+  for (const result of remaining) {
+    if (result) candidates.push(result);
+  }
+  const best = candidates.reduce<VariantResult>(
+    (current, result) =>
+      !current || result.score > current.score ? result : current,
+    null
+  );
+  if (best) return best.cues;
   throw new Error('该视频没有可用的字幕数据');
 }
 

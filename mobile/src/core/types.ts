@@ -1,12 +1,23 @@
+export type AutoFreeProviderId = 'microsoft' | 'google' | 'google2';
+
+export type AutoPaidProviderId =
+  | 'deepseek'
+  | 'siliconflow'
+  | 'openrouter'
+  | 'openai';
+
+export type OpenAiProfile = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  model: string;
+};
+
 export type ProviderId =
   | 'auto'
   | 'system'
-  | 'microsoft'
-  | 'google'
-  | 'google2'
-  | 'deepseek'
-  | 'siliconflow'
-  | 'openai';
+  | AutoFreeProviderId
+  | AutoPaidProviderId;
 
 export type SubtitleMode = 'bilingual' | 'original' | 'translation';
 
@@ -15,6 +26,7 @@ export type SubtitlePosition = 'bottom' | 'top';
 export type ThemePreference = 'system' | 'light' | 'dark';
 
 export type ThemeAccent =
+  | 'youtube'
   | 'sage'
   | 'violet'
   | 'blue'
@@ -27,7 +39,7 @@ export type DiscoverLayout = 'list' | 'grid' | 'large';
 
 export type TitleTranslationMode = 'none' | 'bilingual' | 'translation';
 
-export type DefaultTab = 'video' | 'podcast' | 'learning' | 'me';
+export type DefaultTab = 'video' | 'podcast' | 'learning';
 
 export type SubtitleScrollMode = 'top' | 'page';
 
@@ -93,6 +105,10 @@ export type Settings = {
   interfaceLang: string;
   provider: ProviderId;
   autoFallbackDeepSeek: boolean;
+  /** Auto mode tries these free engines in this order. */
+  autoFreeOrder: AutoFreeProviderId[];
+  /** Paid engines tried after the free chain when fallback is enabled. */
+  autoPaidOrder: AutoPaidProviderId[];
   translateTitles: boolean;
   titleTranslationMode: TitleTranslationMode;
   defaultTab: DefaultTab;
@@ -108,6 +124,10 @@ export type Settings = {
   webdav: WebDavConfig;
   deepseekModel: string;
   siliconflowModel: string;
+  openrouterModel: string;
+  /** Saved OpenAI-compatible endpoints; the active one mirrors the legacy fields below. */
+  openaiProfiles: OpenAiProfile[];
+  openaiProfileId: string;
   openaiBaseUrl: string;
   openaiModel: string;
   requestTimeoutMs: number;
@@ -183,6 +203,22 @@ export type FavoriteItem = {
   thumbnail?: string;
   savedAt: number;
   progress?: number;
+  duration?: number;
+};
+
+export type HistoryItem = {
+  videoId: string;
+  title: string;
+  author: string;
+  thumbnail?: string;
+  /** First time this video entered history; never rewritten. */
+  savedAt: number;
+  /** Last time progress was accepted; drives "最近观看". */
+  lastWatchedAt: number;
+  /** Furthest watched fraction, monotonic. */
+  progress: number;
+  /** Last playback position in seconds. */
+  resumeAt?: number;
   duration?: number;
 };
 

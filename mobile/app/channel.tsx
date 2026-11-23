@@ -1,12 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
   Modal,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -15,11 +14,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../src/core/store';
 import { VideoItem } from '../src/core/types';
+import { resumeTarget } from '../src/core/watchProgress';
 import { fetchChannelDescription } from '../src/core/youtube/channel';
 import {
   ChannelPlaylist,
   fetchChannelPlaylistsPage,
   fetchChannelVideosPage,
+  fetchPlaylistVideosPage,
 } from '../src/core/youtube/channelVideos';
 import { fetchChannelFeed, fetchPlaylistFeed } from '../src/core/youtube/rss';
 import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
@@ -56,9 +57,14 @@ export default function ChannelScreen() {
   const subscribers = String(params.subscribers ?? '');
   const videos = String(params.videos ?? '');
   const subscriptions = useAppStore((state) => state.subscriptions);
+  const history = useAppStore((state) => state.history);
   const addSubscription = useAppStore((state) => state.addSubscription);
   const removeSubscription = useAppStore((state) => state.removeSubscription);
   const subscribed = subscriptions.some((sub) => sub.channelId === channelId);
+  const savedById = useMemo(
+    () => new Map(history.map((item) => [item.videoId, item])),
+    [history]
+  );
 
   const [items, setItems] = useState<VideoItem[]>([]);
   const [visible, setVisible] = useState(PAGE);
@@ -74,8 +80,11 @@ export default function ChannelScreen() {
   const [playlistError, setPlaylistError] = useState('');
   const [selectedPlaylist, setSelectedPlaylist] = useState<ChannelPlaylist | null>(null);
   const [playlistItems, setPlaylistItems] = useState<VideoItem[]>([]);
+  const [playlistContinuation, setPlaylistContinuation] = useState<string | undefined>();
   const [playlistVideosLoading, setPlaylistVideosLoading] = useState(false);
+  const [playlistLoadingMore, setPlaylistLoadingMore] = useState(false);
   const requestRef = useRef(0);
+  const playlistRequestRef = useRef(0);
 
   useEffect(() => {
     if (!channelId) return;
@@ -127,12 +136,14 @@ export default function ChannelScreen() {
     }
     if (!continuation) return;
     setLoadingMore(true);
+    const requestId = requestRef.current;
     try {
       const page = await fetchChannelVideosPage(channelId, {
         continuation,
         channelTitle: title,
         channelAvatar: avatar,
       });
+      if (requestId !== requestRef.current) return;
       const seen = new Set(items.map((item) => item.videoId));
       const fresh = page.items.filter((item) => !seen.has(item.videoId));
       const merged = [...items, ...fresh];
@@ -140,7 +151,8 @@ export default function ChannelScreen() {
       setContinuation(page.continuation);
       setVisible((count) => Math.min(merged.length, count + PAGE));
     } catch {
-      setContinuation(undefined);
+      // Keep the continuation token so a transient network failure can be
+      // retried by tapping "load more" again instead of ending pagination.
     } finally {
       setLoadingMore(false);
     }
@@ -161,16 +173,66 @@ export default function ChannelScreen() {
   };
 
   const openPlaylist = async (playlist: ChannelPlaylist) => {
+    const requestId = ++playlistRequestRef.current;
     setSelectedPlaylist(playlist);
     setPlaylistItems([]);
+    setPlaylistContinuation(undefined);
     setPlaylistVideosLoading(true);
     try {
-      const videos = await fetchPlaylistFeed(playlist.playlistId);
-      setPlaylistItems(videos);
+      const page = await fetchPlaylistVideosPage(playlist.playlistId, {
+        channelId,
+        channelTitle: title,
+        channelAvatar: avatar || undefined,
+      });
+      if (requestId !== playlistRequestRef.current) return;
+      setPlaylistItems(page.items);
+      setPlaylistContinuation(page.continuation);
     } catch {
-      setPlaylistItems([]);
+      try {
+        const videos = await fetchPlaylistFeed(playlist.playlistId);
+        if (requestId !== playlistRequestRef.current) return;
+        setPlaylistItems(videos);
+        setPlaylistContinuation(undefined);
+      } catch {
+        if (requestId !== playlistRequestRef.current) return;
+        setPlaylistItems([]);
+      }
     } finally {
-      setPlaylistVideosLoading(false);
+      if (requestId === playlistRequestRef.current) {
+        setPlaylistVideosLoading(false);
+      }
+    }
+  };
+
+  const loadMorePlaylist = async () => {
+    if (
+      !selectedPlaylist ||
+      !playlistContinuation ||
+      playlistLoadingMore ||
+      playlistVideosLoading
+    ) {
+      return;
+    }
+    const requestId = playlistRequestRef.current;
+    setPlaylistLoadingMore(true);
+    try {
+      const page = await fetchPlaylistVideosPage(selectedPlaylist.playlistId, {
+        continuation: playlistContinuation,
+        channelId,
+        channelTitle: title,
+        channelAvatar: avatar || undefined,
+      });
+      if (requestId !== playlistRequestRef.current) return;
+      const seen = new Set(playlistItems.map((item) => item.videoId));
+      const fresh = page.items.filter((item) => !seen.has(item.videoId));
+      setPlaylistItems((current) => [...current, ...fresh]);
+      setPlaylistContinuation(page.continuation);
+    } catch {
+      // Keep the token so the user can retry after a transient failure.
+    } finally {
+      if (requestId === playlistRequestRef.current) {
+        setPlaylistLoadingMore(false);
+      }
     }
   };
 
@@ -191,11 +253,25 @@ export default function ChannelScreen() {
     }
   };
 
+  const openVideo = (item: VideoItem) => {
+    const saved = savedById.get(item.videoId);
+    const startAt = saved ? resumeTarget(saved) : 0;
+    router.push({
+      pathname: '/player',
+      params: {
+        videoId: item.videoId,
+        title: item.title,
+        author: title,
+        ...(startAt > 0 ? { startAt: String(startAt) } : {}),
+      },
+    } as any);
+  };
+
   const latestItems = [...items].sort((a, b) => b.published - a.published);
   const popularItems = [...items].sort(
     (a, b) => (b.viewCount ?? 0) - (a.viewCount ?? 0) || b.published - a.published
   );
-  const data = tab === 'latest' ? latestItems.slice(0, visible) : tab === 'popular' ? popularItems : [];
+  const data = tab === 'latest' ? latestItems.slice(0, visible) : tab === 'popular' ? popularItems.slice(0, visible) : [];
   const averageDuration = items.length
     ? Math.round(items.reduce((sum, item) => sum + (item.duration ?? 0), 0) / items.length / 60)
     : 0;
@@ -265,10 +341,7 @@ export default function ChannelScreen() {
             onPress={() => {
               const first = latestItems[0];
               if (!first) return;
-              router.push({
-                pathname: '/player',
-                params: { videoId: first.videoId, title: first.title, author: title },
-              } as any);
+              openVideo(first);
             }}
             disabled={!latestItems[0]}
             tone="onColor"
@@ -395,15 +468,10 @@ export default function ChannelScreen() {
         renderItem={({ item }) => (
           <VideoCard
             item={{ ...item, channelAvatar: avatar || item.channelAvatar }}
-            onPress={() =>
-              router.push({
-                pathname: '/player',
-                params: { videoId: item.videoId, title: item.title, author: title },
-              } as any)
-            }
+            onPress={() => openVideo(item)}
           />
         )}
-        onEndReached={tab === 'latest' ? loadMore : undefined}
+        onEndReached={tab === 'playlists' ? undefined : loadMore}
         onEndReachedThreshold={0.5}
         ListEmptyComponent={
           tab === 'playlists' ? (
@@ -425,7 +493,7 @@ export default function ChannelScreen() {
           ) : undefined
         }
         ListFooterComponent={
-          tab === 'latest' && items.length ? (
+          tab !== 'playlists' && items.length ? (
             <View style={{ paddingVertical: 14, alignItems: 'center', gap: 6 }}>
               {loadingMore ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
               <Text style={{ color: theme.colors.textTertiary, fontSize: 11 }}>
@@ -471,29 +539,50 @@ export default function ChannelScreen() {
                 <Ionicons name="close" size={21} color={theme.colors.text} />
               </AppPressable>
             </View>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {playlistVideosLoading ? (
-                <ActivityIndicator color={theme.colors.primary} style={{ marginTop: 26 }} />
-              ) : playlistItems.length ? (
-                playlistItems.map((item) => (
+            {playlistVideosLoading && !playlistItems.length ? (
+              <ActivityIndicator color={theme.colors.primary} style={{ marginTop: 26 }} />
+            ) : (
+              <FlatList
+                data={playlistItems}
+                keyExtractor={(item) => item.videoId}
+                onEndReached={loadMorePlaylist}
+                onEndReachedThreshold={0.5}
+                showsVerticalScrollIndicator={false}
+                renderItem={({ item }) => (
                   <VideoCard
-                    key={item.videoId}
                     item={{ ...item, channelAvatar: avatar || item.channelAvatar }}
                     onPress={() => {
                       setSelectedPlaylist(null);
-                      router.push({
-                        pathname: '/player',
-                        params: { videoId: item.videoId, title: item.title, author: title },
-                      } as any);
+                      openVideo(item);
                     }}
                   />
-                ))
-              ) : (
-                <Text style={{ color: theme.colors.textTertiary, fontSize: 12, marginTop: 20 }}>
-                  这个播放列表没有可读取的视频。
-                </Text>
-              )}
-            </ScrollView>
+                )}
+                ListEmptyComponent={
+                  <Text style={{ color: theme.colors.textTertiary, fontSize: 12, marginTop: 20 }}>
+                    这个播放列表没有可读取的视频。
+                  </Text>
+                }
+                ListFooterComponent={
+                  playlistLoadingMore ? (
+                    <ActivityIndicator
+                      color={theme.colors.primary}
+                      style={{ marginVertical: 16 }}
+                    />
+                  ) : playlistContinuation ? (
+                    <Text
+                      style={{
+                        color: theme.colors.textTertiary,
+                        fontSize: 11,
+                        textAlign: 'center',
+                        marginVertical: 12,
+                      }}
+                    >
+                      上滑加载更多
+                    </Text>
+                  ) : undefined
+                }
+              />
+            )}
           </View>
         </View>
       </Modal>

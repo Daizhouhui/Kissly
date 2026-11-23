@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAppStore } from '../../src/core/store';
@@ -62,7 +61,6 @@ function ModeChip({
 
 export default function AppearanceSettingsScreen() {
   const theme = useAppTheme();
-  const router = useRouter();
   const settings = useAppStore((state) => state.settings);
   const patchSettings = useAppStore((state) => state.patchSettings);
 
@@ -119,7 +117,7 @@ export default function AppearanceSettingsScreen() {
                   {accent.label}
                 </Text>
                 <Text style={{ color: theme.colors.textTertiary, fontSize: 10.5, marginTop: 2 }}>
-                  {accent.id === 'blue' ? '默认' : '主题色'}
+                  {accent.id === 'youtube' ? '默认' : '主题色'}
                 </Text>
               </Pressable>
             );
@@ -150,21 +148,6 @@ export default function AppearanceSettingsScreen() {
             <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '700' }}>主按钮</Text>
           </View>
         </View>
-
-        <Pressable
-          radius={0}
-          onPress={() => router.push('/settings/subtitle' as any)}
-          style={[styles.linkRow, { borderColor: theme.colors.border }]}
-        >
-          <Ionicons name="text-outline" size={18} color={theme.colors.primary} />
-          <Text style={{ color: theme.colors.text, fontSize: 13, flex: 1 }}>
-            字幕字号与显示方式
-          </Text>
-          <Text style={{ color: theme.colors.textTertiary, fontSize: 11 }}>
-            {settings.subtitle.fontSize}px
-          </Text>
-          <Ionicons name="chevron-forward" size={16} color={theme.colors.textTertiary} />
-        </Pressable>
       </ScrollView>
     </View>
   );
@@ -219,13 +202,5 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.control,
     paddingHorizontal: 16,
     paddingVertical: 9,
-  },
-  linkRow: {
-    marginTop: 22,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: 16,
   },
 });

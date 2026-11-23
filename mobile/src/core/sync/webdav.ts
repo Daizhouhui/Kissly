@@ -1,4 +1,4 @@
-import { WebDavConfig } from '../types';
+import type { WebDavConfig } from '../types';
 
 function utf8ToBase64(value: string): string {
   const chars =
@@ -36,6 +36,41 @@ function utf8ToBase64(value: string): string {
   return output;
 }
 
+export function encodeWebdavPath(value: string): string {
+  return value
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+}
+
+export function buildWebdavUrl(
+  base: string,
+  folder: string,
+  path = ''
+): string {
+  const root = base.replace(/\/+$/, '');
+  const folderPath = encodeWebdavPath(
+    (folder || 'Kissly').replace(/^\/+|\/+$/g, '')
+  );
+  const clean = path.replace(/^\/+/, '');
+  return clean
+    ? `${root}/${folderPath}/${encodeWebdavPath(clean)}`
+    : `${root}/${folderPath}`;
+}
+
+export class WebdavConflictError extends Error {
+  readonly status = 412;
+
+  constructor(message = 'WebDAV 文件已被其他设备修改，请重新同步') {
+    super(message);
+    this.name = 'WebdavConflictError';
+  }
+}
+
+export function isWebdavConflictError(error: unknown): boolean {
+  return error instanceof WebdavConflictError;
+}
+
 export class WebdavClient {
   private base: string;
   private auth: string;
@@ -48,12 +83,11 @@ export class WebdavClient {
   }
 
   private url(path: string): string {
-    const clean = path.replace(/^\/+/, '');
-    return `${this.base}/${this.folder}/${clean}`;
+    return buildWebdavUrl(this.base, this.folder, path);
   }
 
   private folderUrl(): string {
-    return `${this.base}/${this.folder}`;
+    return buildWebdavUrl(this.base, this.folder);
   }
 
   private async request(
@@ -87,12 +121,24 @@ export class WebdavClient {
   }
 
   async ensureFolder(): Promise<void> {
-    const response = await this.request('MKCOL', this.folderUrl());
-    if ([201, 200, 204, 301, 405].includes(response.status)) return;
-    if (response.status === 401 || response.status === 403) {
-      throw new Error('WebDAV 认证失败，请检查用户名和应用密码');
+    const parts = this.folder
+      .split('/')
+      .map((part) => part.trim())
+      .filter(Boolean);
+    // WebDAV has no recursive MKCOL. A folder like "Backups/Kissly" needs its
+    // parent created first, otherwise the server answers 409 forever.
+    for (let index = 0; index < parts.length; index += 1) {
+      const folderPath = parts.slice(0, index + 1).join('/');
+      const response = await this.request(
+        'MKCOL',
+        buildWebdavUrl(this.base, folderPath)
+      );
+      if ([201, 200, 204, 301, 405].includes(response.status)) continue;
+      if (response.status === 401 || response.status === 403) {
+        throw new Error('WebDAV 认证失败，请检查用户名和应用密码');
+      }
+      throw new Error(`WebDAV 创建目录失败 (${response.status})`);
     }
-    throw new Error(`WebDAV 创建目录失败 (${response.status})`);
   }
 
   async test(): Promise<void> {
@@ -141,7 +187,7 @@ export class WebdavClient {
       etag ? { 'If-Match': etag } : undefined
     );
     if (response.status === 412) {
-      throw new Error('WebDAV 文件已被其他设备修改，请重新同步');
+      throw new WebdavConflictError();
     }
     if (response.status === 401 || response.status === 403) {
       throw new Error('WebDAV 认证失败');

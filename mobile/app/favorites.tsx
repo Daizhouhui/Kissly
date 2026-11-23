@@ -6,6 +6,7 @@ import { FlatList, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../src/core/store';
+import { parseStartAt } from '../src/core/watchProgress';
 import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
 import { appAlert as Alert } from '../src/ui/app-alert';
 import { AppPressable } from '../src/ui/app-pressable';
@@ -282,12 +283,14 @@ export default function FavoritesScreen() {
                     toggleSelection(item.id);
                     return;
                   }
+                  const startAt = parseStartAt(item.start);
                   router.push({
                     pathname: '/player',
                     params: {
                       videoId: item.videoId,
                       title: item.videoTitle,
                       author: item.videoAuthor,
+                      ...(startAt > 0 ? { startAt: String(startAt) } : {}),
                     },
                   } as any);
                 }}

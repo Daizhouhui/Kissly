@@ -306,6 +306,12 @@ export default function SearchChannelsScreen() {
 
   const addPreview = () => {
     if (!preview) return;
+    if (subscribedIds.has(preview.channelId)) {
+      Alert.alert('已在订阅中', `「${preview.title}」已经订阅过了。`);
+      setPreview(null);
+      setInput('');
+      return;
+    }
     addSubscription(preview);
     Alert.alert('已添加', `「${preview.title}」已加入订阅。`);
     setPreview(null);
@@ -340,8 +346,8 @@ export default function SearchChannelsScreen() {
                 alignItems: 'center',
                 gap: 9,
                 backgroundColor: theme.colors.surfaceAlt,
-                borderRadius: RADIUS.control,
-                paddingHorizontal: 15,
+                borderRadius: RADIUS.pill,
+                paddingHorizontal: 17,
                 height: 48,
               }}
             >
@@ -480,7 +486,7 @@ export default function SearchChannelsScreen() {
                   style={{
                     height: 38,
                     paddingHorizontal: 18,
-                    borderRadius: RADIUS.control,
+                    borderRadius: RADIUS.pill,
                     alignItems: 'center',
                     justifyContent: 'center',
                     borderWidth: active ? 0 : StyleSheet.hairlineWidth,

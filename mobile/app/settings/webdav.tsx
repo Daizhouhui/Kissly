@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -38,15 +38,47 @@ export default function WebdavSettingsScreen() {
   const [enabled, setEnabled] = useState(settings.webdav.enabled);
   const [testing, setTesting] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [passwordLoaded, setPasswordLoaded] = useState(
+    Boolean(settings.webdav.password)
+  );
+  // The form mounts before AsyncStorage rehydration in some cold-start
+  // cases, so initialize from defaults and refill once the saved config
+  // arrives. Never overwrite text the user is currently editing.
+  const formEdited = useRef(false);
 
   useEffect(() => {
-    if (settings.webdav.password) return;
+    if (formEdited.current) return;
+    setUrl(settings.webdav.url || KOOFIR_WEBDAV_URL);
+    setUsername(settings.webdav.username);
+    setFolder(settings.webdav.folder || 'Kissly');
+    setEnabled(settings.webdav.enabled);
+  }, [
+    settings.webdav.url,
+    settings.webdav.username,
+    settings.webdav.folder,
+    settings.webdav.enabled,
+  ]);
+
+  useEffect(() => {
+    if (settings.webdav.password) {
+      setPasswordLoaded(true);
+      return;
+    }
+    let active = true;
     getSecret('webdavPassword').then((value) => {
+      if (!active) return;
       if (value) setPassword(value);
+      setPasswordLoaded(true);
     });
+    return () => {
+      active = false;
+    };
   }, [settings.webdav.password]);
 
   const persist = async () => {
+    // Saving before the SecureStore read completes would overwrite the stored
+    // password with the empty initial input.
+    if (!passwordLoaded) return;
     await setSecret('webdavPassword', password);
     patchSettings({
       webdav: {
@@ -57,16 +89,19 @@ export default function WebdavSettingsScreen() {
         enabled,
       },
     });
+    formEdited.current = false;
   };
 
   const test = async () => {
     setTesting(true);
     try {
       await testWebdav({
-        url: url.trim(),
+        // Test the same normalized values that "save" would persist, so
+        // clearing the field to use the placeholder does not fail the test.
+        url: url.trim() || KOOFIR_WEBDAV_URL,
         username: username.trim(),
         password,
-        folder: folder.trim(),
+        folder: folder.trim() || 'Kissly',
         enabled,
       });
       Alert.alert('连接成功', 'WebDAV 目录可以访问，保存后即可同步。');
@@ -98,13 +133,30 @@ export default function WebdavSettingsScreen() {
         right={
           <Pressable
             feedback="opacity"
+            disabled={!passwordLoaded}
             onPress={async () => {
-              await persist();
-              Alert.alert('已保存', 'WebDAV 配置已保存。');
+              try {
+                await persist();
+                Alert.alert('已保存', 'WebDAV 配置已保存。');
+              } catch (error) {
+                Alert.alert(
+                  '保存失败',
+                  error instanceof Error ? error.message : String(error)
+                );
+              }
             }}
             hitSlop={8}
           >
-            <Text style={{ color: theme.colors.primary, fontSize: 14, fontWeight: '700' }}>保存</Text>
+            <Text
+              style={{
+                color: theme.colors.primary,
+                fontSize: 14,
+                fontWeight: '700',
+                opacity: passwordLoaded ? 1 : 0.45,
+              }}
+            >
+              保存
+            </Text>
           </Pressable>
         }
       />
@@ -152,14 +204,20 @@ export default function WebdavSettingsScreen() {
           <Field
             label="服务器地址"
             value={url}
-            onChangeText={setUrl}
+            onChangeText={(value) => {
+              formEdited.current = true;
+              setUrl(value);
+            }}
             placeholder={KOOFIR_WEBDAV_URL}
             autoCapitalize="none"
           />
           <Field
             label="用户名"
             value={username}
-            onChangeText={setUsername}
+            onChangeText={(value) => {
+              formEdited.current = true;
+              setUsername(value);
+            }}
             placeholder="Koofr 登录邮箱"
             autoCapitalize="none"
           />
@@ -174,14 +232,17 @@ export default function WebdavSettingsScreen() {
           <Field
             label="同步文件夹"
             value={folder}
-            onChangeText={setFolder}
+            onChangeText={(value) => {
+              formEdited.current = true;
+              setFolder(value);
+            }}
             placeholder="Kissly"
             autoCapitalize="none"
           />
 
           <Pressable
             onPress={test}
-            disabled={testing}
+            disabled={testing || !passwordLoaded}
             style={{
               height: 44,
               borderRadius: RADIUS.control,
@@ -191,7 +252,7 @@ export default function WebdavSettingsScreen() {
               justifyContent: 'center',
               flexDirection: 'row',
               gap: 8,
-              opacity: testing ? 0.6 : 1,
+              opacity: testing || !passwordLoaded ? 0.6 : 1,
             }}
           >
             {testing ? <ActivityIndicator size="small" color={theme.colors.primary} /> : <Ionicons name="pulse" size={16} color={theme.colors.primary} />}
@@ -232,7 +293,13 @@ export default function WebdavSettingsScreen() {
                 启动 App 时自动合并，10 分钟内不重复请求
               </Text>
             </View>
-            <SettingSwitch value={enabled} onValueChange={setEnabled} />
+            <SettingSwitch
+              value={enabled}
+              onValueChange={(value) => {
+                formEdited.current = true;
+                setEnabled(value);
+              }}
+            />
           </View>
           <View
             style={{
@@ -266,7 +333,7 @@ export default function WebdavSettingsScreen() {
         <Pressable
           tone="onColor"
           onPress={runSync}
-          disabled={syncing}
+          disabled={syncing || !passwordLoaded}
           style={{
             marginTop: 20,
             height: 52,
@@ -277,7 +344,7 @@ export default function WebdavSettingsScreen() {
             justifyContent: 'center',
             flexDirection: 'row',
             gap: 8,
-            opacity: syncing ? 0.7 : 1,
+            opacity: syncing || !passwordLoaded ? 0.7 : 1,
           }}
         >
           {syncing ? <ActivityIndicator color="#fff" /> : <Ionicons name="sync" size={18} color="#fff" />}

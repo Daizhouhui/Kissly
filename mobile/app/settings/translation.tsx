@@ -9,11 +9,23 @@ import {
   View,
 } from 'react-native';
 
-import { PROVIDER_HINTS } from '../../src/core/defaults';
-import { getSecret, setSecret } from '../../src/core/secrets';
+import { PROVIDER_HINTS, PROVIDER_LABELS } from '../../src/core/defaults';
+import { getSecret, openaiProfileSecretName, setSecret } from '../../src/core/secrets';
 import { useAppStore } from '../../src/core/store';
-import { ProviderId } from '../../src/core/types';
+import {
+  AutoFreeProviderId,
+  AutoPaidProviderId,
+  OpenAiProfile,
+  ProviderId,
+} from '../../src/core/types';
 import { testTranslation } from '../../src/core/translate';
+import {
+  activeOpenAiProfile,
+  newOpenAiProfile,
+  normalizeOpenAiProfiles,
+} from '../../src/core/translate/openaiProfiles';
+import { getOpenAiProfileKey } from '../../src/core/translate/credentials';
+import { UnsupportedSystemLanguageError } from '../../src/core/translate/language';
 import {
   isSystemTranslationAvailable,
   prepareSystemLanguagePack,
@@ -39,7 +51,7 @@ const FREE: Engine[] = [
   {
     id: 'auto',
     title: '自动',
-    desc: '微软 → 谷歌 → Google 备用',
+    desc: '已缓存优先 · 免费/付费顺序可调',
     icon: 'flash',
     color: '#7C5CFF',
     badge: '推荐',
@@ -80,14 +92,6 @@ const FREE: Engine[] = [
 
 const AI: Engine[] = [
   {
-    id: 'siliconflow',
-    title: 'SiliconFlow',
-    desc: '国内直连，可选免费模型',
-    icon: 'layers',
-    color: '#7C5CFF',
-    badge: '免费额度',
-  },
-  {
     id: 'deepseek',
     title: 'DeepSeek',
     desc: '字幕翻译质量最好，按 token 计费',
@@ -96,12 +100,28 @@ const AI: Engine[] = [
     badge: '推荐',
   },
   {
+    id: 'siliconflow',
+    title: 'SiliconFlow',
+    desc: '国内直连，可选免费模型',
+    icon: 'layers',
+    color: '#7C5CFF',
+    badge: '免费额度',
+  },
+  {
+    id: 'openrouter',
+    title: 'OpenRouter',
+    desc: '聚合多家模型，需 OpenRouter Key',
+    icon: 'git-network',
+    color: '#FF7A45',
+    badge: '聚合',
+  },
+  {
     id: 'openai',
     title: 'OpenAI 兼容',
-    desc: '任意兼容接口，自填 Base URL',
+    desc: '可保存多套 Base URL、模型和 Key',
     icon: 'chatbubble-ellipses',
     color: '#111827',
-    badge: 'Premium',
+    badge: '多配置',
   },
 ];
 
@@ -112,19 +132,37 @@ export default function TranslationSettingsScreen() {
   const [provider, setProvider] = useState<ProviderId>(settings.provider);
   const [deepseekKey, setDeepseekKey] = useState('');
   const [siliconflowKey, setSiliconflowKey] = useState('');
-  const [openaiKey, setOpenaiKey] = useState('');
+  const [openrouterKey, setOpenrouterKey] = useState('');
+  const [openaiKeys, setOpenaiKeys] = useState<Record<string, string>>({});
   const [testing, setTesting] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [systemAvailable, setSystemAvailable] = useState(false);
+  const [secretsLoaded, setSecretsLoaded] = useState(false);
+  const activeProfile = activeOpenAiProfile(settings);
 
   useEffect(() => {
-    Promise.all([getSecret('deepseek'), getSecret('siliconflow'), getSecret('openai')]).then(
-      ([a, b, c]) => {
-        setDeepseekKey(a);
-        setSiliconflowKey(b);
-        setOpenaiKey(c);
-      }
-    );
+    let active = true;
+    Promise.all([
+      getSecret('deepseek'),
+      getSecret('siliconflow'),
+      getSecret('openrouter'),
+      Promise.all(
+        settings.openaiProfiles.map(async (profile) => [
+          profile.id,
+          await getOpenAiProfileKey(profile.id, true),
+        ] as const)
+      ),
+    ]).then(([deepseek, siliconflow, openrouter, profileEntries]) => {
+      if (!active) return;
+      setDeepseekKey(deepseek);
+      setSiliconflowKey(siliconflow);
+      setOpenrouterKey(openrouter);
+      setOpenaiKeys(Object.fromEntries(profileEntries));
+      setSecretsLoaded(true);
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -163,7 +201,9 @@ export default function TranslationSettingsScreen() {
                 Alert.alert('语言包已就绪', '系统内置翻译已启用，可以离线翻译字幕。');
               } catch (error) {
                 Alert.alert(
-                  '语言包下载失败',
+                  error instanceof UnsupportedSystemLanguageError
+                    ? '无法启用系统翻译'
+                    : '语言包下载失败',
                   error instanceof Error ? error.message : String(error)
                 );
               } finally {
@@ -179,30 +219,180 @@ export default function TranslationSettingsScreen() {
     patchSettings({ provider: id });
   };
 
+  const moveFree = (id: AutoFreeProviderId, delta: number) => {
+    const order = useAppStore.getState().settings.autoFreeOrder;
+    const index = order.indexOf(id);
+    const target = index + delta;
+    if (index < 0 || target < 0 || target >= order.length) return;
+    const next = [...order];
+    [next[index], next[target]] = [next[target], next[index]];
+    patchSettings({ autoFreeOrder: next });
+  };
+
+  const movePaid = (id: AutoPaidProviderId, delta: number) => {
+    const order = useAppStore.getState().settings.autoPaidOrder;
+    const index = order.indexOf(id);
+    const target = index + delta;
+    if (index < 0 || target < 0 || target >= order.length) return;
+    const next = [...order];
+    [next[index], next[target]] = [next[target], next[index]];
+    patchSettings({ autoPaidOrder: next });
+  };
+
+  const updateActiveProfile = (patch: Partial<OpenAiProfile>) => {
+    const current = useAppStore.getState().settings;
+    const active = activeOpenAiProfile(current);
+    const profiles = current.openaiProfiles.map((profile) =>
+      profile.id === active.id ? { ...profile, ...patch } : profile
+    );
+    const updated =
+      profiles.find((profile) => profile.id === active.id) ?? profiles[0];
+    patchSettings({
+      openaiProfiles: profiles,
+      openaiBaseUrl: updated.baseUrl,
+      openaiModel: updated.model,
+    });
+  };
+
+  const selectOpenAiProfile = (id: string) => {
+    const current = useAppStore.getState().settings;
+    const profile = current.openaiProfiles.find((item) => item.id === id);
+    if (!profile) return;
+    patchSettings({
+      openaiProfileId: profile.id,
+      openaiBaseUrl: profile.baseUrl,
+      openaiModel: profile.model,
+    });
+  };
+
+  const addOpenAiProfile = () => {
+    const current = useAppStore.getState().settings;
+    const profiles = normalizeOpenAiProfiles(
+      current.openaiProfiles,
+      current.openaiBaseUrl,
+      current.openaiModel
+    );
+    const profile = newOpenAiProfile(profiles.length);
+    const next = [...profiles, profile];
+    patchSettings({
+      openaiProfiles: next,
+      openaiProfileId: profile.id,
+      openaiBaseUrl: profile.baseUrl,
+      openaiModel: profile.model,
+    });
+    setOpenaiKeys((keys) => ({ ...keys, [profile.id]: '' }));
+  };
+
+  const deleteOpenAiProfile = (profile: OpenAiProfile) => {
+    const current = useAppStore.getState().settings;
+    if (current.openaiProfiles.length <= 1) {
+      Alert.alert('无法删除', '至少保留一套 OpenAI 兼容配置。');
+      return;
+    }
+    Alert.alert(
+      '删除这套配置？',
+      `“${profile.name || '未命名配置'}”的 Base URL、模型和 API Key 都会被删除；已翻译的缓存不受影响。`,
+      [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '删除',
+          style: 'destructive',
+          onPress: () => {
+            const latest = useAppStore.getState().settings;
+            const remaining = latest.openaiProfiles.filter(
+              (item) => item.id !== profile.id
+            );
+            if (!remaining.length) return;
+            const active =
+              remaining.find(
+                (item) => item.id === latest.openaiProfileId
+              ) ?? remaining[0];
+            patchSettings({
+              openaiProfiles: remaining,
+              openaiProfileId: active.id,
+              openaiBaseUrl: active.baseUrl,
+              openaiModel: active.model,
+            });
+            setOpenaiKeys((keys) => {
+              const next = { ...keys };
+              delete next[profile.id];
+              return next;
+            });
+            void setSecret(openaiProfileSecretName(profile.id), '').catch(() => {});
+          },
+        },
+      ]
+    );
+  };
+
   const saveKeys = async () => {
-    await Promise.all([
-      setSecret('deepseek', deepseekKey.trim()),
-      setSecret('siliconflow', siliconflowKey.trim()),
-      setSecret('openai', openaiKey.trim()),
-    ]);
-    patchSettings({ provider });
-    Alert.alert('已保存', '翻译引擎与密钥已更新。');
+    // Do not write the empty placeholders back over saved keys while the
+    // SecureStore reads are still in flight.
+    if (!secretsLoaded) return;
+    try {
+      await Promise.all([
+        setSecret('deepseek', deepseekKey.trim()),
+        setSecret('siliconflow', siliconflowKey.trim()),
+        setSecret('openrouter', openrouterKey.trim()),
+        ...settings.openaiProfiles.map((profile) =>
+          setSecret(
+            openaiProfileSecretName(profile.id),
+            (openaiKeys[profile.id] ?? '').trim()
+          )
+        ),
+      ]);
+      // Keep the old single-key slot in sync for installs that downgrade.
+      const defaultProfile = settings.openaiProfiles.find(
+        (profile) => profile.id === 'default'
+      );
+      if (defaultProfile) {
+        await setSecret(
+          'openai',
+          (openaiKeys[defaultProfile.id] ?? '').trim()
+        );
+      }
+      patchSettings({ provider });
+      Alert.alert('已保存', '翻译引擎与密钥已更新。');
+    } catch (error) {
+      Alert.alert(
+        '保存失败',
+        error instanceof Error ? error.message : String(error)
+      );
+    }
   };
 
   const test = async () => {
-    const target = provider === 'auto' ? 'microsoft' : provider;
+    const target =
+      provider === 'auto'
+        ? (settings.autoFreeOrder[0] ?? 'microsoft')
+        : provider;
+    let temporarySecret: {
+      name: ReturnType<typeof openaiProfileSecretName> | 'deepseek' | 'siliconflow' | 'openrouter';
+      previous: string;
+    } | null = null;
     setTesting(true);
     try {
-      // The test must use the key currently typed in the field, not the one
-      // that happened to be saved before the user started editing.
-      if (provider === 'deepseek') await setSecret('deepseek', deepseekKey.trim());
-      if (provider === 'siliconflow') await setSecret('siliconflow', siliconflowKey.trim());
-      if (provider === 'openai') await setSecret('openai', openaiKey.trim());
+      // The test must use the key currently typed in the field without
+      // persisting it. A failed test leaves the saved key untouched.
+      if (provider === 'deepseek' || provider === 'siliconflow' || provider === 'openrouter') {
+        const name = provider;
+        const previous = await getSecret(name);
+        temporarySecret = { name, previous };
+        await setSecret(name, (provider === 'deepseek' ? deepseekKey : provider === 'siliconflow' ? siliconflowKey : openrouterKey).trim());
+      } else if (provider === 'openai') {
+        const name = openaiProfileSecretName(activeProfile.id);
+        const previous = await getSecret(name);
+        temporarySecret = { name, previous };
+        await setSecret(name, (openaiKeys[activeProfile.id] ?? '').trim());
+      }
       const text = await testTranslation(target);
       Alert.alert('连接成功', `返回：${text}`);
     } catch (error) {
       Alert.alert('连接失败', error instanceof Error ? error.message : String(error));
     } finally {
+      if (temporarySecret) {
+        await setSecret(temporarySecret.name, temporarySecret.previous).catch(() => {});
+      }
       setTesting(false);
     }
   };
@@ -315,8 +505,22 @@ export default function TranslationSettingsScreen() {
         title="翻译引擎"
         subtitle="免费优先，AI 兜底"
         right={
-          <Pressable onPress={saveKeys} hitSlop={8} feedback="opacity">
-            <Text style={{ color: theme.colors.primary, fontSize: 14, fontWeight: '700' }}>保存</Text>
+          <Pressable
+            onPress={saveKeys}
+            disabled={!secretsLoaded}
+            hitSlop={8}
+            feedback="opacity"
+          >
+            <Text
+              style={{
+                color: theme.colors.primary,
+                fontSize: 14,
+                fontWeight: '700',
+                opacity: secretsLoaded ? 1 : 0.45,
+              }}
+            >
+              保存
+            </Text>
           </Pressable>
         }
       />
@@ -335,23 +539,65 @@ export default function TranslationSettingsScreen() {
           {PROVIDER_HINTS[provider]}
         </Text>
 
-        {provider === 'deepseek' || provider === 'siliconflow' || provider === 'openai' ? (
+        {provider === 'deepseek' || provider === 'siliconflow' || provider === 'openrouter' || provider === 'openai' ? (
           <View style={{ marginTop: 18 }}>
-            <SectionTitle title="接口配置" />
+            {provider === 'openai' ? (
+              <>
+                <SectionTitle
+                  title="OpenAI 兼容配置"
+                  action={
+                    <Pressable
+                      onPress={addOpenAiProfile}
+                      hitSlop={8}
+                      feedback="opacity"
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+                    >
+                      <Ionicons name="add" size={16} color={theme.colors.primary} />
+                      <Text style={{ color: theme.colors.primary, fontSize: 12, fontWeight: '700' }}>
+                        新增
+                      </Text>
+                    </Pressable>
+                  }
+                />
+                <Card style={{ paddingVertical: 4 }}>
+                  {settings.openaiProfiles.map((profile, index) => (
+                    <OpenAiProfileRow
+                      key={profile.id}
+                      profile={profile}
+                      active={profile.id === activeProfile.id}
+                      canDelete={settings.openaiProfiles.length > 1}
+                      last={index === settings.openaiProfiles.length - 1}
+                      onSelect={() => selectOpenAiProfile(profile.id)}
+                      onDelete={() => deleteOpenAiProfile(profile)}
+                    />
+                  ))}
+                </Card>
+                <SectionTitle title="当前配置" />
+              </>
+            ) : (
+              <SectionTitle title="接口配置" />
+            )}
             <Card style={{ gap: 14 }}>
               {provider === 'openai' ? (
                 <>
                   <Field
+                    label="名称"
+                    value={activeProfile.name}
+                    onChangeText={(value) => updateActiveProfile({ name: value })}
+                    placeholder="例如：公司代理"
+                    autoCapitalize="none"
+                  />
+                  <Field
                     label="Base URL"
-                    value={settings.openaiBaseUrl}
-                    onChangeText={(value) => patchSettings({ openaiBaseUrl: value })}
+                    value={activeProfile.baseUrl}
+                    onChangeText={(value) => updateActiveProfile({ baseUrl: value })}
                     placeholder="https://api.openai.com/v1"
                     autoCapitalize="none"
                   />
                   <Field
                     label="模型"
-                    value={settings.openaiModel}
-                    onChangeText={(value) => patchSettings({ openaiModel: value })}
+                    value={activeProfile.model}
+                    onChangeText={(value) => updateActiveProfile({ model: value })}
                     placeholder="gpt-4o-mini"
                     autoCapitalize="none"
                   />
@@ -375,25 +621,46 @@ export default function TranslationSettingsScreen() {
                   autoCapitalize="none"
                 />
               ) : null}
+              {provider === 'openrouter' ? (
+                <Field
+                  label="模型"
+                  value={settings.openrouterModel}
+                  onChangeText={(value) => patchSettings({ openrouterModel: value })}
+                  placeholder="openai/gpt-4o-mini"
+                  autoCapitalize="none"
+                />
+              ) : null}
               <Field
                 label="API Key"
                 value={
-                  provider === 'deepseek' ? deepseekKey : provider === 'siliconflow' ? siliconflowKey : openaiKey
+                  provider === 'deepseek'
+                    ? deepseekKey
+                    : provider === 'siliconflow'
+                      ? siliconflowKey
+                      : provider === 'openrouter'
+                        ? openrouterKey
+                        : (openaiKeys[activeProfile.id] ?? '')
                 }
                 onChangeText={
                   provider === 'deepseek'
                     ? setDeepseekKey
                     : provider === 'siliconflow'
                       ? setSiliconflowKey
-                      : setOpenaiKey
+                      : provider === 'openrouter'
+                        ? setOpenrouterKey
+                        : (value) =>
+                            setOpenaiKeys((keys) => ({
+                              ...keys,
+                              [activeProfile.id]: value,
+                            }))
                 }
-                placeholder="sk-…"
+                placeholder={provider === 'openrouter' ? 'sk-or-…' : 'sk-…'}
                 secureTextEntry
                 autoCapitalize="none"
               />
               <Pressable
                 onPress={test}
-                disabled={testing}
+                disabled={testing || !secretsLoaded}
                 style={{
                   height: 44,
                   borderRadius: RADIUS.control,
@@ -403,7 +670,7 @@ export default function TranslationSettingsScreen() {
                   justifyContent: 'center',
                   flexDirection: 'row',
                   gap: 8,
-                  opacity: testing ? 0.6 : 1,
+                  opacity: testing || !secretsLoaded ? 0.6 : 1,
                 }}
               >
                 {testing ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
@@ -418,7 +685,7 @@ export default function TranslationSettingsScreen() {
         {provider === 'auto' || provider === 'microsoft' || provider === 'google' || provider === 'google2' || provider === 'system' ? (
           <Pressable
             onPress={test}
-            disabled={testing}
+            disabled={testing || !secretsLoaded}
             style={{
               marginTop: 18,
               height: 46,
@@ -431,7 +698,7 @@ export default function TranslationSettingsScreen() {
               justifyContent: 'center',
               flexDirection: 'row',
               gap: 8,
-              opacity: testing ? 0.65 : 1,
+              opacity: testing || !secretsLoaded ? 0.65 : 1,
             }}
           >
             {testing ? <ActivityIndicator size="small" color={theme.colors.primary} /> : <Ionicons name="pulse" size={17} color={theme.colors.primary} />}
@@ -441,17 +708,85 @@ export default function TranslationSettingsScreen() {
           </Pressable>
         ) : null}
 
+        <SectionTitle title="自动模式顺序" />
+        <Text
+          style={{
+            color: theme.colors.textTertiary,
+            fontSize: 11.5,
+            lineHeight: 18,
+            marginTop: -2,
+            marginBottom: 10,
+            paddingHorizontal: 4,
+          }}
+        >
+          自动模式会先查已缓存字幕；没有缓存时按下面顺序尝试，未填 Key 的引擎自动跳过。用箭头调整优先级。
+        </Text>
+        <Card style={{ paddingVertical: 6, paddingHorizontal: 10 }}>
+          <Text
+            style={{
+              color: theme.colors.textSecondary,
+              fontSize: 12,
+              fontWeight: '700',
+              paddingVertical: 6,
+              paddingHorizontal: 4,
+            }}
+          >
+            免费引擎
+          </Text>
+          {settings.autoFreeOrder.map((id, index) => (
+            <ProviderOrderRow
+              key={id}
+              label={PROVIDER_LABELS[id] ?? id}
+              index={index}
+              total={settings.autoFreeOrder.length}
+              onUp={() => moveFree(id, -1)}
+              onDown={() => moveFree(id, 1)}
+              last={index === settings.autoFreeOrder.length - 1}
+            />
+          ))}
+        </Card>
+        <Card
+          style={{
+            paddingVertical: 6,
+            paddingHorizontal: 10,
+            marginTop: 10,
+          }}
+        >
+          <Text
+            style={{
+              color: theme.colors.textSecondary,
+              fontSize: 12,
+              fontWeight: '700',
+              paddingVertical: 6,
+              paddingHorizontal: 4,
+            }}
+          >
+            付费引擎（仅在“免费失败自动用付费引擎”开启时尝试）
+          </Text>
+          {settings.autoPaidOrder.map((id, index) => (
+            <ProviderOrderRow
+              key={id}
+              label={PROVIDER_LABELS[id] ?? id}
+              index={index}
+              total={settings.autoPaidOrder.length}
+              onUp={() => movePaid(id, -1)}
+              onDown={() => movePaid(id, 1)}
+              last={index === settings.autoPaidOrder.length - 1}
+            />
+          ))}
+        </Card>
+
         <SectionTitle title="翻译策略" />
         <Card style={{ paddingVertical: 4 }}>
           <SettingRow
-            title="免费失败自动用 DeepSeek"
-            desc="仅在已填写 DeepSeek Key 时生效"
+            title="免费失败自动用付费引擎"
+            desc="按上面的付费顺序尝试；未填写 Key 的引擎会跳过"
             value={settings.autoFallbackDeepSeek}
             onChange={(value) => patchSettings({ autoFallbackDeepSeek: value })}
           />
           <SettingRow
             title="翻译视频标题"
-            desc="首页列表同时显示中文标题"
+            desc="关闭后首页不再翻译标题；开启时按“我的”页选择双语或仅译文"
             value={settings.translateTitles}
             onChange={(value) => patchSettings({ translateTitles: value })}
             last
@@ -501,6 +836,220 @@ function Field({
         }}
       />
     </View>
+  );
+}
+
+function OpenAiProfileRow({
+  profile,
+  active,
+  canDelete,
+  last,
+  onSelect,
+  onDelete,
+}: {
+  profile: OpenAiProfile;
+  active: boolean;
+  canDelete: boolean;
+  last?: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+}) {
+  const theme = useAppTheme();
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        paddingVertical: 8,
+        borderBottomWidth: last ? 0 : StyleSheet.hairlineWidth,
+        borderBottomColor: theme.colors.border,
+      }}
+    >
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`使用 ${profile.name || '未命名配置'}`}
+        feedback="opacity"
+        onPress={onSelect}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          paddingVertical: 4,
+        }}
+      >
+        <View
+          style={{
+            width: 24,
+            height: 24,
+            borderRadius: RADIUS.pill,
+            borderWidth: active ? 0 : 1.5,
+            borderColor: theme.colors.borderStrong,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: active ? theme.colors.primary : 'transparent',
+          }}
+        >
+          {active ? (
+            <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+          ) : null}
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text
+            numberOfLines={1}
+            style={{
+              color: theme.colors.text,
+              fontSize: 13,
+              fontWeight: active ? '700' : '600',
+            }}
+          >
+            {profile.name || '未命名配置'}
+          </Text>
+          <Text
+            numberOfLines={1}
+            style={{
+              color: theme.colors.textTertiary,
+              fontSize: 10.5,
+              marginTop: 2,
+            }}
+          >
+            {profile.model || '默认模型'} · {profile.baseUrl || '默认端点'}
+          </Text>
+        </View>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`删除 ${profile.name || '未命名配置'}`}
+        disabled={!canDelete}
+        hitSlop={6}
+        feedback="opacity"
+        onPress={onDelete}
+        style={{
+          width: 30,
+          height: 30,
+          borderRadius: RADIUS.control,
+          alignItems: 'center',
+          justifyContent: 'center',
+          opacity: canDelete ? 1 : 0.3,
+        }}
+      >
+        <Ionicons
+          name="trash-outline"
+          size={17}
+          color={theme.colors.textTertiary}
+        />
+      </Pressable>
+    </View>
+  );
+}
+
+function ProviderOrderRow({
+  label,
+  index,
+  total,
+  onUp,
+  onDown,
+  last,
+}: {
+  label: string;
+  index: number;
+  total: number;
+  onUp: () => void;
+  onDown: () => void;
+  last?: boolean;
+}) {
+  const theme = useAppTheme();
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        paddingVertical: 8,
+        borderBottomWidth: last ? 0 : StyleSheet.hairlineWidth,
+        borderBottomColor: theme.colors.border,
+      }}
+    >
+      <View
+        style={{
+          width: 22,
+          height: 22,
+          borderRadius: RADIUS.pill,
+          backgroundColor: theme.colors.surfaceAlt,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Text
+          style={{
+            color: theme.colors.textSecondary,
+            fontSize: 10,
+            fontWeight: '700',
+          }}
+        >
+          {index + 1}
+        </Text>
+      </View>
+      <Text
+        numberOfLines={1}
+        style={{ flex: 1, color: theme.colors.text, fontSize: 13, fontWeight: '600' }}
+      >
+        {label}
+      </Text>
+      <OrderArrow
+        direction="up"
+        label={`${label} 上移`}
+        disabled={index === 0}
+        onPress={onUp}
+      />
+      <OrderArrow
+        direction="down"
+        label={`${label} 下移`}
+        disabled={index === total - 1}
+        onPress={onDown}
+      />
+    </View>
+  );
+}
+
+function OrderArrow({
+  direction,
+  label,
+  disabled,
+  onPress,
+}: {
+  direction: 'up' | 'down';
+  label: string;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  const theme = useAppTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      disabled={disabled}
+      hitSlop={6}
+      feedback="opacity"
+      onPress={onPress}
+      style={{
+        width: 30,
+        height: 30,
+        borderRadius: RADIUS.control,
+        backgroundColor: theme.colors.surfaceAlt,
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: disabled ? 0.35 : 1,
+      }}
+    >
+      <Ionicons
+        name={direction === 'up' ? 'chevron-up' : 'chevron-down'}
+        size={17}
+        color={theme.colors.textSecondary}
+      />
+    </Pressable>
   );
 }
 

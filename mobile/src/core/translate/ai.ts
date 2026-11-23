@@ -7,6 +7,8 @@ export type AiConfig = {
   key: string;
   model: string;
   timeoutMs: number;
+  /** Provider-specific headers merged after the shared JSON/auth headers. */
+  extraHeaders?: Record<string, string>;
 };
 
 const LANG_NAMES: Record<string, string> = {
@@ -68,6 +70,17 @@ function parseArray(content: string, expected: number): string[] | null {
   return null;
 }
 
+function statusOf(error: unknown): number | undefined {
+  const status = (error as { status?: unknown })?.status;
+  return typeof status === 'number' ? status : undefined;
+}
+
+function shouldRetryAiError(error: unknown): boolean {
+  const status = statusOf(error);
+  if (status === undefined) return true;
+  return status === 408 || status === 429 || status >= 500;
+}
+
 async function chat(
   config: AiConfig,
   texts: string[],
@@ -85,6 +98,7 @@ async function chat(
           'Content-Type': 'application/json',
           Authorization: `Bearer ${config.key}`,
           Accept: 'application/json',
+          ...(config.extraHeaders ?? {}),
         },
         body: {
           model: config.model,
@@ -100,7 +114,11 @@ async function chat(
         },
       });
       if (response.status < 200 || response.status >= 300) {
-        throw new Error(`${config.id} ${response.status}: ${response.text.slice(0, 160)}`);
+        const error = new Error(
+          `${config.id} ${response.status}: ${response.text.slice(0, 160)}`
+        ) as Error & { status?: number };
+        error.status = response.status;
+        throw error;
       }
       const data = JSON.parse(response.text);
       const content =
@@ -117,6 +135,7 @@ async function chat(
       return parsed;
     } catch (error) {
       lastError = error;
+      if (!shouldRetryAiError(error) || attempt >= 1) break;
       await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
     }
   }
@@ -156,6 +175,10 @@ export async function aiTranslate(
     try {
       output.push(...(await chat(config, batch, from, to, contextTitle)));
     } catch (error) {
+      const status = statusOf(error);
+      if (!shouldRetryAiError(error) || status === 408 || status === 429) {
+        throw error;
+      }
       if (batch.length > 1) {
         // Fall back to smaller batches so one bad line cannot poison the block.
         for (const single of chunk(batch, 4)) {
@@ -192,7 +215,7 @@ export function siliconflowConfig(
     id: 'SiliconFlow',
     url: 'https://api.siliconflow.cn/v1/chat/completions',
     key,
-    model,
+    model: model || 'Qwen/Qwen3.5-9B',
     timeoutMs,
   };
 }
@@ -203,15 +226,36 @@ export function openaiConfig(
   model: string,
   timeoutMs: number
 ): AiConfig {
-  const normalized = baseUrl.replace(/\/+$/, '');
+  const normalized = (baseUrl ?? '').trim().replace(/\/+$/, '');
+  // Clearing the field falls back to the same defaults shown as placeholders;
+  // otherwise the request becomes a relative "/chat/completions" URL.
+  const base = normalized || 'https://api.openai.com/v1';
   return {
     id: 'OpenAI',
-    url: normalized.endsWith('/chat/completions')
-      ? normalized
-      : `${normalized}/chat/completions`,
+    url: base.endsWith('/chat/completions')
+      ? base
+      : `${base}/chat/completions`,
     key,
-    model,
+    model: model || 'gpt-4o-mini',
     timeoutMs,
+  };
+}
+
+export function openrouterConfig(
+  key: string,
+  model: string,
+  timeoutMs: number
+): AiConfig {
+  return {
+    id: 'OpenRouter',
+    url: 'https://openrouter.ai/api/v1/chat/completions',
+    key,
+    model: model || 'openai/gpt-4o-mini',
+    timeoutMs,
+    extraHeaders: {
+      'HTTP-Referer': 'https://github.com/Daizhouhui/Kissly',
+      'X-Title': 'Kissly',
+    },
   };
 }
 
@@ -240,6 +284,7 @@ export async function aiAnalyzeSentence(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${config.key}`,
       Accept: 'application/json',
+      ...(config.extraHeaders ?? {}),
     },
     body: {
       model: config.model,

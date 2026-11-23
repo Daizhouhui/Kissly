@@ -19,6 +19,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppStore } from '../../src/core/store';
 import { DiscoverLayout, VideoItem } from '../../src/core/types';
 import { relativeTime } from '../../src/core/utils';
+import {
+  inContinueWatching,
+  remainingSeconds,
+  resumeTarget,
+  watchedFraction,
+} from '../../src/core/watchProgress';
 import { useFeed } from '../../src/hooks/useFeed';
 import { CONTINUOUS_CORNER, innerRadius, RADIUS } from '../../src/tokens';
 import { AppPressable } from '../../src/ui/app-pressable';
@@ -94,16 +100,19 @@ export default function HomeScreen() {
     useFeed(channelFilter);
 
   const progressMap = useMemo(
-    () => new Map(history.map((item) => [item.videoId, item.progress ?? 0])),
+    () => new Map(history.map((item) => [item.videoId, watchedFraction(item)])),
     [history]
   );
 
   const watching = useMemo(
-    () => history.filter((item) => (item.progress ?? 0) > 0.02 && (item.progress ?? 0) < 0.92),
+    () => history.filter(inContinueWatching),
     [history]
   );
 
   const continueItem = watching[0];
+  const continueResume = continueItem ? resumeTarget(continueItem) : 0;
+  const continueFraction = continueItem ? watchedFraction(continueItem) : 0;
+  const continueRemaining = continueItem ? remainingSeconds(continueItem) : null;
 
   const visible = useMemo(() => {
     return items.filter((item) => {
@@ -162,16 +171,16 @@ export default function HomeScreen() {
       <AppPressable
         onPress={openSearch}
         feedback="ripple"
-        radius={RADIUS.control}
+        radius={RADIUS.pill}
         accessibilityLabel="搜索 YouTube"
         style={{
           flexDirection: 'row',
           alignItems: 'center',
           gap: 9,
           backgroundColor: theme.colors.surfaceAlt,
-          borderRadius: RADIUS.control,
+          borderRadius: RADIUS.pill,
           ...CONTINUOUS_CORNER,
-          paddingHorizontal: 16,
+          paddingHorizontal: 18,
           height: 50,
           marginTop: 16,
         }}
@@ -297,8 +306,12 @@ export default function HomeScreen() {
           onPress={() =>
             router.push({
               pathname: '/player',
-              params: { videoId: continueItem.videoId, title: continueItem.title, author: continueItem.author },
-            } as any)
+              params: {
+                videoId: continueItem.videoId,
+                title: continueItem.title,
+                author: continueItem.author,
+                ...(continueResume > 0 ? { startAt: String(continueResume) } : {}),
+              },            } as any)
           }
           feedback="ripple"
           radius={RADIUS.card}
@@ -338,7 +351,7 @@ export default function HomeScreen() {
               <View style={{ width: 48, height: 3, borderRadius: RADIUS.pill, backgroundColor: theme.colors.borderStrong }}>
                 <View
                   style={{
-                    width: `${Math.max(6, Math.round((continueItem.progress ?? 0) * 100))}%` as any,
+                    width: `${Math.max(6, Math.round(continueFraction * 100))}%` as any,
                     height: 3,
                     borderRadius: RADIUS.pill,
                     backgroundColor: theme.colors.primary,
@@ -346,7 +359,9 @@ export default function HomeScreen() {
                 />
               </View>
               <Text style={{ color: theme.colors.textSecondary, fontSize: 9.5 }}>
-                剩 {Math.max(1, Math.round(((1 - (continueItem.progress ?? 0)) * (continueItem.duration ?? 0)) / 60))} 分钟
+                {continueRemaining == null
+                  ? '继续观看'
+                  : `剩 ${Math.max(1, Math.round(continueRemaining / 60))} 分钟`}
               </Text>
             </View>
           </View>
@@ -362,12 +377,13 @@ export default function HomeScreen() {
                 key={item.id}
                 onPress={() => setFilter(item.id)}
                 feedback="opacity"
+                radius={RADIUS.pill}
                 accessibilityRole="button"
                 accessibilityState={{ selected: active }}
                 style={{
                   paddingHorizontal: 18,
                   height: 36,
-                  borderRadius: RADIUS.control,
+                  borderRadius: RADIUS.pill,
                   ...CONTINUOUS_CORNER,
                   alignItems: 'center',
                   justifyContent: 'center',

@@ -29,6 +29,22 @@ export type HttpOptions = {
   body?: string | object;
 };
 
+export async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message = '请求超时'
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), Math.max(1, timeoutMs));
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function httpText(
   url: string,
   options: HttpOptions = {}

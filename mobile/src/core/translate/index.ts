@@ -1,9 +1,16 @@
 import { getSecret } from '../secrets';
 import { getSettings } from '../store';
-import { loadCached, loadJson, saveCached, saveJson } from '../storage';
+import { loadCachedEntry, loadJson, saveCached, saveJson } from '../storage';
 import { Cue, ProviderId } from '../types';
 import { hashString } from '../utils';
-import { aiTranslate, deepseekConfig, openaiConfig, siliconflowConfig } from './ai';
+import {
+  autoCacheProviders,
+  buildProviderChain,
+} from './autoOrder';
+import { aiTranslate, deepseekConfig, openaiConfig, openrouterConfig, siliconflowConfig } from './ai';
+import { cueCacheKeyForProvider, titleCacheKey } from './cacheKey';
+import { pickBestCueCache } from './cacheSelection';
+import { getActiveOpenAiKey } from './credentials';
 import { googleTranslate } from './google';
 import { google2Translate } from './google2';
 import { microsoftTranslate } from './microsoft';
@@ -37,6 +44,8 @@ const TRANSLATE_BATCH_SIZE = 8;
 const memoryTitles = new Map<string, string>();
 let titleCacheLoaded = false;
 let titleCache: Record<string, string> = {};
+/** Keep the permanent title cache bounded so AsyncStorage does not grow forever. */
+const TITLE_CACHE_LIMIT = 3000;
 
 async function ensureTitleCache() {
   if (titleCacheLoaded) return;
@@ -44,8 +53,23 @@ async function ensureTitleCache() {
   titleCache = await loadJson<Record<string, string>>('title-cache', {});
 }
 
-function titleKey(text: string, to: string, provider: ProviderId) {
-  return `${provider}|${to}|${hashString(text)}`;
+/** Drop the in-memory title cache after a global cache wipe. */
+export function resetTranslationCacheMemory() {
+  memoryTitles.clear();
+  titleCache = {};
+  titleCacheLoaded = false;
+}
+
+function trimTitleCache() {
+  const keys = Object.keys(titleCache);
+  if (keys.length <= TITLE_CACHE_LIMIT) return;
+  for (const key of keys.slice(0, keys.length - TITLE_CACHE_LIMIT)) {
+    delete titleCache[key];
+  }
+  const memoryKeys = Array.from(memoryTitles.keys());
+  for (const key of memoryKeys.slice(0, Math.max(0, memoryKeys.length - TITLE_CACHE_LIMIT))) {
+    memoryTitles.delete(key);
+  }
 }
 
 async function translateWithProvider(
@@ -90,9 +114,20 @@ async function translateWithProvider(
       contextTitle
     );
   }
-  if (provider === 'openai') {
-    const key = await getSecret('openai');
+  if (provider === 'openrouter') {
+    const key = await getSecret('openrouter');
     const settings = getSettings();
+    return aiTranslate(
+      openrouterConfig(key, settings.openrouterModel, timeoutMs),
+      texts,
+      from,
+      to,
+      contextTitle
+    );
+  }
+  if (provider === 'openai') {
+    const settings = getSettings();
+    const key = await getActiveOpenAiKey(settings);
     return aiTranslate(
       openaiConfig(
         key,
@@ -117,30 +152,11 @@ export async function translateTexts(
   const from = options.from ?? settings.sourceLang;
   const to = options.to ?? settings.targetLang;
   const timeout = settings.requestTimeoutMs;
-  const requested = settings.provider;
 
-  const chain: ProviderId[] =
-    requested === 'auto'
-      ? // Auto stays on free providers in a predictable order. Google2 is the
-        // last-resort built-in preset; DeepSeek is appended separately when enabled.
-        ['microsoft', 'google', 'google2']
-      : [requested];
-
-  if (
-    requested !== 'auto' &&
-    !chain.includes('deepseek') &&
-    !(requested === 'deepseek')
-  ) {
-    // Explicit free provider still gets the deepseek net when enabled.
-  }
-
-  const tryList = [...chain];
-  if (settings.autoFallbackDeepSeek && !tryList.includes('deepseek')) {
-    tryList.push('deepseek');
-  }
-  if (requested === 'deepseek' && !tryList.includes('deepseek')) {
-    tryList.unshift('deepseek');
-  }
+  // Auto uses the user's free order, then the paid order when fallback is
+  // enabled. Manual free engines keep the same paid safety net; manual paid
+  // engines never switch to another provider behind the user's back.
+  const tryList = buildProviderChain(settings);
 
   let lastError: unknown = null;
   for (const provider of tryList) {
@@ -153,8 +169,12 @@ export async function translateTexts(
         const key = await getSecret('siliconflow');
         if (!key) continue;
       }
+      if (provider === 'openrouter') {
+        const key = await getSecret('openrouter');
+        if (!key) continue;
+      }
       if (provider === 'openai') {
-        const key = await getSecret('openai');
+        const key = await getActiveOpenAiKey(getSettings());
         if (!key) continue;
       }
       const translated = await translateWithProvider(
@@ -189,34 +209,58 @@ export async function translateCueList(
   onProgress?: CueTranslationProgress
 ): Promise<{ cues: Cue[]; provider: ProviderId }> {
   const settings = getSettings();
+  const from = options.from ?? settings.sourceLang;
   const to = options.to ?? settings.targetLang;
-  const providerKey = settings.provider;
-  const cacheKey = `cues:v3:${videoId}:${trackKey}:${to}:${providerKey}`;
-  const cached = options.ignoreCache
-    ? null
-    : await loadCached<{ cues: Cue[]; provider: ProviderId }>(
-        cacheKey,
-        CUE_CACHE_TTL_MS
-      );
-
-  // A cached list may be partial: batches saved before the user closed the
-  // player. Reuse every line that still matches this exact cue.
-  const translations = cues.map(() => '');
-  let provider: ProviderId | null = null;
-  if (
-    cached?.cues?.length === cues.length &&
-    cached.cues.every(
-      (cue, index) =>
-        Math.abs(cue.start - cues[index].start) < 0.002 &&
-        Math.abs(cue.end - cues[index].end) < 0.002 &&
-        cue.text === cues[index].text
+  const autoMode = settings.provider === 'auto';
+  const cacheProviders: ProviderId[] = autoMode
+    ? autoCacheProviders()
+    : [settings.provider];
+  const cacheKeys = Array.from(
+    new Set(
+      cacheProviders.map((provider) =>
+        cueCacheKeyForProvider(videoId, trackKey, from, to, settings, provider)
+      )
     )
-  ) {
-    provider = cached.provider;
-    cached.cues.forEach((cue, index) => {
-      if (cue.translation) translations[index] = cue.translation;
-    });
+  );
+  // Auto mode is free to reuse a translation made with any saved OpenAI
+  // profile, even when another profile is currently selected.
+  if (autoMode) {
+    for (const profile of settings.openaiProfiles) {
+      cacheKeys.push(
+        cueCacheKeyForProvider(
+          videoId,
+          trackKey,
+          from,
+          to,
+          {
+            ...settings,
+            openaiBaseUrl: profile.baseUrl,
+            openaiModel: profile.model,
+          },
+          'openai'
+        )
+      );
+    }
   }
+  const uniqueCacheKeys = Array.from(new Set(cacheKeys));
+
+  // Auto mode can reuse a complete translation produced earlier by any engine,
+  // even one the user no longer has in the current order. Manual mode stays
+  // scoped to the engine the user picked.
+  const cacheEntries = options.ignoreCache
+    ? []
+    : await Promise.all(
+        uniqueCacheKeys.map((key) =>
+          loadCachedEntry<{ cues: Cue[]; provider: ProviderId }>(
+            key,
+            CUE_CACHE_TTL_MS
+          )
+        )
+      );
+  const cached = pickBestCueCache(cues, cacheEntries);
+
+  const translations = cached?.translations ?? cues.map(() => '');
+  let provider: ProviderId | null = cached?.provider ?? null;
 
   const build = (values: string[]): Cue[] =>
     cues.map((cue, index) => ({
@@ -229,6 +273,45 @@ export async function translateCueList(
     onProgress?.(complete, provider);
     return { cues: complete, provider };
   }
+
+  const saveCueCache = async (
+    values: string[],
+    actualProvider: ProviderId
+  ) => {
+    const payload = { cues: build(values), provider: actualProvider };
+    const targets = autoMode
+      ? [
+          cueCacheKeyForProvider(
+            videoId,
+            trackKey,
+            from,
+            to,
+            settings,
+            'auto'
+          ),
+          cueCacheKeyForProvider(
+            videoId,
+            trackKey,
+            from,
+            to,
+            settings,
+            actualProvider
+          ),
+        ]
+      : [
+          cueCacheKeyForProvider(
+            videoId,
+            trackKey,
+            from,
+            to,
+            settings,
+            actualProvider
+          ),
+        ];
+    await Promise.all(
+      Array.from(new Set(targets)).map((key) => saveCached(key, payload))
+    );
+  };
 
   for (let start = 0; start < cues.length; start += TRANSLATE_BATCH_SIZE) {
     if (options.shouldStop?.()) {
@@ -259,9 +342,8 @@ export async function translateCueList(
     });
     provider = result.provider;
 
-    const partial = build(translations);
-    await saveCached(cacheKey, { cues: partial, provider: result.provider });
-    onProgress?.(partial, result.provider);
+    await saveCueCache(translations, result.provider);
+    onProgress?.(build(translations), result.provider);
   }
 
   const complete = build(translations);
@@ -277,12 +359,11 @@ export async function translateTitles(
   await ensureTitleCache();
   const settings = getSettings();
   const to = options.to ?? settings.targetLang;
-  const providerKey = settings.provider;
   const missing: { index: number; text: string; key: string }[] = [];
   const output = new Array<string>(titles.length);
 
   titles.forEach((text, index) => {
-    const key = titleKey(text, to, providerKey);
+    const key = titleCacheKey(hashString(text), to, settings);
     const hit = memoryTitles.get(key) ?? titleCache[key];
     if (hit) output[index] = hit;
     else missing.push({ index, text, key });
@@ -300,6 +381,7 @@ export async function translateTitles(
     memoryTitles.set(item.key, translated);
     titleCache[item.key] = translated;
   });
+  trimTitleCache();
   await saveJson('title-cache', titleCache);
   return output;
 }
@@ -331,8 +413,10 @@ export function providerDisplayName(provider: ProviderId): string {
       return 'DeepSeek';
     case 'siliconflow':
       return 'SiliconFlow';
+    case 'openrouter':
+      return 'OpenRouter';
     case 'openai':
-      return 'OpenAI';
+      return 'OpenAI 兼容';
     default:
       return '自动';
   }
