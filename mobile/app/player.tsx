@@ -4,8 +4,8 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { StatusBar } from 'expo-status-bar';
-import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { ReactNode, forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { router, useLocalSearchParams } from 'expo-router';
+import { ReactNode, forwardRef, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -164,7 +164,6 @@ const WATCH_UA =
     ? 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1'
     : 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
 
-const VIDEO_LOAD_TIMEOUT_MS = 30_000;
 
 const WATCH_CSS = `
 html,body,ytm-app,ytm-app-root,#page-container,#content{background:#000!important;margin:0!important;padding:0!important;overflow:hidden!important;height:100%!important;width:100%!important;}
@@ -189,66 +188,32 @@ function playerBridgeScript(startAt = 0) {
   return `
 (function(){
   try {
-    var previous = window.__kissBridge;
     var requestedStart = ${JSON.stringify(Math.max(0, Number(startAt) || 0))};
+    var previous = window.__kissBridge;
     if (previous) previous.alive = false;
     if (previous && previous.timer) clearInterval(previous.timer);
     if (previous && previous.cssTimer) clearInterval(previous.cssTimer);
     if (previous && previous.startTimer) clearTimeout(previous.startTimer);
-    if (previous && previous.pauseAtTimer) clearInterval(previous.pauseAtTimer);
-    if (previous && previous.playFallbackTimer) clearTimeout(previous.playFallbackTimer);
-    if (previous && previous.pauseFallbackTimer) clearTimeout(previous.pauseFallbackTimer);
-    if (previous && previous.playConfirmTimer) clearTimeout(previous.playConfirmTimer);
-    if (previous && previous.reconcileTimer) clearTimeout(previous.reconcileTimer);
-    if (previous && previous.orientationTimer) clearTimeout(previous.orientationTimer);
-    if (previous && previous.orientationConfirmTimer) clearTimeout(previous.orientationConfirmTimer);
-    var storedIntent = '';
-    var storedIntentUrl = '';
-    try {
-      storedIntent = window.sessionStorage.getItem('kiss-play-intent') || '';
-      storedIntentUrl = window.sessionStorage.getItem('kiss-play-url') || '';
-    } catch(e) {}
-    var inheritedIntent = previous
-      ? (previous.playIntent === 'play' || previous.playIntent === 'pause'
-          ? previous.playIntent
-          : (previous.wantPlay && !previous.userPaused ? 'play' : 'pause'))
-      : '';
-    var storedIntentApplies = !previous && storedIntentUrl === location.href;
-    var initialIntent = inheritedIntent ||
-      (storedIntentApplies && storedIntent === 'pause' ? 'pause' : 'play');
     var bridge = window.__kissBridge = {
       mode: 'mobile-watch',
       alive: true,
-      // There is exactly one authority for playback: the user's intent.
-      // Rotation, buffering and WebView reloads may change the real <video>
-      // state, but they must never rewrite this intent.
-      playIntent: initialIntent,
-      pauseReason: previous ? String(previous.pauseReason || '') : '',
+      wantPlay: previous ? previous.wantPlay : true,
+      userPaused: previous ? previous.userPaused : false,
       frameReady: false,
-      audioStrikes: 0,
       timer: null,
       cssTimer: null,
       startTimer: null,
-      pauseAtTimer: null,
-      pauseAtTarget: -1,
-      pauseAtSawBeforeEnd: false,
-      commandSeq: 0,
-      lastPlayCommandAt: -10000,
-      playFallbackTimer: null,
-      pauseFallbackTimer: null,
-      playConfirmTimer: null,
-      reconcileTimer: null,
-      orientationUntil: 0,
-      orientationTimer: null,
-      orientationConfirmTimer: null,
-      orientationPlayRequested: false,
       videoRef: null,
+      captionCache: previous ? previous.captionCache : null,
       startAt: requestedStart,
       startApplied:
         requestedStart <= 0 ||
         (previous &&
           previous.startAt === requestedStart &&
-          !!previous.startApplied)
+          !!previous.startApplied),
+      pauseAtTimer: null,
+      pauseAtTarget: -1,
+      pauseAtSawBeforeEnd: false
     };
     function injectCss(){
       try {
@@ -348,230 +313,6 @@ function playerBridgeScript(startAt = 0) {
     function isFrameReady(v){
       return !!(v && v.readyState >= 2 && v.videoWidth > 0);
     }
-    function persistPlayIntent(){
-      try {
-        window.sessionStorage.setItem('kiss-play-intent', bridge.playIntent);
-        window.sessionStorage.setItem('kiss-play-url', location.href);
-      } catch(e) {}
-    }
-    function setPlayIntent(next, reason){
-      bridge.playIntent = next ? 'play' : 'pause';
-      bridge.pauseReason = String(reason || '');
-      persistPlayIntent();
-    }
-    function clearStartTimer(){
-      if (bridge.startTimer) {
-        clearTimeout(bridge.startTimer);
-        bridge.startTimer = null;
-      }
-    }
-    function playerState(p){
-      try {
-        if (p && typeof p.getPlayerState === 'function') {
-          var state = Number(p.getPlayerState());
-          return isFinite(state) ? state : NaN;
-        }
-      } catch(e) {}
-      return NaN;
-    }
-    function isPlayerPlayingState(state){
-      return state === 1 || state === 3;
-    }
-    function isPlayerPausedState(state){
-      return state === 0 || state === 2 || state === 5;
-    }
-    function isActuallyPlaying(v, p){
-      var state = playerState(p);
-      if (!v || v.ended) return false;
-      if (isPlayerPausedState(state)) return false;
-      if (v.paused) return false;
-      if (isPlayerPlayingState(state)) return true;
-      // Some embeds do not expose getPlayerState. In that case the raw element
-      // is the only signal we have.
-      return isFinite(state) ? false : true;
-    }
-    function safePlayVideo(v){
-      try {
-        if (!v) return false;
-        var result = v.play();
-        if (result && result.catch) result.catch(function(){});
-        return true;
-      } catch(e) {
-        return false;
-      }
-    }
-    function safePauseVideo(v){
-      try {
-        if (v && !v.paused) v.pause();
-      } catch(e) {}
-    }
-    function clearPlayFallback(){
-      if (bridge.playFallbackTimer) {
-        clearTimeout(bridge.playFallbackTimer);
-        bridge.playFallbackTimer = null;
-      }
-    }
-    function clearPauseFallback(){
-      if (bridge.pauseFallbackTimer) {
-        clearTimeout(bridge.pauseFallbackTimer);
-        bridge.pauseFallbackTimer = null;
-      }
-    }
-    function requestPlayerPlay(v, force){
-      var p = getPlayer();
-      var current = v || getVideo();
-      if (!current) return;
-      // Android pauses the WebView while its native surface is recreated.
-      // Preserve the user's intent, but never fight those transient pauses
-      // with play commands until the last rotation notification has settled.
-      if (orientationHoldActive()) {
-        scheduleOrientationSettle();
-        return;
-      }
-      // YouTube already owns a buffering transition. Reissuing playVideo (or
-      // starting the raw element underneath it) can restart that transition.
-      if (playerState(p) === 3) return;
-      // Never issue another play command while YouTube and the raw video are
-      // already playing. Repeated playVideo() calls during a rotation used to
-      // make Android look like it was tapping pause/play in a loop.
-      if (isActuallyPlaying(current, p)) return;
-      var now = Date.now();
-      if (!force && now - (Number(bridge.lastPlayCommandAt) || 0) < 360) return;
-      bridge.lastPlayCommandAt = now;
-      bridge.commandSeq += 1;
-      var seq = bridge.commandSeq;
-      clearPlayFallback();
-      clearPauseFallback();
-      var askedPlayer = false;
-      if (p && typeof p.playVideo === 'function') {
-        try {
-          p.playVideo();
-          askedPlayer = true;
-        } catch(e) {}
-      }
-      if (!askedPlayer) {
-        if (current.paused || current.ended) safePlayVideo(current);
-        return;
-      }
-      // The YouTube API is the primary authority. Give it a moment to move both
-      // playerState and the real <video>, then nudge the raw element only once
-      // if it is still stuck. This avoids firing playVideo() and video.play()
-      // against each other in the same tick.
-      bridge.playFallbackTimer = setTimeout(function(){
-        bridge.playFallbackTimer = null;
-        if (!bridge.alive || bridge.playIntent !== 'play') return;
-        if (bridge.commandSeq !== seq) return;
-        var next = getVideo();
-        if (!next) return;
-        var state = playerState(getPlayer());
-        if (state === 3) return;
-        if (isPlayerPlayingState(state)) {
-          if (next.paused || next.ended) safePlayVideo(next);
-          return;
-        }
-        // If YouTube still reports paused/cued, do not start the raw element
-        // behind its back. That creates two disagreeing players and is exactly
-        // the state that produced the pause/play stutter. The bounded confirm
-        // in playNow gets one more chance through the player API.
-        if (!isFinite(state) && (next.paused || next.ended)) {
-          safePlayVideo(next);
-        }
-      }, force ? 260 : 320);
-    }
-    function requestPlayerPause(v){
-      var p = getPlayer();
-      var current = v || getVideo();
-      var state = playerState(p);
-      if (current && current.paused &&
-          (!isFinite(state) || state === 0 || state === 2)) {
-        return;
-      }
-      bridge.commandSeq += 1;
-      clearPlayFallback();
-      clearPauseFallback();
-      var askedPlayer = false;
-      if (p && typeof p.pauseVideo === 'function') {
-        try {
-          p.pauseVideo();
-          askedPlayer = true;
-        } catch(e) {}
-      }
-      if (!askedPlayer) {
-        safePauseVideo(current);
-        return;
-      }
-      // Pause through the player API first; only nudge the raw element if it
-      // is still running after YouTube has been told to stop.
-      bridge.pauseFallbackTimer = setTimeout(function(){
-        bridge.pauseFallbackTimer = null;
-        if (!bridge.alive || bridge.playIntent !== 'pause') return;
-        var next = getVideo();
-        if (next && !next.paused) safePauseVideo(next);
-      }, 180);
-    }
-    function playNow(reason, immediate){
-      clearPauseAt();
-      clearStartTimer();
-      setPlayIntent(true, reason || 'user');
-      if (bridge.playConfirmTimer) {
-        clearTimeout(bridge.playConfirmTimer);
-        bridge.playConfirmTimer = null;
-      }
-      var v = getVideo();
-      if (v) {
-        try { v.__kissUserPaused = false; } catch(e) {}
-      }
-      var explicit = immediate !== false;
-      var deferredForOrientation = orientationHoldActive();
-      if (deferredForOrientation) bridge.orientationPlayRequested = true;
-      if (v) maybeStart(v, explicit);
-      if (explicit && !deferredForOrientation) {
-        // One bounded confirmation after an explicit tap. It recovers a
-        // YouTube pause that arrives just after our command, but cannot turn
-        // into the old 180ms pause/play feedback loop.
-        bridge.playConfirmTimer = setTimeout(function(){
-          bridge.playConfirmTimer = null;
-          if (!bridge.alive || bridge.playIntent !== 'play') return;
-          var current = getVideo();
-          if (!current) return;
-          if (!isActuallyPlaying(current, getPlayer())) {
-            requestPlayerPlay(current, true);
-          }
-        }, 700);
-      }
-      scheduleAudio(260);
-      setTimeout(ensureAudio, 1000);
-      setTimeout(report, 80);
-      return true;
-    }
-    function pauseNow(reason){
-      clearPauseAt();
-      clearStartTimer();
-      bridge.orientationPlayRequested = false;
-      if (bridge.playConfirmTimer) {
-        clearTimeout(bridge.playConfirmTimer);
-        bridge.playConfirmTimer = null;
-      }
-      setPlayIntent(false, reason || 'user');
-      var v = getVideo();
-      if (v) {
-        try { v.__kissUserPaused = true; } catch(e) {}
-        requestPlayerPause(v);
-      }
-      setTimeout(report, 80);
-      return true;
-    }
-    function announceReady(v){
-      if (!isFrameReady(v) || bridge.frameReady) return;
-      bridge.frameReady = true;
-      var p = getPlayer();
-      send({
-        type: 'ready',
-        playing: bridge.playIntent === 'play',
-        actualPlaying: isActuallyPlaying(v, p),
-        playerState: playerState(p)
-      });
-    }
     function applyStart(v){
       if (bridge.startApplied) return;
       if (!v || v.readyState < 1) return;
@@ -585,35 +326,6 @@ function playerBridgeScript(startAt = 0) {
         bridge.startApplied = true;
         report();
       } catch(e) {}
-    }
-    function maybeStart(v, force){
-      // The old first-frame gate paused an already playing video whenever a
-      // rotation briefly reported readyState/videoWidth as zero. That gate is
-      // gone. Here we only move the video toward the user's intent; we never
-      // pause it just because its frame metadata is temporarily incomplete.
-      if (!bridge.alive || !v || bridge.playIntent !== 'play') return;
-      var p = getPlayer();
-      if (!isFrameReady(v)) {
-        if (!isActuallyPlaying(v, p)) requestPlayerPlay(v, force);
-        // Slow network fallback: do not leave the player stuck if loadeddata
-        // never arrives. This never changes playback intent.
-        if (!bridge.startTimer) {
-          bridge.startTimer = setTimeout(function(){
-            bridge.startTimer = null;
-            var current = getVideo();
-            if (current && bridge.playIntent === 'play' &&
-                !isActuallyPlaying(current, getPlayer())) {
-              requestPlayerPlay(current, true);
-            }
-          }, 4500);
-        }
-        return;
-      }
-      clearStartTimer();
-      applyStart(v);
-      if (!isActuallyPlaying(v, p)) requestPlayerPlay(v, force);
-      announceReady(v);
-      if (isActuallyPlaying(v, getPlayer())) scheduleAudio(250);
     }
     function bufferedRange(v){
       var current = Number(v && v.currentTime) || 0;
@@ -636,11 +348,85 @@ function playerBridgeScript(startAt = 0) {
         return { start: current, end: current };
       }
     }
+    function clearPauseAt(){
+      if (bridge.pauseAtTimer) {
+        clearInterval(bridge.pauseAtTimer);
+        bridge.pauseAtTimer = null;
+      }
+      bridge.pauseAtTarget = -1;
+      bridge.pauseAtSawBeforeEnd = false;
+    }
+    function announceReady(v){
+      if (!isFrameReady(v) || bridge.frameReady) return;
+      bridge.frameReady = true;
+      send({ type: 'ready' });
+    }
+    function maybeStart(v){
+      // Never let YouTube autoplay before the first video frame is available.
+      // Audio and subtitles must not run ahead of the visible picture.
+      if (!bridge.alive || !v || bridge.userPaused || !bridge.wantPlay) return;
+      announceReady(v);
+      if (!isFrameReady(v)) {
+        // If a slow network never reaches loadeddata, avoid a permanently
+        // stuck play button. This is a fallback only; normal playback waits
+        // for the first frame.
+        if (!bridge.startTimer) {
+          bridge.startTimer = setTimeout(function(){
+            bridge.startTimer = null;
+            var current = getVideo();
+            if (
+              current &&
+              !bridge.userPaused &&
+              bridge.wantPlay &&
+              (current.paused || current.ended)
+            ) {
+              try {
+                var fallback = current.play();
+                if (fallback && fallback.catch) fallback.catch(function(){});
+              } catch(e) {}
+            }
+          }, 4500);
+        }
+        return;
+      }
+      if (bridge.startTimer) {
+        clearTimeout(bridge.startTimer);
+        bridge.startTimer = null;
+      }
+      applyStart(v);
+      if (v.paused || v.ended) {
+        try {
+          var result = v.play();
+          if (result && result.catch) result.catch(function(){});
+        } catch(e) {}
+      }
+      scheduleAudio(250);
+    }
+    function installPauseGuard(v){
+      if (!v || v.__kissPauseGuarded) return;
+      v.__kissPauseGuarded = true;
+      var rawPause = v.pause.bind(v);
+      v.pause = function(){
+        var active = window.__kissBridge;
+        var wantsPlay =
+          active && active.alive && active.wantPlay && !active.userPaused;
+        var visible = true;
+        try { visible = document.visibilityState !== 'hidden'; } catch(e) {}
+        if (wantsPlay && visible && !v.ended && !isAdShowing()) {
+          // YouTube pauses itself on some internal buffering/visibility
+          // transitions (notably right after leaving fullscreen). This app
+          // owns playback intent, so ignore those pauses while the user
+          // still wants to play. A real pause sets userPaused first.
+          return;
+        }
+        return rawPause.apply(v, arguments);
+      };
+    }
     function report(){
-      if (!bridge.alive) return;
       var v = getVideo();
       var p = getPlayer();
       if (!v) return;
+      installPauseGuard(v);
       var quality = '';
       try { quality = p && p.getPlaybackQuality ? p.getPlaybackQuality() : ''; } catch(e) {}
       var buffer = bufferedRange(v);
@@ -650,83 +436,13 @@ function playerBridgeScript(startAt = 0) {
         duration: Number(v.duration) || 0,
         bufferedStart: buffer.start,
         bufferedEnd: buffer.end,
-        // React mirrors intent, not the raw video flag. A rotation can make
-        // the raw flag flap for a few frames while the user still wants play.
-        playing: bridge.playIntent === 'play' && !v.ended,
-        // actualPlaying combines YouTube's playerState with the real element.
-        // The raw flag alone can stay true while YouTube has paused the player,
-        // which is how the UI used to look "playing" over a frozen picture.
-        actualPlaying: isActuallyPlaying(v, p),
-        playerState: playerState(p),
-        pauseReason: bridge.pauseReason,
+        playing: !v.paused && !v.ended,
         ready: isFrameReady(v),
         rate: v.playbackRate,
         quality: quality,
         ad: isAdShowing()
       });
     }
-    function installVideoEvents(v){
-      if (v.__kissEventRouter) return;
-      v.__kissEventRouter = true;
-      var names = [
-        'timeupdate','play','playing','pause','durationchange',
-        'loadedmetadata','seeking','seeked','ratechange','ended',
-        'volumechange','error','loadeddata','canplay'
-      ];
-      for (var i = 0; i < names.length; i += 1) {
-        (function(name){
-          v.addEventListener(name, function(){
-            // The router always forwards to the current bridge. A script
-            // re-injection therefore cannot leave stale listeners speaking
-            // for the previous playback state machine.
-            var active = window.__kissBridge;
-            if (!active || !active.alive || active.videoRef !== v) return;
-            if (name === 'loadeddata' || name === 'canplay') {
-              if (typeof active.onVideoReady === 'function') {
-                active.onVideoReady(v);
-              }
-              return;
-            }
-            if (typeof active.onVideoEvent === 'function') {
-              active.onVideoEvent(name, v);
-            }
-          });
-        })(names[i]);
-      }
-    }
-    bridge.onVideoReady = function(v){
-      if (!bridge.alive || bridge.videoRef !== v) return;
-      maybeStart(v);
-    };
-    bridge.onVideoEvent = function(name, v){
-      if (!bridge.alive || bridge.videoRef !== v) return;
-      if (name === 'ended') {
-        setPlayIntent(false, 'ended');
-        report();
-        return;
-      }
-      // Do not turn a 'pause' event into an immediate play command. Android
-      // emits pause repeatedly while the WebView surface is being resized;
-      // reacting to each one created the audible pause/play stutter. Rotation
-      // recovery is handled by the bounded reconcile schedule instead.
-      if (name === 'playing') {
-        bridge.audioStrikes = 0;
-        scheduleAudio(180);
-        setTimeout(ensureAudio, 900);
-      } else if (name === 'loadedmetadata') {
-        scheduleAudio(180);
-      } else if (name === 'volumechange') {
-        if (v.muted && bridge.audioStrikes < 6) {
-          bridge.audioStrikes += 1;
-          scheduleAudio(120);
-        } else if (!v.muted) {
-          bridge.audioStrikes = 0;
-        }
-      } else if (name === 'error') {
-        send({ type:'problem', reason:'video-error', code: v.error ? v.error.code : 0 });
-      }
-      report();
-    };
     var bindTries = 0;
     function bind(){
       if (!bridge.alive) return;
@@ -736,24 +452,59 @@ function playerBridgeScript(startAt = 0) {
         if (bindTries < 14) setTimeout(bind, 700);
         return;
       }
-      applyStart(v);
+      installPauseGuard(v);
       if (bridge.videoRef !== v) {
         bridge.videoRef = v;
         bridge.frameReady = false;
-        clearStartTimer();
+        if (bridge.startTimer) {
+          clearTimeout(bridge.startTimer);
+          bridge.startTimer = null;
+        }
       }
-      if (bridge.playIntent === 'play') {
-        try { v.__kissUserPaused = false; } catch(e) {}
-      } else {
-        try { v.__kissUserPaused = true; } catch(e) {}
+      applyStart(v);
+      if (!v.__kissBound) {
+        v.__kissBound = true;
+        ['timeupdate','play','playing','pause','ended','durationchange','loadedmetadata','seeking','seeked','ratechange'].forEach(function(name){
+          v.addEventListener(name, report);
+        });
+        v.addEventListener('playing', function(){
+          scheduleAudio(180);
+          setTimeout(ensureAudio, 900);
+        });
+        v.addEventListener('loadedmetadata', function(){
+          scheduleAudio(180);
+        });
+        var audioStrikes = 0;
+        v.addEventListener('volumechange', function(){
+          if (v.muted && audioStrikes < 6) {
+            audioStrikes++;
+            scheduleAudio(120);
+          } else if (!v.muted) {
+            audioStrikes = 0;
+          }
+        });
+        v.addEventListener('error', function(){
+          send({ type:'problem', reason:'video-error', code: v.error ? v.error.code : 0 });
+        });
+        try { v.playsInline = true; } catch(e) {}
+        try { v.preload = 'auto'; } catch(e) {}
+        report();
       }
-      installVideoEvents(v);
-      try { v.playsInline = true; } catch(e) {}
-      try { v.preload = 'auto'; } catch(e) {}
-      report();
-      // Always let the state machine decide. It waits for the first frame but
-      // never pauses a video that is already playing or already has intent.
-      maybeStart(v);
+      bridge.userPaused = bridge.userPaused || !!v.__kissUserPaused;
+      if (v.__kissReadyBridge !== bridge) {
+        v.__kissReadyBridge = bridge;
+        var markReady = function(){
+          if (v.__kissReadyBridge !== bridge) return;
+          announceReady(v);
+          maybeStart(v);
+        };
+        v.addEventListener('loadeddata', markReady);
+        v.addEventListener('canplay', markReady);
+      }
+      if (isFrameReady(v)) {
+        announceReady(v);
+        maybeStart(v);
+      }
       if (!bridge.timer) {
         bridge.timer = setInterval(report, 900);
       }
@@ -855,15 +606,28 @@ function playerBridgeScript(startAt = 0) {
       return payload;
     }
 
+    function pageVideoId(){
+      try {
+        var match = String(location.href).match(/[?&]v=([^&]+)/);
+        return match ? match[1] : '';
+      } catch(e) {
+        return '';
+      }
+    }
     bridge.captionDeliver = function(payload){
       if (!payload) return;
-      var videoId = bridge.captionVideoId || '';
+      var videoId = bridge.captionVideoId || pageVideoId();
       if (videoId && payload.url && String(payload.url).indexOf(videoId) < 0) {
         return;
       }
       if (typeof bridge.captionFinish === 'function') {
         bridge.captionFinish(payload);
+        return;
       }
+      // The player often fetches its own caption track before React asks for
+      // it (or while the request is still being prepared). Keep the latest
+      // payload so a cold start does not lose it and time out.
+      bridge.captionCache = payload;
     };
 
     function installCaptionInterceptors(){
@@ -1002,13 +766,7 @@ function playerBridgeScript(startAt = 0) {
           else others.push(name);
         }
       } catch(e) {}
-      // Keep the newest URLs from each bucket. Concatenating first and then
-      // slicing used to drop the preferred language when YouTube requested
-      // many other timedtext tracks.
-      return preferred
-        .slice(-6)
-        .reverse()
-        .concat(others.slice(-6).reverse());
+      return preferred.concat(others).slice(-6).reverse();
     }
 
     function getClientVersion(){
@@ -1200,123 +958,53 @@ function playerBridgeScript(startAt = 0) {
 
     installCaptionInterceptors();
 
-    function clearPauseAt(){
-      if (bridge.pauseAtTimer) {
-        clearInterval(bridge.pauseAtTimer);
-        bridge.pauseAtTimer = null;
-      }
-      bridge.pauseAtTarget = -1;
-      bridge.pauseAtSawBeforeEnd = false;
-    }
-
-    function orientationHoldActive(){
-      return Date.now() < (Number(bridge.orientationUntil) || 0);
-    }
-    function scheduleOrientationSettle(){
-      if (bridge.orientationTimer) clearTimeout(bridge.orientationTimer);
-      var delay = Math.max(0, (Number(bridge.orientationUntil) || 0) - Date.now());
-      bridge.orientationTimer = setTimeout(function(){
-        bridge.orientationTimer = null;
-        if (!bridge.alive) return;
-        var confirmExplicitPlay = bridge.orientationPlayRequested;
-        bridge.orientationPlayRequested = false;
-        reconcilePlayback('orientation-settled');
-        if (bridge.orientationConfirmTimer) {
-          clearTimeout(bridge.orientationConfirmTimer);
-          bridge.orientationConfirmTimer = null;
-        }
-        if (confirmExplicitPlay && bridge.playIntent === 'play') {
-          // A user tap during rotation gets one post-settle confirmation for
-          // a late native pause. Rotation alone never enters this retry path.
-          bridge.orientationConfirmTimer = setTimeout(function(){
-            bridge.orientationConfirmTimer = null;
-            if (!bridge.alive || bridge.playIntent !== 'play') return;
-            var current = getVideo();
-            if (current && !isActuallyPlaying(current, getPlayer())) {
-              requestPlayerPlay(current, true);
-            }
-          }, 400);
-        }
-      }, delay);
-    }
-    function beginOrientation(){
-      bridge.orientationUntil = Date.now() + 650;
-      clearPlayFallback();
-      clearStartTimer();
-      if (bridge.playConfirmTimer) {
-        clearTimeout(bridge.playConfirmTimer);
-        bridge.playConfirmTimer = null;
-      }
-      // All native/React orientation notifications extend the same quiet
-      // window. Only the final timer is allowed to reconcile playback.
-      scheduleOrientationSettle();
-      return true;
-    }
-
-    function reconcilePlayback(reason){
-      if (!bridge.alive || bridge.playIntent !== 'play') return true;
-      if (orientationHoldActive()) {
-        scheduleOrientationSettle();
-        return true;
-      }
-      var v = getVideo();
-      if (!v) return true;
-      if (v.ended) {
-        setPlayIntent(false, 'ended');
-        report();
-        return true;
-      }
-      // Only restore the user's play intent. Never touch pauseAt here: a
-      // blind-listening boundary must survive a fullscreen rotation.
-      maybeStart(v);
-      setTimeout(report, 80);
-      return true;
-    }
-
     window.__kiss = {
       play: function(){
-        return playNow('user');
-      },
-      pause: function(){
-        return pauseNow('user');
-      },
-      setPlaying: function(playing){
-        return playing ? playNow('user') : pauseNow('user');
-      },
-      resume: function(){
-        return reconcilePlayback('orientation');
-      },
-      reconcile: function(){
-        return reconcilePlayback('reconcile');
-      },
-      refresh: function(){
-        // onLoadEnd only needs a DOM rescan. Reinjecting the whole script used
-        // to initialize playback twice and restart pending timers on cold load.
-        bindTries = 0;
-        bind();
+        clearPauseAt();
+        bridge.userPaused = false;
+        bridge.wantPlay = true;
+        var v = getVideo();
+        if (v) v.__kissUserPaused = false;
+        maybeStart(v);
+        scheduleAudio(260);
+        setTimeout(ensureAudio, 1000);
         return true;
       },
-      orientation: function(){
-        return beginOrientation();
+      pause: function(){
+        clearPauseAt();
+        bridge.userPaused = true;
+        bridge.wantPlay = false;
+        if (bridge.startTimer) {
+          clearTimeout(bridge.startTimer);
+          bridge.startTimer = null;
+        }
+        var v = getVideo();
+        if (v) {
+          v.__kissUserPaused = true;
+          try { v.pause(); } catch(e) {}
+        }
+        return true;
       },
-      resetForEntry: function(){
-        return playNow('entry', false);
-      },
-      pauseForScreen: function(){
-        var result = pauseNow('screen');
-        // A screen exit is a fresh-entry boundary. Do not let a pause from
-        // this video leak into the next player instance through sessionStorage.
-        try {
-          window.sessionStorage.removeItem('kiss-play-intent');
-          window.sessionStorage.removeItem('kiss-play-url');
-        } catch(e) {}
-        return result;
+      resume: function(){
+        if (bridge.userPaused) return true;
+        bridge.wantPlay = true;
+        var v = getVideo();
+        if (!v) return true;
+        maybeStart(v);
+        scheduleAudio(180);
+        setTimeout(report, 80);
+        return true;
       },
       toggle: function(){
-        if (bridge.playIntent === 'play') {
-          return pauseNow('user');
+        var v = getVideo();
+        if (!v) return true;
+        if (v.paused || v.ended) {
+          window.__kiss.play();
+        } else {
+          window.__kiss.pause();
         }
-        return playNow('user');
+        setTimeout(report, 80);
+        return true;
       },
       seek: function(seconds){
         clearPauseAt();
@@ -1326,14 +1014,14 @@ function playerBridgeScript(startAt = 0) {
       },
       pauseAt: function(seconds){
         var target = Number(seconds);
-        if (!Number.isFinite(target) || target < 0) {
+        if (!isFinite(target) || target < 0) {
           clearPauseAt();
           return true;
         }
         clearPauseAt();
         bridge.pauseAtTarget = target;
         bridge.pauseAtTimer = setInterval(function(){
-          if (!bridge.alive || bridge.playIntent !== 'play') {
+          if (!bridge.alive || bridge.userPaused || !bridge.wantPlay) {
             clearPauseAt();
             return;
           }
@@ -1341,7 +1029,6 @@ function playerBridgeScript(startAt = 0) {
           if (!v) return;
           if (v.ended) {
             clearPauseAt();
-            setPlayIntent(false, 'ended');
             report();
             return;
           }
@@ -1353,9 +1040,8 @@ function playerBridgeScript(startAt = 0) {
             bridge.pauseAtSawBeforeEnd = true;
           }
           if (now < target) return;
-          pauseNow('boundary');
-          // React must observe the semantic boundary even when this pause and
-          // the final time report arrive in the same WebView message batch.
+          clearPauseAt();
+          window.__kiss.pause();
           send({ type: 'cue-ended', current: now, cueEnd: target });
         }, 16);
         return true;
@@ -1364,13 +1050,30 @@ function playerBridgeScript(startAt = 0) {
       mute: function(muted){ var v=getVideo(); try{ if(v)v.muted=!!muted; }catch(e){}; return true; },
       audio: function(){ ensureAudio(); return true; },
       captions: function(lang, tracks, videoId){
+        var requestedId = String(videoId || '');
+        if (
+          bridge.captionCache &&
+          requestedId &&
+          String(bridge.captionCache.url || '').indexOf(requestedId) < 0
+        ) {
+          bridge.captionCache = null;
+        }
+        if (bridge.captionCache) {
+          var cached = bridge.captionCache;
+          bridge.captionCache = null;
+          send(cached);
+          return true;
+        }
         if (bridge.captionBusy) return true;
         bridge.captionBusy = true;
-        bridge.captionVideoId = String(videoId || '');
+        bridge.captionVideoId = requestedId;
         var finished = false;
+        // The player's own caption download is the only path YouTube still
+        // serves without a proof-of-origin token. Give a cold start enough
+        // time to reach it instead of failing at 15 seconds.
         var timer = setTimeout(function(){
           if (!finished) fail('timeout');
-        }, 15000);
+        }, 25000);
         function finish(payload){
           if (finished) return;
           finished = true;
@@ -1386,6 +1089,11 @@ function playerBridgeScript(startAt = 0) {
         bridge.captionFinish = function(payload){
           if (payload) finish(payload);
         };
+        // Turn on the player's captions immediately. That makes YouTube
+        // request its own (servable) timedtext URL while we try the direct
+        // metadata URLs in parallel.
+        var activatedEarly = false;
+        try { activatedEarly = activateCaptions(lang); } catch(e) {}
         (async function(){
           try {
             var direct = await fetchCaptionTextFromTracks(tracks || []);
@@ -1430,7 +1138,7 @@ function playerBridgeScript(startAt = 0) {
             }
           } catch(e) {}
           if (finished) return;
-          var activated = activateCaptions(lang);
+          var activated = activatedEarly || activateCaptions(lang);
           if (!activated) {
             var tries = 0;
             var tryAgain = function(){
@@ -1455,45 +1163,21 @@ function playerBridgeScript(startAt = 0) {
       if (!bridge.alive) return;
       if (location.href !== lastHref) {
         lastHref = location.href;
-        setPlayIntent(true, 'navigation');
+        bridge.userPaused = false;
+        bridge.wantPlay = true;
         bridge.frameReady = false;
         bridge.videoRef = null;
-        clearStartTimer();
         bridge.captionBusy = false;
         bridge.captionFinish = null;
         bridge.captionVideoId = '';
         var nextVideo = getVideo();
         if (nextVideo) {
           nextVideo.__kissUserPaused = false;
-          nextVideo.__kissQualityStarted = false;
         }
       }
       bindTries = 0;
       setTimeout(bind, 400);
     }, true);
-    function scheduleReconcile(delay){
-      if (bridge.reconcileTimer) clearTimeout(bridge.reconcileTimer);
-      bridge.reconcileTimer = setTimeout(function(){
-        bridge.reconcileTimer = null;
-        if (!bridge.alive) return;
-        reconcilePlayback('orientation');
-      }, delay);
-    }
-    window.addEventListener('orientationchange', function(){
-      // Android can pause the WebView while the activity rotates. Wait for
-      // both native and React rotation notifications to settle before issuing
-      // one recovery command; pause events themselves never trigger play.
-      beginOrientation();
-    });
-    function reconcileWhenVisible(){
-      if (document.hidden) return;
-      scheduleReconcile(300);
-    }
-    document.addEventListener('visibilitychange', function(){
-      if (!document.hidden) reconcileWhenVisible();
-    });
-    window.addEventListener('pageshow', reconcileWhenVisible);
-    window.addEventListener('focus', reconcileWhenVisible);
     setTimeout(function(){
       var v=getVideo();
       var p=getPlayer();
@@ -1514,29 +1198,6 @@ function playerBridgeScript(startAt = 0) {
 })();
 true;
 `;
-}
-
-function focusPlaybackAction(
-  isNewEntry: boolean,
-  shouldResume: boolean
-): 'reset' | 'play' | 'pause' {
-  if (isNewEntry) return 'reset';
-  return shouldResume ? 'play' : 'pause';
-}
-
-function shouldClearVideoLoading(message: any) {
-  // `playing` is the user's intent and playerState=3 only means buffering;
-  // neither proves that Android has decoded a visible frame. A ready message
-  // is emitted only after isFrameReady, while time messages carry the flag.
-  const hasFrame = message.type === 'ready' || message.ready === true;
-  if (!hasFrame) return false;
-  return message.actualPlaying === true || message.playing === false;
-}
-
-function videoLoadTimeoutProblem(playingIntent: boolean, actualPlaying: boolean) {
-  return playingIntent && !actualPlaying
-    ? '连接 YouTube 超时，请检查网络后重试。'
-    : '';
 }
 
 function formatTime(value: number) {
@@ -1631,19 +1292,9 @@ export default function PlayerScreen() {
   const [ready, setReady] = useState(false);
   const [videoLoading, setVideoLoading] = useState(true);
   const videoLoadingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [playing, setPlaying] = useState(true);
-  const playingRef = useRef(true);
-  const [actualPlaying, setActualPlaying] = useState(false);
-  const actualPlayingRef = useRef(false);
-  const focusedVideoIdRef = useRef<string | null>(null);
-  const resumeOnFocusRef = useRef(false);
+  const [playing, setPlaying] = useState(false);
   const mirrorPlaying = (value: boolean) => {
-    playingRef.current = value;
     setPlaying(value);
-  };
-  const mirrorActualPlaying = (value: boolean) => {
-    actualPlayingRef.current = value;
-    setActualPlaying(value);
   };
   const [adShowing, setAdShowing] = useState(false);
   const [blocked, setBlocked] = useState(false);
@@ -1866,11 +1517,11 @@ export default function PlayerScreen() {
       setControlsVisible(true);
       return;
     }
-    if (!controlsVisible || !actualPlaying || videoLoading) return;
+    if (!controlsVisible || !playing || videoLoading) return;
     const timer = setTimeout(() => setControlsVisible(false), 3000);
     return () => clearTimeout(timer);
   }, [
-    actualPlaying,
+    playing,
     adShowing,
     blindMode,
     controlsVisible,
@@ -1942,7 +1593,7 @@ export default function PlayerScreen() {
         }
         webCaptionRequestRef.current = null;
         reject(new Error('播放器字幕读取超时'));
-      }, 28000);
+      }, 40000);
       webCaptionRequestRef.current = { resolve, reject, timer };
       let attempts = 0;
       const invoke = () => {
@@ -2375,55 +2026,20 @@ export default function PlayerScreen() {
 
   const scheduleOrientationResume = () => {
     clearOrientationResume();
-    // Mark the transition immediately. The bridge coalesces native and React
-    // notifications into one quiet window, then owns the first recovery.
-    webRef.current?.injectJavaScript(
-      'window.__kiss && window.__kiss.orientation(); true;'
-    );
-    // Keep one late check for a pause delivered after the surface settles.
-    // Multiple retries can fight Android's WebView surface recreation.
-    orientationResumeTimers.current.push(
-      setTimeout(() => {
-        webRef.current?.injectJavaScript(
-          'window.__kiss && window.__kiss.reconcile(); true;'
-        );
-      }, 1500)
-    );
+    // Android WebView can lose its playing state while the activity rotates
+    // or the window briefly loses focus. Re-check the real <video> element a
+    // few times after the new layout settles instead of trusting stale React
+    // state.
+    [450, 1200, 2400].forEach((delay) => {
+      orientationResumeTimers.current.push(
+        setTimeout(() => {
+          webRef.current?.injectJavaScript(
+            'window.__kiss && window.__kiss.resume(); window.__kiss && window.__kiss.audio(); true;'
+          );
+        }, delay)
+      );
+    });
   };
-
-  useFocusEffect(
-    useCallback(() => {
-      const isNewEntry = focusedVideoIdRef.current !== videoId;
-      focusedVideoIdRef.current = videoId;
-      const shouldResume = !isNewEntry && resumeOnFocusRef.current;
-      const action = focusPlaybackAction(isNewEntry, shouldResume);
-      const timer = setTimeout(() => {
-        if (action === 'reset') {
-          webRef.current?.injectJavaScript(
-            'window.__kiss && window.__kiss.resetForEntry(); true;'
-          );
-        } else if (action === 'play') {
-          mirrorPlaying(true);
-          webRef.current?.injectJavaScript(
-            'window.__kiss && window.__kiss.play(); true;'
-          );
-        } else {
-          mirrorPlaying(false);
-          webRef.current?.injectJavaScript(
-            'window.__kiss && window.__kiss.pauseForScreen(); true;'
-          );
-        }
-      }, 0);
-      return () => {
-        clearTimeout(timer);
-        resumeOnFocusRef.current = playingRef.current;
-        webRef.current?.injectJavaScript(
-          'window.__kiss && window.__kiss.pauseForScreen(); true;'
-        );
-        void persistProgressRef.current();
-      };
-    }, [videoId])
-  );
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
@@ -2433,29 +2049,25 @@ export default function PlayerScreen() {
   }, []);
 
   const exitFullscreen = async () => {
-    webRef.current?.injectJavaScript(
-      'window.__kiss && window.__kiss.orientation(); true;'
-    );
+    const wasPlaying = playing;
     try {
       await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
     } catch {}
     setFullscreen(false);
     setControlsVisible(true);
-    scheduleOrientationResume();
+    if (wasPlaying) scheduleOrientationResume();
   };
 
   const handleFullscreen = async () => {
     setControlsVisible(true);
-    webRef.current?.injectJavaScript(
-      'window.__kiss && window.__kiss.orientation(); true;'
-    );
+    const wasPlaying = playing;
     try {
       if (landscape || fullscreen) {
         await exitFullscreen();
       } else {
         await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
         setFullscreen(true);
-        scheduleOrientationResume();
+        if (wasPlaying) scheduleOrientationResume();
       }
     } catch {}
   };
@@ -2507,13 +2119,11 @@ export default function PlayerScreen() {
   const armVideoLoadingFallback = () => {
     clearVideoLoadingTimer();
     videoLoadingTimer.current = setTimeout(() => {
-      const problem = videoLoadTimeoutProblem(
-        playingRef.current,
-        actualPlayingRef.current
-      );
-      if (problem) setVideoProblem(problem);
+      // Never leave a permanent black overlay on top of YouTube. If the page
+      // loaded but the player did not report ready (consent, login, error
+      // page), reveal the actual web page so the user can see and act on it.
       setVideoLoading(false);
-    }, VIDEO_LOAD_TIMEOUT_MS);
+    }, 9000);
   };
 
   useEffect(() => {
@@ -2525,20 +2135,10 @@ export default function PlayerScreen() {
   };
 
   const togglePlay = () => {
-    if (playingRef.current && !actualPlayingRef.current) {
-      send('window.__kiss && window.__kiss.setPlaying(true); true;');
-      setBlocked(false);
-      return;
-    }
-    // Send the next intent explicitly instead of asking the bridge to toggle
-    // the raw <video>. Raw state and React state can disagree for a moment
-    // after rotation, which used to make the first tap pause a playing video.
-    const next = !playingRef.current;
-    mirrorPlaying(next);
-    if (!next) mirrorActualPlaying(false);
-    send(
-      `window.__kiss && window.__kiss.setPlaying(${next ? 'true' : 'false'}); true;`
-    );
+    // Let the WebView decide from the real <video> state. The React `playing`
+    // flag can lag behind after an orientation change and would otherwise send
+    // a second pause when the user taps play.
+    send('window.__kiss && window.__kiss.toggle(); true;');
     setBlocked(false);
   };
 
@@ -2806,19 +2406,10 @@ export default function PlayerScreen() {
     }
     if (message.type === 'ready') {
       webReadyRef.current = true;
+      clearVideoLoadingTimer();
       setReady(true);
+      setVideoLoading(false);
       setVideoProblem('');
-      if (typeof message.playing === 'boolean') mirrorPlaying(message.playing);
-      if (typeof message.actualPlaying === 'boolean') {
-        mirrorActualPlaying(message.actualPlaying);
-      }
-      // A ready player can still have a black native surface. Reveal it only
-      // after a decoded frame exists and playback has actually started (or a
-      // deliberate pause has a real frame to show).
-      if (shouldClearVideoLoading(message)) {
-        clearVideoLoadingTimer();
-        setVideoLoading(false);
-      }
       return;
     }
     if (message.type === 'caption-payload') {
@@ -2888,28 +2479,26 @@ export default function PlayerScreen() {
         progressRef.current.bufferedEnd = message.bufferedEnd;
         setBufferedEnd(message.bufferedEnd);
       }
-      if (typeof message.playing === 'boolean') mirrorPlaying(message.playing);
-      if (typeof message.actualPlaying === 'boolean') {
-        mirrorActualPlaying(message.actualPlaying);
-        if (message.actualPlaying) setVideoProblem('');
-      }
-      if (shouldClearVideoLoading(message)) {
-        clearVideoLoadingTimer();
-        setVideoLoading(false);
-      }
+      if (typeof message.playing === 'boolean') setPlaying(message.playing);
       if (typeof message.ad === 'boolean') {
         progressRef.current.ad = message.ad;
         setAdShowing(message.ad);
       }
       if (message.quality) setQuality(String(message.quality));
-      if (message.ready) setReady(true);
-      if (message.ready) webReadyRef.current = true;
+      if (message.ready) {
+        setReady(true);
+        webReadyRef.current = true;
+        // The frame is decodable, so reveal the player now even if the one-shot
+        // `ready` message was missed while the WebView was reloading.
+        clearVideoLoadingTimer();
+        setVideoLoading(false);
+      }
       return;
     }
     if (message.type === 'problem') {
       clearVideoLoadingTimer();
       setVideoLoading(false);
-      mirrorActualPlaying(false);
+      setPlaying(false);
       setReady(false);
       setAdShowing(false);
       setVideoProblem('这个视频限制了站内播放，可能需要登录、年龄验证或作者关闭了外站播放。');
@@ -2920,8 +2509,7 @@ export default function PlayerScreen() {
     setVideoProblem('');
     setReady(false);
     setAdShowing(false);
-    mirrorPlaying(false);
-    mirrorActualPlaying(false);
+    setPlaying(false);
     setCurrent(0);
     startAtRef.current = Math.max(0, progressRef.current.current);
     setVideoLoading(true);
@@ -3269,7 +2857,7 @@ export default function PlayerScreen() {
     !adShowing &&
     !blindMode &&
     !hideVideo;
-  const webUrl = `https://m.youtube.com/watch?v=${videoId}&hl=zh-CN&autoplay=1`;
+  const webUrl = `https://m.youtube.com/watch?v=${videoId}&hl=zh-CN&autoplay=0`;
 
   if (!videoId) {
     return (
@@ -3331,7 +2919,6 @@ export default function PlayerScreen() {
           onLoadStart={() => {
             webReadyRef.current = false;
             setReady(false);
-            mirrorActualPlaying(false);
             setVideoProblem('');
             setVideoLoading(true);
             setBufferedStart(0);
@@ -3341,13 +2928,12 @@ export default function PlayerScreen() {
             armVideoLoadingFallback();
           }}
           onLoadEnd={() => {
-            send('window.__kiss && window.__kiss.refresh(); true;');
+            send(playerBridgeScript(startAtRef.current));
             armVideoLoadingFallback();
           }}
           onError={() => {
             webReadyRef.current = false;
             clearVideoLoadingTimer();
-            mirrorActualPlaying(false);
             setReady(false);
             setVideoLoading(false);
             setVideoProblem('播放器加载失败，请检查网络后重试，或在浏览器中打开该视频。');
@@ -3416,7 +3002,7 @@ export default function PlayerScreen() {
       ) : null}
       {!landscape && videoTappable && controlsVisible ? (
         <Pressable style={styles.centerPlay} onPress={togglePlay}>
-          <Ionicons name={actualPlaying ? 'pause' : 'play'} size={34} color="#FFFFFF" />
+          <Ionicons name={playing ? 'pause' : 'play'} size={34} color="#FFFFFF" />
         </Pressable>
       ) : null}
       {!landscape && !hideVideo && !blindMode && !adShowing && nativeVideo && controlsVisible ? (
@@ -3580,7 +3166,7 @@ export default function PlayerScreen() {
         haptic="light"
         style={[styles.playButton, { backgroundColor: theme.colors.primary }]}
       >
-        <Ionicons name={actualPlaying ? 'pause' : 'play'} size={24} color="#FFFFFF" />
+        <Ionicons name={playing ? 'pause' : 'play'} size={24} color="#FFFFFF" />
       </RipplePressable>
       <RipplePressable
         onPress={() => (blindMode ? jumpPrecisionCue(1) : jumpCue(1))}
@@ -3847,7 +3433,7 @@ export default function PlayerScreen() {
               haptic="light"
               style={styles.landPlay}
             >
-              <Ionicons name={actualPlaying ? 'pause' : 'play'} size={30} color="#FFFFFF" />
+              <Ionicons name={playing ? 'pause' : 'play'} size={30} color="#FFFFFF" />
             </Pressable>
             <Pressable
               onPress={() => jumpCue(1)}

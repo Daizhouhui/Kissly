@@ -180,54 +180,23 @@ async function fetchPlayerFromWatchPage(videoId: string): Promise<any | null> {
   }
 }
 
-/**
- * Query all player clients at once. A client that returns caption tracks wins
- * immediately; otherwise the first usable metadata (in client order) is kept
- * as a fallback. This replaces the old 4×20s serial chain.
- */
-function racePlayerMetadata(videoId: string): Promise<VideoMeta | null> {
-  const tasks = CLIENTS.map((client) =>
-    fetchPlayerWithClient(videoId, client)
-  );
-  if (!tasks.length) return Promise.resolve(null);
-
-  return new Promise((resolve) => {
-    const results: (VideoMeta | null)[] = new Array(tasks.length).fill(null);
-    let pending = tasks.length;
-    let settled = false;
-
-    const finishFallback = () => {
-      if (settled) return;
-      settled = true;
-      resolve(results.find((item) => item) ?? null);
-    };
-
-    tasks.forEach((task, index) => {
-      task
-        .then((response) => {
-          if (settled) return;
-          const parsed = response ? parsePlayerResponse(response) : null;
-          if (parsed?.captionTracks.length) {
-            settled = true;
-            resolve(parsed);
-            return;
-          }
-          results[index] = parsed;
-        })
-        .catch(() => {
-          results[index] = null;
-        })
-        .finally(() => {
-          pending -= 1;
-          if (pending === 0) finishFallback();
-        });
-    });
-  });
-}
-
 export async function getVideoMeta(videoId: string): Promise<VideoMeta> {
-  const raced = await racePlayerMetadata(videoId);
-  if (raced) return raced;
+  // Query one client at a time. Firing every client at once competes with the
+  // WebView's own video requests and made the first frame arrive much later.
+  let fallback: VideoMeta | null = null;
+  for (const client of CLIENTS) {
+    const response = await fetchPlayerWithClient(videoId, client);
+    if (!response) continue;
+    const parsed = parsePlayerResponse(response);
+    if (!parsed) continue;
+    if (!fallback) fallback = parsed;
+    if (parsed.captionTracks.length) return parsed;
+    const status = response?.playabilityStatus?.status;
+    if (status && status !== 'OK' && status !== 'LOGIN_REQUIRED') {
+      // Keep looking with other clients, some expose captions where WEB does not.
+    }
+  }
+  if (fallback) return fallback;
 
   const htmlResponse = await fetchPlayerFromWatchPage(videoId);
   const parsed = parsePlayerResponse(htmlResponse);
