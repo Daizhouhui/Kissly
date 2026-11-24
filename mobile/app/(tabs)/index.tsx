@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { Link, useRouter } from 'expo-router';
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -95,9 +95,35 @@ export default function HomeScreen() {
   const [channelFilter, setChannelFilter] = useState('');
   const [layoutMenu, setLayoutMenu] = useState(false);
   const [layoutAnchor, setLayoutAnchor] = useState({ top: 0, right: 16 });
+  const [refreshToast, setRefreshToast] = useState('');
+  const refreshToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const layoutButtonRef = useRef<any>(null);
-  const { items, loading, refreshing, loadingMore, hasMore, total, updatedAt, refresh, loadMore } =
+  const { items, loading, refreshing, loadingMore, hasMore, total, updatedAt, refreshWithResult, loadMore } =
     useFeed(channelFilter);
+
+  const showRefreshToast = useCallback((message: string) => {
+    if (refreshToastTimer.current) clearTimeout(refreshToastTimer.current);
+    setRefreshToast(message);
+    refreshToastTimer.current = setTimeout(() => {
+      setRefreshToast('');
+      refreshToastTimer.current = null;
+    }, 2200);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (refreshToastTimer.current) clearTimeout(refreshToastTimer.current);
+    };
+  }, []);
+
+  const handleRefresh = useCallback(async () => {
+    const result = await refreshWithResult();
+    if (result.added > 0) {
+      showRefreshToast(
+        result.added === 1 ? '已刷新，发现 1 个新视频' : `已刷新，发现 ${result.added} 个新视频`
+      );
+    }
+  }, [refreshWithResult, showRefreshToast]);
 
   const progressMap = useMemo(
     () => new Map(history.map((item) => [item.videoId, watchedFraction(item)])),
@@ -467,7 +493,7 @@ export default function HomeScreen() {
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={refresh}
+            onRefresh={handleRefresh}
             tintColor={theme.colors.primary}
             colors={[theme.colors.primary]}
           />
@@ -559,6 +585,36 @@ export default function HomeScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       />
+
+      {refreshToast ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: 24,
+            right: 24,
+            bottom: Math.max(insets.bottom, 0) + 92,
+            alignItems: 'center',
+            zIndex: 30,
+          }}
+        >
+          <View
+            style={{
+              maxWidth: '92%',
+              paddingHorizontal: 16,
+              paddingVertical: 10,
+              borderRadius: RADIUS.pill,
+              backgroundColor: 'rgba(20,17,25,0.92)',
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: 'rgba(255,255,255,0.14)',
+            }}
+          >
+            <Text style={{ color: '#FFFFFF', fontSize: 12.5, fontWeight: '700' }}>
+              {refreshToast}
+            </Text>
+          </View>
+        </View>
+      ) : null}
 
       <Modal visible={layoutMenu} transparent animationType="fade" onRequestClose={() => setLayoutMenu(false)}>
         <View style={{ flex: 1 }}>

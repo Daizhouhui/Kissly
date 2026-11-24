@@ -580,13 +580,21 @@ export function useFeed(channelFilter = '') {
   ]);
 
   const homeRefresh = useCallback(() => load(true), [load]);
-  const refresh = useCallback(async () => {
+  const refreshWithResult = useCallback(async (): Promise<{ added: number }> => {
     if (channelFilter) {
-      await channelFeed.refresh();
-      return;
+      return (await channelFeed.refresh()) ?? { added: 0 };
     }
+    const beforeIds = new Set(poolRef.current.map((item) => item.videoId));
     await homeRefresh();
+    let added = 0;
+    for (const item of poolRef.current) {
+      if (!beforeIds.has(item.videoId)) added += 1;
+    }
+    return { added };
   }, [channelFeed, channelFilter, homeRefresh]);
+  const refresh = useCallback(async () => {
+    await refreshWithResult();
+  }, [refreshWithResult]);
 
   const items = useMemo(() => {
     const avatarMap = new Map(
@@ -629,6 +637,7 @@ export function useFeed(channelFilter = '') {
       total: channelFeed.items.length,
       updatedAt: 0,
       refresh,
+      refreshWithResult,
       loadMore,
     };
   }
@@ -642,6 +651,7 @@ export function useFeed(channelFilter = '') {
     total: pool.length,
     updatedAt,
     refresh,
+    refreshWithResult,
     loadMore,
   };
 }

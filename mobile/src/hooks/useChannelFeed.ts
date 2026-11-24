@@ -361,8 +361,9 @@ export function useChannelFeed(channelId: string, options: ChannelFeedOptions = 
     };
   }, [channelId, enabled, loadInitial]);
 
-  const refresh = useCallback(async () => {
-    if (!enabled || !channelId) return;
+  const refresh = useCallback(async (): Promise<{ added: number }> => {
+    if (!enabled || !channelId) return { added: 0 };
+    const beforeIds = new Set(itemsRef.current.map((item) => item.videoId));
     const generation = generationRef.current;
     const refreshSeq = ++refreshSeqRef.current;
     setRefreshing(true);
@@ -374,7 +375,7 @@ export function useChannelFeed(channelId: string, options: ChannelFeedOptions = 
         force: true,
       });
       if (generation !== generationRef.current || refreshSeq !== refreshSeqRef.current) {
-        return;
+        return { added: 0 };
       }
       if (page.channelInfo) setChannelInfo(page.channelInfo);
       if (page.items.length) {
@@ -382,10 +383,16 @@ export function useChannelFeed(channelId: string, options: ChannelFeedOptions = 
         void saveChannelFirstPage(channelId, page);
         void prefetchNext();
       }
+      let added = 0;
+      for (const item of itemsRef.current) {
+        if (!beforeIds.has(item.videoId)) added += 1;
+      }
+      return { added };
     } catch (reason) {
       if (generation === generationRef.current) {
         setError(reason instanceof Error ? reason.message : String(reason));
       }
+      return { added: 0 };
     } finally {
       if (generation === generationRef.current) setRefreshing(false);
     }

@@ -1821,6 +1821,7 @@ export default function PlayerScreen() {
     let cancelled = false;
     setTranslatedCues(null);
     setTranslationPending(false);
+    setProviderLabel('');
     setStatus('正在读取字幕…');
 
     const translate = async (
@@ -3116,6 +3117,13 @@ export default function PlayerScreen() {
 
   const displayTitle = metaTitle || initialTitle || 'YouTube';
   const displayAuthor = metaAuthor || initialAuthor;
+  const translationHeaderLabel = translationPending
+    ? '加载中'
+    : /^(翻译失败|字幕读取失败)/.test(status)
+      ? '翻译失败'
+      : /没有可用/.test(status)
+        ? '无字幕'
+        : providerLabel || (translatedCues ? '机器翻译' : '加载中');
   const rateLabel = Number.isInteger(rate) ? `${rate}x` : `${rate.toFixed(1)}x`;
   const defaultRate = Math.abs(rate - 1) < 0.001;
   const nativeVideo = Platform.OS !== 'web';
@@ -4424,7 +4432,7 @@ export default function PlayerScreen() {
                             displayAuthor ? { marginLeft: 5 } : null,
                           ]}
                         >
-                          {displayAuthor ? '· ' : ''}译 · {providerLabel || '机器翻译'}
+                          {displayAuthor ? '· ' : ''}译 · {translationHeaderLabel}
                         </Text>
                       ) : null}
                     </View>
@@ -4435,7 +4443,7 @@ export default function PlayerScreen() {
                   numberOfLines={1}
                   style={[styles.headerProvider, { color: theme.colors.textTertiary }]}
                 >
-                  译 · {providerLabel || '机器翻译'}
+                  译 · {translationHeaderLabel}
                 </Text>
               ) : null}
             </View>

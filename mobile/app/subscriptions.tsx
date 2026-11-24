@@ -265,6 +265,7 @@ function SortableRow({
     >
       {!manageMode ? (
         <Animated.View
+          key="swipe-actions"
           pointerEvents={openSwipe ? 'auto' : 'none'}
           style={[
             styles.swipeActions,
@@ -322,6 +323,7 @@ function SortableRow({
       ) : null}
 
       <Animated.View
+        key="subscription-row"
         {...swipePan.panHandlers}
         style={{
           height: ROW_HEIGHT,
@@ -365,14 +367,11 @@ function SortableRow({
             borderBottomColor: theme.colors.border,
           }}
         >
-          {manageMode ? <CheckCircle checked={selected} /> : null}
-
           {item.avatar ? (
             <Image
               source={{ uri: item.avatar }}
               style={{ width: 54, height: 54, borderRadius: RADIUS.pill } as any}
               contentFit="cover"
-              transition={180}
             />
           ) : (
             <View style={[styles.avatarFallback, { backgroundColor: theme.colors.primarySoft }]}>
@@ -381,6 +380,7 @@ function SortableRow({
               </Text>
             </View>
           )}
+          {manageMode ? <CheckCircle checked={selected} /> : null}
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text
               style={{ color: theme.colors.text, fontSize: 16, fontWeight: '800' }}
