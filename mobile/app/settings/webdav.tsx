@@ -129,7 +129,7 @@ export default function WebdavSettingsScreen() {
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
       <NavHeader
         title="WebDAV 同步"
-        subtitle="订阅与设置跨设备漫游"
+        subtitle="订阅、收藏与进度跨设备漫游"
         right={
           <Pressable
             feedback="opacity"
@@ -354,7 +354,7 @@ export default function WebdavSettingsScreen() {
         </Pressable>
 
         <Text style={{ color: theme.colors.textTertiary, fontSize: 11.5, lineHeight: 18, marginTop: 16, paddingHorizontal: 4 }}>
-          同步只上传订阅列表和可同步的设置，不包含任何 API Key。密码保存在系统安全存储里。
+          同步订阅、视频收藏、句子收藏和播放进度。模型、API Key、字幕样式与主题不上传；进度最多每 3 分钟写入一次。密码保存在系统安全存储里。
         </Text>
       </ScrollView>
     </View>
