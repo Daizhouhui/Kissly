@@ -6,12 +6,17 @@ export type SecretName =
   | 'openrouter'
   | 'openai'
   | 'webdavPassword'
-  | `openaiProfile:${string}`;
+  | `openaiProfile:${string}`
+  | `webdavProfile-${string}`;
 
 const PREFIX = 'kissmobile.secret.';
 
 export function openaiProfileSecretName(id: string): SecretName {
   return `openaiProfile:${id}`;
+}
+
+export function webdavProfileSecretName(id: string): SecretName {
+  return `webdavProfile-${id}`;
 }
 
 export async function getSecret(name: SecretName): Promise<string> {
