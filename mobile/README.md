@@ -7,7 +7,7 @@
 - **学习**：收藏聚合、最近观看、历史记录
 - **订阅**：频道 RSS 汇总，支持 `@handle`、频道链接、UC ID、Takeout CSV 导入 / 导出
 - **翻译**：微软 → 谷歌 → Google 备用免费接口，全部失败后按设置切 DeepSeek；也支持 SiliconFlow、任意 OpenAI 兼容接口
-- **同步**：WebDAV（默认 Koofr），订阅与设置跨设备合并
+- **同步**：WebDAV（默认 Koofr），订阅、收藏与播放进度跨设备合并
 - **登录**：内置 YouTube 登录入口，登录态尽量与播放器共享；Google 可能拦截 WebView 登录，CSV 导入是兜底
 - **两端**：一套 Expo / React Native 代码，Android 与 iOS
 
@@ -94,12 +94,15 @@ https://app.koofr.net/dav/Koofr
 
 在 Koofr 网页版「设置 → 应用密码」生成一个专用密码，填到 App 里。新安装的同步文件夹默认 `Kissly`，会在首次同步时自动创建；从旧版升级的用户会保留原来的 `KissSubtitle` 文件夹，不会丢数据。
 
-同步内容只有：
+同步内容：
 
-- `subscriptions.json`：订阅列表
-- `settings.json`：可同步的设置（不含 WebDAV 密码与 API Key）
+- `subscriptions.json`：订阅列表（含分组、排序与删除标记）
+- `favorites.json`：视频收藏（只存视频身份，播放位置由进度文件负责）
+- `sentences.json`：句子收藏（最多 500 条）
+- `progress.json`：播放进度（最近 60 条、30 天内，最多每 3 分钟写入一次）
+- `settings.json`：只同步语言对（源语言、目标语言、学习语言）
 
-两端同时修改时按并集合并订阅，设置按更新时间较新的一方覆盖。
+不同步：模型与 API Key、字幕样式、主题、缓存、YouTube 登录 Cookie。集合类数据按 id 取并集并用删除标记传播删除；设置按每个字段的时间戳取较新的一方。换设备看同一视频能接着播放，但播放权限仍需各自登录。
 
 ## 播放器说明
 

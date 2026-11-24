@@ -78,6 +78,9 @@ const radiusStyle = (radius: number) => ({
 // Portrait player gutter: keeps the back arrow, video, timestamps,
 // transcript text and progress bar on one left edge.
 const PLAYER_GUTTER = 20;
+// The player surface sits inside its own dark stage; keep its corners
+// shallower than the generic card radius so the video picture stays dominant.
+const PLAYER_VIDEO_RADIUS = 10;
 const CONTROLS_HIDE_DELAY_MS = 3000;
 const SEEK_GRAB_RADIUS = 22;
 const SEEK_CONFIRM_TIMEOUT_MS = 900;
@@ -1818,6 +1821,7 @@ export default function PlayerScreen() {
     let cancelled = false;
     setTranslatedCues(null);
     setTranslationPending(false);
+    setProviderLabel('');
     setStatus('正在读取字幕…');
 
     const translate = async (
@@ -3113,6 +3117,13 @@ export default function PlayerScreen() {
 
   const displayTitle = metaTitle || initialTitle || 'YouTube';
   const displayAuthor = metaAuthor || initialAuthor;
+  const translationHeaderLabel = translationPending
+    ? '加载中'
+    : /^(翻译失败|字幕读取失败)/.test(status)
+      ? '翻译失败'
+      : /没有可用/.test(status)
+        ? '无字幕'
+        : providerLabel || (translatedCues ? '机器翻译' : '加载中');
   const rateLabel = Number.isInteger(rate) ? `${rate}x` : `${rate.toFixed(1)}x`;
   const defaultRate = Math.abs(rate - 1) < 0.001;
   const nativeVideo = Platform.OS !== 'web';
@@ -4421,7 +4432,7 @@ export default function PlayerScreen() {
                             displayAuthor ? { marginLeft: 5 } : null,
                           ]}
                         >
-                          {displayAuthor ? '· ' : ''}译 · {providerLabel || '机器翻译'}
+                          {displayAuthor ? '· ' : ''}译 · {translationHeaderLabel}
                         </Text>
                       ) : null}
                     </View>
@@ -4432,7 +4443,7 @@ export default function PlayerScreen() {
                   numberOfLines={1}
                   style={[styles.headerProvider, { color: theme.colors.textTertiary }]}
                 >
-                  译 · {providerLabel || '机器翻译'}
+                  译 · {translationHeaderLabel}
                 </Text>
               ) : null}
             </View>
@@ -5784,7 +5795,7 @@ const styles = StyleSheet.create({
     marginHorizontal: PLAYER_GUTTER,
     backgroundColor: '#000000',
     overflow: 'hidden',
-    ...radiusStyle(RADIUS.card),
+    ...radiusStyle(PLAYER_VIDEO_RADIUS),
   },
   videoFrameHidden: {
     height: 0,
@@ -5908,7 +5919,7 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     paddingHorizontal: 8,
     marginBottom: 6,
-    ...radiusStyle(RADIUS.control),
+    borderRadius: 0,
   },
   transcriptWrap: { flex: 1 },
   followCurrentButton: {
@@ -6189,8 +6200,7 @@ const styles = StyleSheet.create({
     maxWidth: '88%',
     paddingHorizontal: 18,
     paddingVertical: 10,
-    ...radiusStyle(RADIUS.card),
-    overflow: 'hidden',
+    borderRadius: 0,
   },
   landSubOriginal: {
     color: '#FFFFFF',

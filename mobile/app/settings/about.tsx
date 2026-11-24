@@ -58,7 +58,7 @@ export default function AboutScreen() {
               maxWidth: 300,
             }}
           >
-            把 YouTube 的双语字幕做成一个安静的阅读器：竖屏逐句跟读，横屏沉浸观看，订阅与设置随 WebDAV 走。
+            把 YouTube 的双语字幕做成一个安静的阅读器：竖屏逐句跟读，横屏沉浸观看，订阅、收藏与播放进度随 WebDAV 走。
           </Text>
         </View>
 

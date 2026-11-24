@@ -19,22 +19,25 @@ import { fetchChannelDescription } from '../src/core/youtube/channel';
 import {
   ChannelPlaylist,
   fetchChannelPlaylistsPage,
-  fetchChannelVideosPage,
   fetchPlaylistVideosPage,
+  parseCountLabel,
 } from '../src/core/youtube/channelVideos';
-import { fetchChannelFeed, fetchPlaylistFeed } from '../src/core/youtube/rss';
+import { fetchPlaylistFeed } from '../src/core/youtube/rss';
+import { useChannelFeed } from '../src/hooks/useChannelFeed';
 import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
 import { AppPressable } from '../src/ui/app-pressable';
 import { NavHeader } from '../src/ui/components';
 import { useAppTheme } from '../src/ui/theme';
 import { VideoCard } from '../src/ui/VideoCard';
 
-const PAGE = 10;
-
 function formatCount(value?: number) {
-  if (!value) return '';
-  if (value >= 100000000) return `${(value / 100000000).toFixed(1)}亿`;
-  if (value >= 10000) return `${(value / 10000).toFixed(1)}万`;
+  if (value === undefined || value === null) return '';
+  if (value >= 100000000) {
+    return `${(value / 100000000).toFixed(1).replace(/\.0$/, '')}亿`;
+  }
+  if (value >= 10000) {
+    return `${(value / 10000).toFixed(1).replace(/\.0$/, '')}万`;
+  }
   return String(value);
 }
 
@@ -66,117 +69,123 @@ export default function ChannelScreen() {
     [history]
   );
 
-  const [items, setItems] = useState<VideoItem[]>([]);
-  const [visible, setVisible] = useState(PAGE);
-  const [continuation, setContinuation] = useState<string | undefined>();
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState('');
+  const {
+    items,
+    loading,
+    loadingMore,
+    channelInfo,
+    hasMore,
+    error,
+    loadMore,
+  } = useChannelFeed(channelId, {
+    channelTitle: title,
+    channelAvatar: avatar || undefined,
+    enabled: Boolean(channelId),
+  });
+
   const [description, setDescription] = useState('');
   const [expandDescription, setExpandDescription] = useState(false);
   const [tab, setTab] = useState<'latest' | 'popular' | 'playlists'>('latest');
   const [playlists, setPlaylists] = useState<ChannelPlaylist[]>([]);
+  const [playlistsContinuation, setPlaylistsContinuation] = useState<string | undefined>();
   const [playlistLoading, setPlaylistLoading] = useState(false);
+  const [playlistLoadingMore, setPlaylistLoadingMore] = useState(false);
   const [playlistError, setPlaylistError] = useState('');
   const [selectedPlaylist, setSelectedPlaylist] = useState<ChannelPlaylist | null>(null);
   const [playlistItems, setPlaylistItems] = useState<VideoItem[]>([]);
-  const [playlistContinuation, setPlaylistContinuation] = useState<string | undefined>();
+  const [playlistVideosContinuation, setPlaylistVideosContinuation] = useState<string | undefined>();
   const [playlistVideosLoading, setPlaylistVideosLoading] = useState(false);
-  const [playlistLoadingMore, setPlaylistLoadingMore] = useState(false);
-  const requestRef = useRef(0);
-  const playlistRequestRef = useRef(0);
+  const [playlistVideosLoadingMore, setPlaylistVideosLoadingMore] = useState(false);
+  const descriptionRequestRef = useRef(0);
+  const playlistsRequestRef = useRef(0);
+  const playlistVideosRequestRef = useRef(0);
 
   useEffect(() => {
     if (!channelId) return;
-    const requestId = ++requestRef.current;
-    setLoading(true);
-    setError('');
-    setItems([]);
-    setVisible(PAGE);
-    setContinuation(undefined);
-    const run = async () => {
-      try {
-        const page = await fetchChannelVideosPage(channelId, {
-          channelTitle: title,
-          channelAvatar: avatar,
-          force: true,
-        });
-        if (requestId !== requestRef.current) return;
-        setItems(page.items);
-        setContinuation(page.continuation);
-        setVisible(Math.min(PAGE, page.items.length));
-      } catch {
-        try {
-          const feed = await fetchChannelFeed(channelId, true);
-          if (requestId !== requestRef.current) return;
-          setItems(feed);
-          setVisible(Math.min(PAGE, feed.length));
-        } catch (reason) {
-          if (requestId !== requestRef.current) return;
-          setError(reason instanceof Error ? reason.message : String(reason));
-        }
-      } finally {
-        if (requestId === requestRef.current) setLoading(false);
-      }
-    };
-    run();
-    fetchChannelDescription(channelId).then((text) => {
-      if (requestId === requestRef.current) setDescription(text);
-    });
+    setDescription('');
+    const requestId = ++descriptionRequestRef.current;
+    fetchChannelDescription(channelId)
+      .then((text) => {
+        if (requestId === descriptionRequestRef.current) setDescription(text);
+      })
+      .catch(() => {});
     return () => {
-      requestRef.current += 1;
+      descriptionRequestRef.current += 1;
     };
-  }, [avatar, channelId, title]);
+  }, [channelId]);
 
-  const loadMore = async () => {
-    if (loadingMore || loading) return;
-    if (visible < items.length) {
-      setVisible((count) => Math.min(items.length, count + PAGE));
-      return;
-    }
-    if (!continuation) return;
-    setLoadingMore(true);
-    const requestId = requestRef.current;
-    try {
-      const page = await fetchChannelVideosPage(channelId, {
-        continuation,
-        channelTitle: title,
-        channelAvatar: avatar,
-      });
-      if (requestId !== requestRef.current) return;
-      const seen = new Set(items.map((item) => item.videoId));
-      const fresh = page.items.filter((item) => !seen.has(item.videoId));
-      const merged = [...items, ...fresh];
-      setItems(merged);
-      setContinuation(page.continuation);
-      setVisible((count) => Math.min(merged.length, count + PAGE));
-    } catch {
-      // Keep the continuation token so a transient network failure can be
-      // retried by tapping "load more" again instead of ending pagination.
-    } finally {
-      setLoadingMore(false);
-    }
-  };
+  useEffect(() => {
+    if (!channelId) return;
+    playlistsRequestRef.current += 1;
+    playlistVideosRequestRef.current += 1;
+    setPlaylists([]);
+    setPlaylistsContinuation(undefined);
+    setPlaylistError('');
+    setPlaylistLoading(false);
+    setPlaylistLoadingMore(false);
+    setSelectedPlaylist(null);
+    setPlaylistItems([]);
+    setPlaylistVideosContinuation(undefined);
+    setPlaylistVideosLoading(false);
+    setPlaylistVideosLoadingMore(false);
+    setTab('latest');
+  }, [channelId]);
 
-  const loadPlaylists = async () => {
-    if (!channelId || playlistLoading || playlists.length) return;
+  const loadPlaylists = async (force = false) => {
+    if (!channelId || playlistLoading) return;
+    if (!force && (playlists.length || playlistsContinuation)) return;
+    const requestId = ++playlistsRequestRef.current;
     setPlaylistLoading(true);
     setPlaylistError('');
     try {
       const page = await fetchChannelPlaylistsPage(channelId, { force: true });
+      if (requestId !== playlistsRequestRef.current) return;
       setPlaylists(page.items);
+      setPlaylistsContinuation(page.continuation);
     } catch (reason) {
+      if (requestId !== playlistsRequestRef.current) return;
       setPlaylistError(reason instanceof Error ? reason.message : String(reason));
+      setPlaylistsContinuation(undefined);
     } finally {
-      setPlaylistLoading(false);
+      if (requestId === playlistsRequestRef.current) {
+        setPlaylistLoading(false);
+      }
+    }
+  };
+
+  const loadMorePlaylists = async () => {
+    if (!channelId || !playlistsContinuation || playlistLoading || playlistLoadingMore) {
+      return;
+    }
+    const requestId = playlistsRequestRef.current;
+    setPlaylistLoadingMore(true);
+    try {
+      const page = await fetchChannelPlaylistsPage(channelId, {
+        continuation: playlistsContinuation,
+      });
+      if (requestId !== playlistsRequestRef.current) return;
+      setPlaylists((current) => {
+        const seen = new Set(current.map((item) => item.playlistId));
+        return [
+          ...current,
+          ...page.items.filter((item) => !seen.has(item.playlistId)),
+        ];
+      });
+      setPlaylistsContinuation(page.continuation);
+    } catch {
+      // Keep the token so the next upward scroll retries it.
+    } finally {
+      if (requestId === playlistsRequestRef.current) {
+        setPlaylistLoadingMore(false);
+      }
     }
   };
 
   const openPlaylist = async (playlist: ChannelPlaylist) => {
-    const requestId = ++playlistRequestRef.current;
+    const requestId = ++playlistVideosRequestRef.current;
     setSelectedPlaylist(playlist);
     setPlaylistItems([]);
-    setPlaylistContinuation(undefined);
+    setPlaylistVideosContinuation(undefined);
     setPlaylistVideosLoading(true);
     try {
       const page = await fetchPlaylistVideosPage(playlist.playlistId, {
@@ -184,21 +193,21 @@ export default function ChannelScreen() {
         channelTitle: title,
         channelAvatar: avatar || undefined,
       });
-      if (requestId !== playlistRequestRef.current) return;
+      if (requestId !== playlistVideosRequestRef.current) return;
       setPlaylistItems(page.items);
-      setPlaylistContinuation(page.continuation);
+      setPlaylistVideosContinuation(page.continuation);
     } catch {
       try {
         const videos = await fetchPlaylistFeed(playlist.playlistId);
-        if (requestId !== playlistRequestRef.current) return;
+        if (requestId !== playlistVideosRequestRef.current) return;
         setPlaylistItems(videos);
-        setPlaylistContinuation(undefined);
+        setPlaylistVideosContinuation(undefined);
       } catch {
-        if (requestId !== playlistRequestRef.current) return;
+        if (requestId !== playlistVideosRequestRef.current) return;
         setPlaylistItems([]);
       }
     } finally {
-      if (requestId === playlistRequestRef.current) {
+      if (requestId === playlistVideosRequestRef.current) {
         setPlaylistVideosLoading(false);
       }
     }
@@ -207,31 +216,32 @@ export default function ChannelScreen() {
   const loadMorePlaylist = async () => {
     if (
       !selectedPlaylist ||
-      !playlistContinuation ||
-      playlistLoadingMore ||
+      !playlistVideosContinuation ||
+      playlistVideosLoadingMore ||
       playlistVideosLoading
     ) {
       return;
     }
-    const requestId = playlistRequestRef.current;
-    setPlaylistLoadingMore(true);
+    const requestId = playlistVideosRequestRef.current;
+    setPlaylistVideosLoadingMore(true);
     try {
       const page = await fetchPlaylistVideosPage(selectedPlaylist.playlistId, {
-        continuation: playlistContinuation,
+        continuation: playlistVideosContinuation,
         channelId,
         channelTitle: title,
         channelAvatar: avatar || undefined,
       });
-      if (requestId !== playlistRequestRef.current) return;
-      const seen = new Set(playlistItems.map((item) => item.videoId));
-      const fresh = page.items.filter((item) => !seen.has(item.videoId));
-      setPlaylistItems((current) => [...current, ...fresh]);
-      setPlaylistContinuation(page.continuation);
+      if (requestId !== playlistVideosRequestRef.current) return;
+      setPlaylistItems((current) => {
+        const seen = new Set(current.map((item) => item.videoId));
+        return [...current, ...page.items.filter((item) => !seen.has(item.videoId))];
+      });
+      setPlaylistVideosContinuation(page.continuation);
     } catch {
       // Keep the token so the user can retry after a transient failure.
     } finally {
-      if (requestId === playlistRequestRef.current) {
-        setPlaylistLoadingMore(false);
+      if (requestId === playlistVideosRequestRef.current) {
+        setPlaylistVideosLoadingMore(false);
       }
     }
   };
@@ -246,8 +256,9 @@ export default function ChannelScreen() {
         title,
         handle: handle || undefined,
         avatar: avatar || undefined,
-        subscriberCount: subscribers || undefined,
-        videoCount: videos || undefined,
+        subscriberCount:
+          formatCount(subscriberTotal) || subscribers || undefined,
+        videoCount: formatCount(videoTotal) || videos || undefined,
         addedAt: Date.now(),
       });
     }
@@ -271,10 +282,15 @@ export default function ChannelScreen() {
   const popularItems = [...items].sort(
     (a, b) => (b.viewCount ?? 0) - (a.viewCount ?? 0) || b.published - a.published
   );
-  const data = tab === 'latest' ? latestItems.slice(0, visible) : tab === 'popular' ? popularItems.slice(0, visible) : [];
-  const averageDuration = items.length
-    ? Math.round(items.reduce((sum, item) => sum + (item.duration ?? 0), 0) / items.length / 60)
-    : 0;
+  const videoTotal =
+    channelInfo?.videoCount ?? parseCountLabel(videos);
+  const subscriberTotal =
+    channelInfo?.subscriberCount ?? parseCountLabel(subscribers);
+  const handleText = channelInfo?.handle ?? handle;
+  const descriptionText = description || channelInfo?.description || '';
+  const videoData = tab === 'latest' ? latestItems : tab === 'popular' ? popularItems : [];
+  const listData: (VideoItem | ChannelPlaylist)[] =
+    tab === 'playlists' ? playlists : videoData;
 
   const header = (
     <View>
@@ -315,10 +331,10 @@ export default function ChannelScreen() {
           {title}
         </Text>
         <Text style={{ color: theme.colors.textSecondary, fontSize: 12, marginTop: 6, textAlign: 'center' }}>
-          {[handle, subscribers, videos].filter(Boolean).join('  ·  ') || 'YouTube 频道'}
+          {handleText || 'YouTube 频道'}
         </Text>
 
-        {description ? (
+        {descriptionText ? (
           <AppPressable
             onPress={() => setExpandDescription((value) => !value)}
             feedback="opacity"
@@ -328,7 +344,7 @@ export default function ChannelScreen() {
               style={{ color: theme.colors.textSecondary, fontSize: 11.5, lineHeight: 17, textAlign: 'center' }}
               numberOfLines={expandDescription ? undefined : 2}
             >
-              {description}
+              {descriptionText}
             </Text>
             <Text style={{ color: theme.colors.primary, fontSize: 11, fontWeight: '700', marginTop: 3 }}>
               {expandDescription ? '收起' : '更多'}
@@ -383,23 +399,30 @@ export default function ChannelScreen() {
           </AppPressable>
         </View>
 
-        {items.length ? (
+        {videoTotal !== undefined || subscriberTotal !== undefined || items.length ? (
           <View style={styles.statsRow}>
             <View style={styles.statItem}>
-              <Text style={[styles.statValue, { color: theme.colors.text }]}>{items.length}+</Text>
-              <Text style={[styles.statLabel, { color: theme.colors.textTertiary }]}>已读取视频</Text>
-            </View>
-            <View style={[styles.statDivider, { backgroundColor: theme.colors.border }]} />
-            <View style={styles.statItem}>
               <Text style={[styles.statValue, { color: theme.colors.text }]}>
-                {averageDuration || '-'}
+                {videoTotal !== undefined ? formatCount(videoTotal) : '-'}
               </Text>
-              <Text style={[styles.statLabel, { color: theme.colors.textTertiary }]}>平均分钟</Text>
+              <Text style={[styles.statLabel, { color: theme.colors.textTertiary }]}>发布视频</Text>
             </View>
             <View style={[styles.statDivider, { backgroundColor: theme.colors.border }]} />
             <View style={styles.statItem}>
               <Text style={[styles.statValue, { color: theme.colors.text }]}>
-                {items[0] ? new Date(items[0].published).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) : '-'}
+                {subscriberTotal !== undefined ? formatCount(subscriberTotal) : '-'}
+              </Text>
+              <Text style={[styles.statLabel, { color: theme.colors.textTertiary }]}>订阅者</Text>
+            </View>
+            <View style={[styles.statDivider, { backgroundColor: theme.colors.border }]} />
+            <View style={styles.statItem}>
+              <Text style={[styles.statValue, { color: theme.colors.text }]}>
+                {latestItems[0]
+                  ? new Date(latestItems[0].published).toLocaleDateString('zh-CN', {
+                      month: 'numeric',
+                      day: 'numeric',
+                    })
+                  : '-'}
               </Text>
               <Text style={[styles.statLabel, { color: theme.colors.textTertiary }]}>最近更新</Text>
             </View>
@@ -457,21 +480,66 @@ export default function ChannelScreen() {
     </View>
   );
 
+  const renderPlaylistRow = (playlist: ChannelPlaylist) => (
+    <AppPressable
+      onPress={() => void openPlaylist(playlist)}
+      feedback="opacity"
+      accessibilityRole="button"
+      accessibilityLabel={`打开播放列表 ${playlist.title}`}
+      style={[styles.playlistRow, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}
+    >
+      {playlist.thumbnail ? (
+        <Image
+          source={{ uri: playlist.thumbnail }}
+          style={styles.playlistThumb as any}
+          contentFit="cover"
+          transition={150}
+        />
+      ) : (
+        <View style={[styles.playlistThumb, styles.playlistThumbFallback, { backgroundColor: theme.colors.primarySoft }] as any}>
+          <Ionicons name="albums-outline" size={26} color={theme.colors.primary} />
+        </View>
+      )}
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text
+          style={{ color: theme.colors.text, fontSize: 14.5, fontWeight: '800', lineHeight: 19 }}
+          numberOfLines={2}
+        >
+          {playlist.title}
+        </Text>
+        <Text style={{ color: theme.colors.textTertiary, fontSize: 11, marginTop: 5 }}>
+          {playlist.videoCount ? `${playlist.videoCount} 个视频` : '播放列表'}
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={theme.colors.textTertiary} />
+    </AppPressable>
+  );
+
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
-      <NavHeader title="频道" subtitle={handle || channelId} />
+      <NavHeader title="频道" subtitle={handleText || channelId} />
       <FlatList
-        data={data}
-        keyExtractor={(item) => item.videoId}
+        data={listData}
+        keyExtractor={(item) =>
+          tab === 'playlists'
+            ? `playlist:${(item as ChannelPlaylist).playlistId}`
+            : (item as VideoItem).videoId
+        }
         contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 40 }}
         ListHeaderComponent={header}
-        renderItem={({ item }) => (
-          <VideoCard
-            item={{ ...item, channelAvatar: avatar || item.channelAvatar }}
-            onPress={() => openVideo(item)}
-          />
-        )}
-        onEndReached={tab === 'playlists' ? undefined : loadMore}
+        renderItem={({ item }) => {
+          if (tab === 'playlists') {
+            return renderPlaylistRow(item as ChannelPlaylist);
+          }
+          const video = item as VideoItem;
+          return (
+            <VideoCard
+              item={{ ...video, channelAvatar: avatar || video.channelAvatar }}
+              onPress={() => openVideo(video)}
+            />
+          );
+        }}
+        onEndReached={tab === 'playlists' ? loadMorePlaylists : loadMore}
         onEndReachedThreshold={0.5}
         ListEmptyComponent={
           tab === 'playlists' ? (
@@ -486,20 +554,35 @@ export default function ChannelScreen() {
                 这个频道暂时没有公开播放列表。
               </Text>
             )
-          ) : !loading && !error ? (
+          ) : loading ? (
+            <ActivityIndicator color={theme.colors.primary} style={{ marginTop: 26 }} />
+          ) : !error ? (
             <Text style={{ color: theme.colors.textTertiary, fontSize: 12, marginTop: 16 }}>
               这个频道暂时没有可读取的视频。
             </Text>
           ) : undefined
         }
         ListFooterComponent={
-          tab !== 'playlists' && items.length ? (
+          tab === 'playlists' ? (
+            playlists.length ? (
+              <View style={{ paddingVertical: 14, alignItems: 'center', gap: 6 }}>
+                {playlistLoadingMore ? (
+                  <ActivityIndicator size="small" color={theme.colors.primary} />
+                ) : null}
+                <Text style={{ color: theme.colors.textTertiary, fontSize: 11 }}>
+                  {playlistsContinuation
+                    ? '上滑自动加载更多'
+                    : `共 ${playlists.length} 个播放列表`}
+                </Text>
+              </View>
+            ) : undefined
+          ) : items.length ? (
             <View style={{ paddingVertical: 14, alignItems: 'center', gap: 6 }}>
-              {loadingMore ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
+              {loadingMore ? (
+                <ActivityIndicator size="small" color={theme.colors.primary} />
+              ) : null}
               <Text style={{ color: theme.colors.textTertiary, fontSize: 11 }}>
-                {visible >= items.length && !continuation
-                  ? `已加载全部 ${items.length} 条`
-                  : '上滑加载更多'}
+                {hasMore ? '上滑自动加载更多' : `已加载全部 ${items.length} 条`}
               </Text>
             </View>
           ) : undefined
@@ -563,12 +646,12 @@ export default function ChannelScreen() {
                   </Text>
                 }
                 ListFooterComponent={
-                  playlistLoadingMore ? (
+                  playlistVideosLoadingMore ? (
                     <ActivityIndicator
                       color={theme.colors.primary}
                       style={{ marginVertical: 16 }}
                     />
-                  ) : playlistContinuation ? (
+                  ) : playlistVideosContinuation ? (
                     <Text
                       style={{
                         color: theme.colors.textTertiary,
@@ -577,7 +660,18 @@ export default function ChannelScreen() {
                         marginVertical: 12,
                       }}
                     >
-                      上滑加载更多
+                      上滑自动加载更多
+                    </Text>
+                  ) : playlistItems.length ? (
+                    <Text
+                      style={{
+                        color: theme.colors.textTertiary,
+                        fontSize: 11,
+                        textAlign: 'center',
+                        marginVertical: 12,
+                      }}
+                    >
+                      共 {playlistItems.length} 个视频
                     </Text>
                   ) : undefined
                 }
@@ -609,6 +703,26 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   tab: { flex: 1, alignItems: 'center', paddingTop: 8 },
+  playlistRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 10,
+    marginBottom: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: RADIUS.card,
+    ...CONTINUOUS_CORNER,
+  },
+  playlistThumb: {
+    width: 126,
+    height: 71,
+    borderRadius: RADIUS.control,
+    ...CONTINUOUS_CORNER,
+  },
+  playlistThumbFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   modalMask: { flex: 1, backgroundColor: 'rgba(0,0,0,0.32)', justifyContent: 'flex-end' },
   modalCard: {
     height: '86%',

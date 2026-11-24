@@ -2,12 +2,21 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef } from 'react';
-import { View } from 'react-native';
+import { AppState, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../src/core/store';
 import { pruneExpiredCaches } from '../src/core/storage';
-import { maybeAutoSync } from '../src/core/sync';
+import {
+  flushProgressNow,
+  markProgressDirty,
+  maybeAutoSync,
+} from '../src/core/sync';
+import {
+  CHANNEL_FIRST_CACHE_PREFIX,
+  FEED_STORE_TTL,
+  HOME_POOL_CACHE_KEY,
+} from '../src/core/youtube/constants';
 import { AppAlertHost } from '../src/ui/app-alert';
 import { ErrorBoundary } from '../src/ui/error-boundary';
 import { useAppTheme } from '../src/ui/theme';
@@ -30,10 +39,38 @@ export default function RootLayout() {
       { prefix: 'captions:v2:', ttlMs: 30 * day },
       { prefix: 'cues:v3:', ttlMs: 30 * day },
       { prefix: 'cues:v4:', ttlMs: 30 * day },
-      { prefix: 'feed:', ttlMs: 10 * 60 * 1000 },
+      {
+        prefix: 'feed:',
+        ttlMs: FEED_STORE_TTL,
+        excludePrefixes: [HOME_POOL_CACHE_KEY],
+      },
+      { prefix: HOME_POOL_CACHE_KEY, ttlMs: FEED_STORE_TTL },
+      { prefix: CHANNEL_FIRST_CACHE_PREFIX, ttlMs: FEED_STORE_TTL },
       { prefix: 'video-meta:', ttlMs: 7 * day },
     ]).catch(() => {});
     maybeAutoSync().catch(() => {});
+  }, [hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    // Resume points are uploaded on a session boundary, not on every playback
+    // tick. The store subscription only marks the state dirty; the sync layer
+    // owns the throttle.
+    const unsubscribe = useAppStore.subscribe((state, previous) => {
+      if (state.history === previous.history) return;
+      // A sync replaces the history list itself; treating that as a user edit
+      // would schedule a pointless upload right after every sync.
+      if (state.syncState === 'syncing') return;
+      markProgressDirty();
+    });
+    const appState = AppState.addEventListener('change', (next) => {
+      // A pending timer may never fire once iOS suspends the app.
+      if (next === 'background') flushProgressNow().catch(() => {});
+    });
+    return () => {
+      unsubscribe();
+      appState.remove();
+    };
   }, [hydrated]);
 
   return (

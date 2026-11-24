@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { Link, useRouter } from 'expo-router';
-import { useMemo, useRef, useState } from 'react';
+import { Link, useNavigation, useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -87,6 +87,7 @@ export default function HomeScreen() {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const navigation = useNavigation();
   const subscriptions = useAppStore((state) => state.subscriptions);
   const history = useAppStore((state) => state.history);
   const layout = useAppStore((state) => state.settings.discoverLayout);
@@ -95,9 +96,58 @@ export default function HomeScreen() {
   const [channelFilter, setChannelFilter] = useState('');
   const [layoutMenu, setLayoutMenu] = useState(false);
   const [layoutAnchor, setLayoutAnchor] = useState({ top: 0, right: 16 });
+  const [refreshToast, setRefreshToast] = useState('');
+  const refreshToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const listRef = useRef<FlatList<VideoItem>>(null);
+  const lastVideoTabPress = useRef(0);
   const layoutButtonRef = useRef<any>(null);
-  const { items, loading, refreshing, loadingMore, hasMore, total, updatedAt, refresh, loadMore } =
+  const { items, loading, refreshing, loadingMore, hasMore, total, updatedAt, refreshWithResult, loadMore } =
     useFeed(channelFilter);
+
+  const showRefreshToast = useCallback((message: string) => {
+    if (refreshToastTimer.current) clearTimeout(refreshToastTimer.current);
+    setRefreshToast(message);
+    refreshToastTimer.current = setTimeout(() => {
+      setRefreshToast('');
+      refreshToastTimer.current = null;
+    }, 2200);
+  }, []);
+
+  useEffect(() => {
+    // Double-tapping the active video tab returns the feed to the top.
+    const unsubscribeTab = (navigation as any).addListener('tabPress', () => {
+      if (!navigation.isFocused()) return;
+      const now = Date.now();
+      if (now - lastVideoTabPress.current < 350) {
+        lastVideoTabPress.current = 0;
+        listRef.current?.scrollToOffset({ offset: 0, animated: true });
+        return;
+      }
+      lastVideoTabPress.current = now;
+    });
+    const unsubscribeBlur = navigation.addListener('blur', () => {
+      lastVideoTabPress.current = 0;
+    });
+    return () => {
+      unsubscribeTab();
+      unsubscribeBlur();
+    };
+  }, [navigation]);
+
+  useEffect(() => {
+    return () => {
+      if (refreshToastTimer.current) clearTimeout(refreshToastTimer.current);
+    };
+  }, []);
+
+  const handleRefresh = useCallback(async () => {
+    const result = await refreshWithResult();
+    if (result.added > 0) {
+      showRefreshToast(
+        result.added === 1 ? '已刷新，发现 1 个新视频' : `已刷新，发现 ${result.added} 个新视频`
+      );
+    }
+  }, [refreshWithResult, showRefreshToast]);
 
   const progressMap = useMemo(
     () => new Map(history.map((item) => [item.videoId, watchedFraction(item)])),
@@ -432,6 +482,7 @@ export default function HomeScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
       <FlatList
+        ref={listRef}
         key={layout}
         data={visible}
         keyExtractor={(item) => item.videoId}
@@ -467,7 +518,7 @@ export default function HomeScreen() {
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={refresh}
+            onRefresh={handleRefresh}
             tintColor={theme.colors.primary}
             colors={[theme.colors.primary]}
           />
@@ -543,7 +594,11 @@ export default function HomeScreen() {
               {loadingMore ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
               <Text style={{ color: theme.colors.textTertiary, fontSize: 11 }}>
                 {hasMore
-                  ? `已加载 ${visible.length} / ${Math.max(total, visible.length)} 条 · 上滑加载更多`
+                  ? `已加载 ${visible.length}${
+                      total > visible.length
+                        ? ` / ${Math.max(total, visible.length)}`
+                        : ''
+                    } 条 · 上滑自动加载更多`
                   : `已加载全部 ${visible.length} 条`}
                 {updatedAt ? ` · ${relativeTime(updatedAt)}更新` : ''}
               </Text>
@@ -555,6 +610,36 @@ export default function HomeScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       />
+
+      {refreshToast ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: 24,
+            right: 24,
+            bottom: Math.max(insets.bottom, 0) + 92,
+            alignItems: 'center',
+            zIndex: 30,
+          }}
+        >
+          <View
+            style={{
+              maxWidth: '92%',
+              paddingHorizontal: 16,
+              paddingVertical: 10,
+              borderRadius: RADIUS.pill,
+              backgroundColor: 'rgba(20,17,25,0.92)',
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: 'rgba(255,255,255,0.14)',
+            }}
+          >
+            <Text style={{ color: '#FFFFFF', fontSize: 12.5, fontWeight: '700' }}>
+              {refreshToast}
+            </Text>
+          </View>
+        </View>
+      ) : null}
 
       <Modal visible={layoutMenu} transparent animationType="fade" onRequestClose={() => setLayoutMenu(false)}>
         <View style={{ flex: 1 }}>

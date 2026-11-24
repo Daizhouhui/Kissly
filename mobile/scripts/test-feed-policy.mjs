@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 
 import {
+  hasMoreFeed,
+  isChannelExhausted,
   shouldStopAutoPagination,
   shouldTranslateTitles,
 } from '../src/core/feedPolicy.ts';
@@ -32,6 +34,55 @@ assert.equal(
 );
 
 console.log('feed-policy: 5 assertions passed');
+
+assert.equal(
+  isChannelExhausted('innertube', undefined),
+  true,
+  'an innertube page without continuation ends the channel'
+);
+assert.equal(
+  isChannelExhausted('innertube', 'token'),
+  false,
+  'a live continuation keeps the channel open'
+);
+assert.equal(
+  isChannelExhausted('rss', undefined),
+  false,
+  'an RSS fallback stays retryable for the next scroll'
+);
+console.log('channel-exhaustion-policy: 3 assertions passed');
+
+assert.equal(
+  hasMoreFeed({
+    visibleCount: 12,
+    poolLength: 2000,
+    poolLimit: 2000,
+    hasLiveChannel: false,
+  }),
+  true,
+  'a full cache pool still has unshown items to reveal'
+);
+assert.equal(
+  hasMoreFeed({
+    visibleCount: 2000,
+    poolLength: 2000,
+    poolLimit: 2000,
+    hasLiveChannel: true,
+  }),
+  false,
+  'the cache cap ends home pagination when everything is shown'
+);
+assert.equal(
+  hasMoreFeed({
+    visibleCount: 12,
+    poolLength: 12,
+    poolLimit: 2000,
+    hasLiveChannel: true,
+  }),
+  true,
+  'live channels keep pagination alive after the visible pool ends'
+);
+console.log('home-has-more-policy: 3 assertions passed');
 
 assert.equal(
   shouldTranslateTitles({ translateTitles: false, titleTranslationMode: 'auto' }),

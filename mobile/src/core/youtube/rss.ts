@@ -95,7 +95,8 @@ export function parseChannelFeed(xml: string, channelId: string): VideoItem[] {
 
 export async function fetchChannelFeed(
   channelId: string,
-  force = false
+  force = false,
+  timeoutMs = 15000
 ): Promise<VideoItem[]> {
   const cached = memory.get(channelId);
   if (!force && cached && Date.now() - cached.at < FEED_TTL) {
@@ -115,7 +116,7 @@ export async function fetchChannelFeed(
     channelId
   )}`;
   const response = await httpText(url, {
-    timeoutMs: 15000,
+    timeoutMs,
     headers: { Accept: 'application/xml,text/xml,*/*' },
   });
   if (response.status !== 200) {

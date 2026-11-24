@@ -1,5 +1,16 @@
 import { BROWSER_HEADERS, httpJson } from '../http';
+import { loadCachedEntry, saveCached } from '../storage';
 import { VideoItem } from '../types';
+import {
+  CHANNEL_FIRST_CACHE_PREFIX,
+  FEED_STORE_TTL,
+} from './constants';
+import { chooseContinuationToken } from './continuation';
+import { ChannelInfo, parseChannelInfo, parseCountLabel } from './channelMetadata';
+
+export { CHANNEL_BATCH_SIZE } from './constants';
+export type { ChannelInfo } from './channelMetadata';
+export { parseCountLabel } from './channelMetadata';
 
 const BROWSE_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
 const BROWSE_URL = `https://www.youtube.com/youtubei/v1/browse?key=${BROWSE_KEY}&prettyPrint=false`;
@@ -11,6 +22,7 @@ const PLAYLISTS_TAB = 'EglwbGF5bGlzdHPyBgQKAkIA';
 export type ChannelVideoPage = {
   items: VideoItem[];
   continuation?: string;
+  channelInfo?: ChannelInfo;
 };
 
 export type ChannelPlaylist = {
@@ -22,6 +34,42 @@ export type ChannelPlaylist = {
 
 const pageCache = new Map<string, { at: number; page: ChannelVideoPage }>();
 const PAGE_TTL = 5 * 60 * 1000;
+
+function pageCacheKey(channelId: string, continuation?: string): string {
+  return `${channelId}:${continuation ?? 'first'}`;
+}
+
+/** Read the in-memory first page without triggering a network request. */
+export function peekChannelVideoPage(
+  channelId: string,
+  continuation?: string
+): ChannelVideoPage | null {
+  const cached = pageCache.get(pageCacheKey(channelId, continuation));
+  if (!cached || Date.now() - cached.at >= PAGE_TTL) return null;
+  return cached.page;
+}
+
+export async function loadChannelFirstPage(
+  channelId: string
+): Promise<ChannelVideoPage | null> {
+  const entry = await loadCachedEntry<ChannelVideoPage>(
+    `${CHANNEL_FIRST_CACHE_PREFIX}${channelId}`,
+    FEED_STORE_TTL
+  );
+  if (!entry) return null;
+  // Preserve the persisted timestamp so a no-force fetch cannot treat a
+  // six-day-old snapshot as a fresh five-minute page cache hit.
+  pageCache.set(pageCacheKey(channelId), { at: entry.at, page: entry.value });
+  return entry.value;
+}
+
+export async function saveChannelFirstPage(
+  channelId: string,
+  page: ChannelVideoPage
+): Promise<void> {
+  if (!page.items.length) return;
+  await saveCached(`${CHANNEL_FIRST_CACHE_PREFIX}${channelId}`, page);
+}
 
 function textOf(value: any): string {
   if (!value) return '';
@@ -65,7 +113,10 @@ function relativeMs(value: string): number {
 }
 
 function thumbnailsOf(value: any): string {
-  const sources = value?.contentImage?.thumbnailViewModel?.image?.sources;
+  const sources =
+    value?.contentImage?.thumbnailViewModel?.image?.sources ??
+    value?.contentImage?.collectionThumbnailViewModel?.primaryThumbnail
+      ?.thumbnailViewModel?.image?.sources;
   if (Array.isArray(sources) && sources.length) {
     return String(sources[sources.length - 1]?.url ?? '');
   }
@@ -149,7 +200,6 @@ function parsePage(
 ): ChannelVideoPage {
   const items: VideoItem[] = [];
   const seen = new Set<string>();
-  const continuations: string[] = [];
 
   const visit = (node: any) => {
     if (!node || typeof node !== 'object') return;
@@ -157,10 +207,6 @@ function parsePage(
       for (const child of node) visit(child);
       return;
     }
-    const pageToken =
-      node.continuationItemRenderer?.continuationEndpoint?.continuationCommand
-        ?.token;
-    if (typeof pageToken === 'string') continuations.push(pageToken);
     const lockup = node.lockupViewModel;
     if (lockup && typeof lockup.contentId === 'string') {
       const videoId = lockup.contentId;
@@ -246,9 +292,8 @@ function parsePage(
     items: sortByPublished
       ? items.sort((a, b) => b.published - a.published)
       : items,
-    continuation: continuations.length
-      ? continuations[continuations.length - 1]
-      : undefined,
+    continuation: chooseContinuationToken(data),
+    channelInfo: parseChannelInfo(data),
   };
 }
 
@@ -259,10 +304,16 @@ export async function fetchChannelVideosPage(
     channelTitle?: string;
     channelAvatar?: string;
     force?: boolean;
+    timeoutMs?: number;
   } = {}
 ): Promise<ChannelVideoPage> {
-  const { continuation, channelTitle = 'YouTube', channelAvatar } = options;
-  const cacheKey = `${channelId}:${continuation ?? 'first'}`;
+  const {
+    continuation,
+    channelTitle = 'YouTube',
+    channelAvatar,
+    timeoutMs = 20000,
+  } = options;
+  const cacheKey = pageCacheKey(channelId, continuation);
   const cached = pageCache.get(cacheKey);
   if (!options.force && cached && Date.now() - cached.at < PAGE_TTL) {
     return cached.page;
@@ -286,7 +337,7 @@ export async function fetchChannelVideosPage(
 
   const data = await httpJson(BROWSE_URL, {
     method: 'POST',
-    timeoutMs: 20000,
+    timeoutMs,
     headers: {
       ...BROWSER_HEADERS,
       'Content-Type': 'application/json',
@@ -348,7 +399,6 @@ function parsePlaylistsPage(data: any): {
 } {
   const items: ChannelPlaylist[] = [];
   const seen = new Set<string>();
-  const continuations: string[] = [];
 
   const visit = (node: any) => {
     if (!node || typeof node !== 'object') return;
@@ -356,9 +406,6 @@ function parsePlaylistsPage(data: any): {
       node.forEach(visit);
       return;
     }
-    const token =
-      node.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
-    if (typeof token === 'string') continuations.push(token);
     const lockup = node.lockupViewModel;
     if (lockup && typeof lockup.contentId === 'string' && !seen.has(lockup.contentId)) {
       const id = String(lockup.contentId);
@@ -369,17 +416,26 @@ function parsePlaylistsPage(data: any): {
         const rows =
           lockup.metadata?.lockupMetadataViewModel?.metadata?.contentMetadataViewModel
             ?.metadataRows ?? [];
+        const badgeText =
+          lockup.contentImage?.collectionThumbnailViewModel?.primaryThumbnail
+            ?.thumbnailViewModel?.overlays
+            ?.flatMap(
+              (overlay: any) =>
+                overlay?.thumbnailOverlayBadgeViewModel?.thumbnailBadges ?? []
+            )
+            ?.map((badge: any) => textOf(badge?.thumbnailBadgeViewModel?.text))
+            ?.find((text: string) => /(video|视频)/i.test(text)) ?? '';
         const countText =
           rows
             .flatMap((row: any) => row?.metadataParts ?? [])
             .map((part: any) => textOf(part?.text))
-            .find((text: string) => /(video|视频)/i.test(text)) ?? '';
-        const count = Number(countText.replace(/[^\d]/g, '')) || undefined;
+            .find((text: string) => /(video|视频)/i.test(text)) ??
+          badgeText;
+        const count = parseCountLabel(countText);
         items.push({
           playlistId: id,
           title,
-          thumbnail:
-            thumbnailsOf(lockup) || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+          thumbnail: thumbnailsOf(lockup),
           videoCount: count,
         });
       }
@@ -392,7 +448,7 @@ function parsePlaylistsPage(data: any): {
   visit(data);
   return {
     items,
-    continuation: continuations.length ? continuations[continuations.length - 1] : undefined,
+    continuation: chooseContinuationToken(data),
   };
 }
 

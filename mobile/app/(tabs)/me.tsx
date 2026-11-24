@@ -271,7 +271,7 @@ export default function MeScreen() {
           <MeRow
             icon="cloud-outline"
             title="WebDAV 同步"
-            subtitle={lastSyncAt ? `上次同步 ${relativeTime(lastSyncAt)}` : '与网盘同步订阅和设置'}
+            subtitle={lastSyncAt ? `上次同步 ${relativeTime(lastSyncAt)}` : '与网盘同步订阅、收藏与进度'}
             value={settings.webdav.enabled ? (syncState === 'error' ? '异常' : '已开启') : '未配置'}
             onPress={() => router.push('/settings/webdav' as any)}
           />

@@ -1,35 +1,20 @@
 import type { Settings } from './types';
 
 /**
- * Settings that travel through WebDAV. `webdav` holds credentials, `theme` and
- * `themeAccent` are device-local looks, so none of them ever leave the device.
+ * Only the language pair travels. It is the one setting whose loss is felt on a
+ * new device (the user has to pick all three dropdowns again), while every
+ * other setting is either device-bound (subtitle size, keep-awake, default tab,
+ * layout), engine-bound (provider order, models, OpenAI endpoints) or
+ * meaningless on a second device (`designVersion`). Subtitle styling in
+ * particular must follow the screen, not the account.
+ *
+ * `theme`, `themeAccent` and `webdav` were never in this list: looks are
+ * local and the WebDAV block holds connection settings and credentials.
  */
 export const SYNCED_SETTING_KEYS = [
   'sourceLang',
   'targetLang',
   'learningLang',
-  'interfaceLang',
-  'provider',
-  'autoFallbackDeepSeek',
-  'autoFreeOrder',
-  'autoPaidOrder',
-  'translateTitles',
-  'titleTranslationMode',
-  'defaultTab',
-  'discoverLayout',
-  'keepAwake',
-  'speechRate',
-  'speechPitch',
-  'designVersion',
-  'subtitle',
-  'deepseekModel',
-  'siliconflowModel',
-  'openrouterModel',
-  'openaiProfiles',
-  'openaiProfileId',
-  'openaiBaseUrl',
-  'openaiModel',
-  'requestTimeoutMs',
 ] as const;
 
 export type SyncedSettingKey = (typeof SYNCED_SETTING_KEYS)[number];

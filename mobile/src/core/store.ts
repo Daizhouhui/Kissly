@@ -53,6 +53,7 @@ export const HISTORY_LIMIT = 120;
 export type YoutubeLoginStatus = 'unknown' | 'loggedIn' | 'loggedOut';
 
 type SubscriptionTombstones = Record<string, number>;
+type UserTombstones = Record<string, number>;
 
 function withOrder(items: Subscription[]): Subscription[] {
   return items.map((item, index) => ({ ...item, order: index }));
@@ -80,6 +81,10 @@ type AppState = {
   favorites: FavoriteItem[];
   sentenceFavorites: SentenceFavorite[];
   history: HistoryItem[];
+  /** Delete markers so a removal on one device is not undone by the other. */
+  favoriteTombstones: UserTombstones;
+  sentenceTombstones: UserTombstones;
+  historyTombstones: UserTombstones;
   lastSyncAt: number;
   syncState: SyncState;
   syncMessage: string;
@@ -108,12 +113,18 @@ type AppState = {
   toggleFavorite: (item: FavoriteItem) => boolean;
   removeFavorite: (videoId: string) => void;
   removeFavorites: (videoIds: string[]) => void;
+  replaceFavoriteSync: (items: FavoriteItem[], tombstones: UserTombstones) => void;
   toggleSentenceFavorite: (item: SentenceFavorite) => ToggleSentenceFavoriteResult;
   removeSentenceFavorite: (id: string) => void;
   removeSentenceFavorites: (ids: string[]) => void;
+  replaceSentenceSync: (
+    items: SentenceFavorite[],
+    tombstones: UserTombstones
+  ) => void;
   recordHistory: (item: HistoryPatch) => void;
   removeHistory: (videoIds: string[]) => void;
   clearHistory: () => void;
+  replaceHistorySync: (items: HistoryItem[], tombstones: UserTombstones) => void;
   setSync: (state: SyncState, message?: string, at?: number) => void;
   setYoutubeLoginStatus: (status: YoutubeLoginStatus, checkedAt?: number) => void;
 };
@@ -131,6 +142,9 @@ export const useAppStore = create<AppState>()(
       favorites: [],
       sentenceFavorites: [],
       history: [],
+      favoriteTombstones: {},
+      sentenceTombstones: {},
+      historyTombstones: {},
       lastSyncAt: 0,
       syncState: 'idle',
       syncMessage: '',
@@ -260,55 +274,112 @@ export const useAppStore = create<AppState>()(
       toggleFavorite: (item) => {
         const exists = get().favorites.some((fav) => fav.videoId === item.videoId);
         if (exists) {
+          const deletedAt = Date.now();
           set((state) => ({
             favorites: state.favorites.filter((fav) => fav.videoId !== item.videoId),
+            favoriteTombstones: {
+              ...state.favoriteTombstones,
+              [item.videoId]: deletedAt,
+            },
           }));
           return false;
         }
-        set((state) => ({ favorites: [item, ...state.favorites] }));
+        set((state) => {
+          const tombstones = { ...state.favoriteTombstones };
+          delete tombstones[item.videoId];
+          return {
+            favorites: [item, ...state.favorites],
+            favoriteTombstones: tombstones,
+          };
+        });
         return true;
       },
-      removeFavorite: (videoId) =>
+      removeFavorite: (videoId) => {
+        const deletedAt = Date.now();
         set((state) => ({
           favorites: state.favorites.filter((fav) => fav.videoId !== videoId),
-        })),
-      removeFavorites: (videoIds) => {
-        const targets = new Set(videoIds);
-        set((state) => ({
-          favorites: state.favorites.filter((fav) => !targets.has(fav.videoId)),
+          favoriteTombstones: {
+            ...state.favoriteTombstones,
+            [videoId]: deletedAt,
+          },
         }));
       },
+      removeFavorites: (videoIds) => {
+        const targets = new Set(videoIds);
+        const deletedAt = Date.now();
+        set((state) => {
+          const tombstones = { ...state.favoriteTombstones };
+          for (const videoId of targets) tombstones[videoId] = deletedAt;
+          return {
+            favorites: state.favorites.filter((fav) => !targets.has(fav.videoId)),
+            favoriteTombstones: tombstones,
+          };
+        });
+      },
+      replaceFavoriteSync: (items, tombstones) =>
+        set({
+          favorites: items.map((item) => ({ ...item })),
+          favoriteTombstones: { ...tombstones },
+        }),
       toggleSentenceFavorite: (item) => {
         const exists = get().sentenceFavorites.some((fav) => fav.id === item.id);
         if (exists) {
+          const deletedAt = Date.now();
           set((state) => ({
             sentenceFavorites: state.sentenceFavorites.filter(
               (fav) => fav.id !== item.id
             ),
+            sentenceTombstones: {
+              ...state.sentenceTombstones,
+              [item.id]: deletedAt,
+            },
           }));
           return 'removed';
         }
         if (get().sentenceFavorites.length >= SENTENCE_FAVORITE_LIMIT) {
           return 'limit';
         }
-        set((state) => ({
-          sentenceFavorites: [item, ...state.sentenceFavorites].slice(
-            0,
-            SENTENCE_FAVORITE_LIMIT
-          ),
-        }));
+        set((state) => {
+          const tombstones = { ...state.sentenceTombstones };
+          delete tombstones[item.id];
+          return {
+            sentenceFavorites: [item, ...state.sentenceFavorites].slice(
+              0,
+              SENTENCE_FAVORITE_LIMIT
+            ),
+            sentenceTombstones: tombstones,
+          };
+        });
         return 'added';
       },
-      removeSentenceFavorite: (id) =>
+      removeSentenceFavorite: (id) => {
+        const deletedAt = Date.now();
         set((state) => ({
           sentenceFavorites: state.sentenceFavorites.filter((fav) => fav.id !== id),
-        })),
-      removeSentenceFavorites: (ids) => {
-        const targets = new Set(ids);
-        set((state) => ({
-          sentenceFavorites: state.sentenceFavorites.filter((fav) => !targets.has(fav.id)),
+          sentenceTombstones: { ...state.sentenceTombstones, [id]: deletedAt },
         }));
       },
+      removeSentenceFavorites: (ids) => {
+        const targets = new Set(ids);
+        const deletedAt = Date.now();
+        set((state) => {
+          const tombstones = { ...state.sentenceTombstones };
+          for (const id of targets) tombstones[id] = deletedAt;
+          return {
+            sentenceFavorites: state.sentenceFavorites.filter(
+              (fav) => !targets.has(fav.id)
+            ),
+            sentenceTombstones: tombstones,
+          };
+        });
+      },
+      replaceSentenceSync: (items, tombstones) =>
+        set({
+          sentenceFavorites: items
+            .map((item) => ({ ...item }))
+            .slice(0, SENTENCE_FAVORITE_LIMIT),
+          sentenceTombstones: { ...tombstones },
+        }),
       recordHistory: (item) =>
         set((state) => {
           const previous = state.history.find(
@@ -318,15 +389,39 @@ export const useAppStore = create<AppState>()(
           const others = state.history.filter(
             (entry) => entry.videoId !== item.videoId
           );
-          return { history: [merged, ...others].slice(0, HISTORY_LIMIT) };
+          // Watching again cancels a pending delete for this video.
+          const tombstones = { ...state.historyTombstones };
+          delete tombstones[item.videoId];
+          return {
+            history: [merged, ...others].slice(0, HISTORY_LIMIT),
+            historyTombstones: tombstones,
+          };
         }),
       removeHistory: (videoIds) => {
         const targets = new Set(videoIds);
-        set((state) => ({
-          history: state.history.filter((entry) => !targets.has(entry.videoId)),
-        }));
+        const deletedAt = Date.now();
+        set((state) => {
+          const tombstones = { ...state.historyTombstones };
+          for (const videoId of targets) tombstones[videoId] = deletedAt;
+          return {
+            history: state.history.filter((entry) => !targets.has(entry.videoId)),
+            historyTombstones: tombstones,
+          };
+        });
       },
-      clearHistory: () => set({ history: [] }),
+      clearHistory: () => {
+        const deletedAt = Date.now();
+        set((state) => {
+          const tombstones = { ...state.historyTombstones };
+          for (const entry of state.history) tombstones[entry.videoId] = deletedAt;
+          return { history: [], historyTombstones: tombstones };
+        });
+      },
+      replaceHistorySync: (items, tombstones) =>
+        set({
+          history: items.slice(0, HISTORY_LIMIT),
+          historyTombstones: { ...tombstones },
+        }),
       setSync: (syncState, syncMessage = '', at) =>
         set((state) => ({
           syncState,
@@ -353,6 +448,9 @@ export const useAppStore = create<AppState>()(
         favorites: state.favorites,
         sentenceFavorites: state.sentenceFavorites,
         history: state.history,
+        favoriteTombstones: state.favoriteTombstones,
+        sentenceTombstones: state.sentenceTombstones,
+        historyTombstones: state.historyTombstones,
         lastSyncAt: state.lastSyncAt,
         settingsStamps: state.settingsStamps,
         settingsUpdatedAt: state.settingsUpdatedAt,
@@ -385,6 +483,9 @@ export const useAppStore = create<AppState>()(
           favorites: saved?.favorites ?? [],
           sentenceFavorites: saved?.sentenceFavorites ?? [],
           history: saved?.history ?? [],
+          favoriteTombstones: saved?.favoriteTombstones ?? {},
+          sentenceTombstones: saved?.sentenceTombstones ?? {},
+          historyTombstones: saved?.historyTombstones ?? {},
           lastSyncAt: saved?.lastSyncAt ?? 0,
           settingsUpdatedAt,
           youtubeLoginStatus: saved?.youtubeLoginStatus ?? 'unknown',
