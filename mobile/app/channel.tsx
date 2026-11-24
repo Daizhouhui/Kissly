@@ -68,9 +68,11 @@ export default function ChannelScreen() {
     items,
     loading,
     loadingMore,
+    loadingAll,
     hasMore,
     error,
     loadMore,
+    loadAll,
   } = useChannelFeed(channelId, {
     channelTitle: title,
     channelAvatar: avatar || undefined,
@@ -447,10 +449,36 @@ export default function ChannelScreen() {
         ListFooterComponent={
           tab !== 'playlists' && items.length ? (
             <View style={{ paddingVertical: 14, alignItems: 'center', gap: 6 }}>
-              {loadingMore ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
+              {loadingAll || loadingMore ? (
+                <ActivityIndicator size="small" color={theme.colors.primary} />
+              ) : null}
               <Text style={{ color: theme.colors.textTertiary, fontSize: 11 }}>
-                {hasMore ? '上滑自动加载更多' : `已加载全部 ${items.length} 条`}
+                {loadingAll
+                  ? `已加载 ${items.length} 条，正在加载…`
+                  : hasMore
+                    ? '上滑自动加载更多'
+                    : `已加载全部 ${items.length} 条`}
               </Text>
+              {hasMore && !loadingAll ? (
+                <AppPressable
+                  onPress={() => void loadAll()}
+                  feedback="opacity"
+                  accessibilityRole="button"
+                  style={{
+                    height: 28,
+                    paddingHorizontal: 12,
+                    borderRadius: RADIUS.pill,
+                    ...CONTINUOUS_CORNER,
+                    backgroundColor: theme.colors.primarySoft,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Text style={{ color: theme.colors.primary, fontSize: 11, fontWeight: '700' }}>
+                    加载全部
+                  </Text>
+                </AppPressable>
+              ) : null}
             </View>
           ) : undefined
         }

@@ -10,6 +10,7 @@ import {
   CHANNEL_BATCH_SIZE,
   HOME_FIRST_BATCH,
   HOME_POOL_LIMIT,
+  HOME_REQUEST_TIMEOUT_MS,
 } from '../src/core/youtube/constants.ts';
 
 function video(index, channelId = 'UC-test', published = index) {
@@ -34,6 +35,7 @@ check('feed constants match the loading spec', () => {
   assert.equal(CHANNEL_BATCH_SIZE, 20);
   assert.equal(HOME_POOL_LIMIT, 2000);
   assert.equal(HOME_FIRST_BATCH, 8);
+  assert.equal(HOME_REQUEST_TIMEOUT_MS, 20_000);
 });
 
 check('home pool is capped at HOME_POOL_LIMIT and newest-first', () => {

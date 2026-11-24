@@ -5,6 +5,7 @@ import {
   CHANNEL_FIRST_CACHE_PREFIX,
   FEED_STORE_TTL,
 } from './constants';
+import { chooseContinuationToken } from './continuation';
 
 export { CHANNEL_BATCH_SIZE } from './constants';
 
@@ -192,7 +193,6 @@ function parsePage(
 ): ChannelVideoPage {
   const items: VideoItem[] = [];
   const seen = new Set<string>();
-  const continuations: string[] = [];
 
   const visit = (node: any) => {
     if (!node || typeof node !== 'object') return;
@@ -200,10 +200,6 @@ function parsePage(
       for (const child of node) visit(child);
       return;
     }
-    const pageToken =
-      node.continuationItemRenderer?.continuationEndpoint?.continuationCommand
-        ?.token;
-    if (typeof pageToken === 'string') continuations.push(pageToken);
     const lockup = node.lockupViewModel;
     if (lockup && typeof lockup.contentId === 'string') {
       const videoId = lockup.contentId;
@@ -289,9 +285,7 @@ function parsePage(
     items: sortByPublished
       ? items.sort((a, b) => b.published - a.published)
       : items,
-    continuation: continuations.length
-      ? continuations[continuations.length - 1]
-      : undefined,
+    continuation: chooseContinuationToken(data),
   };
 }
 
@@ -397,7 +391,6 @@ function parsePlaylistsPage(data: any): {
 } {
   const items: ChannelPlaylist[] = [];
   const seen = new Set<string>();
-  const continuations: string[] = [];
 
   const visit = (node: any) => {
     if (!node || typeof node !== 'object') return;
@@ -405,9 +398,6 @@ function parsePlaylistsPage(data: any): {
       node.forEach(visit);
       return;
     }
-    const token =
-      node.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
-    if (typeof token === 'string') continuations.push(token);
     const lockup = node.lockupViewModel;
     if (lockup && typeof lockup.contentId === 'string' && !seen.has(lockup.contentId)) {
       const id = String(lockup.contentId);
@@ -441,7 +431,7 @@ function parsePlaylistsPage(data: any): {
   visit(data);
   return {
     items,
-    continuation: continuations.length ? continuations[continuations.length - 1] : undefined,
+    continuation: chooseContinuationToken(data),
   };
 }
 

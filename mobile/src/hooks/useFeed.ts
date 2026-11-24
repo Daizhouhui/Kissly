@@ -240,7 +240,9 @@ export function useFeed(channelFilter = '') {
         title: page.channelTitle,
         avatar: page.channelAvatar,
         continuation: page.continuation,
-        exhausted: !page.continuation,
+        // RSS has no continuation, but keep the channel live so a later
+        // scroll retries innertube instead of ending at ~12 RSS items.
+        exhausted: page.source === 'rss' ? false : !page.continuation,
         firstPageLoaded: true,
       });
     }
@@ -316,7 +318,9 @@ export function useFeed(channelFilter = '') {
             title: sub.title,
             avatar: sub.avatar,
             continuation: snapshot.continuation,
-            exhausted: snapshot.exhausted,
+            // Old caches may have marked an RSS fallback exhausted. Without a
+            // continuation we cannot know, so keep it live for one retry.
+            exhausted: snapshot.continuation ? snapshot.exhausted : false,
             firstPageLoaded: snapshot.firstPageLoaded,
           });
         }
@@ -389,7 +393,9 @@ export function useFeed(channelFilter = '') {
               title: page.channelTitle,
               avatar: page.channelAvatar,
               continuation: page.continuation,
-              exhausted: !page.continuation,
+              // A timeout fallback to RSS must not permanently exhaust the
+              // channel; the next scroll should try innertube again.
+              exhausted: page.source === 'rss' ? false : !page.continuation,
               firstPageLoaded: true,
             });
           }

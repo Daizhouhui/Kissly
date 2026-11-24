@@ -8,7 +8,7 @@
 - 缓存 30 分钟内视为新鲜（`FEED_FRESH_TTL`），直接秒开；超过 30 分钟才在后台按 8 并发刷新，旧内容继续可见。
 - `fetchHomeFeed` 每完成 8 个频道就回调一次 `onBatch`；调用方合并后立即按 `published` 倒序去重并截断到 2000 条。
 - 每个频道优先走 innertube 第一页，只取前 20 条；失败才回退 RSS（RSS 约 15 条，不补第二次请求）。
-- 每次单请求预算 8 秒，单频道失败不阻塞其他频道，也不额外重试。
+- 每次单请求预算 20 秒（与频道页一致）；8 秒在 YouTube 首包较慢时会提前回退 RSS，导致首页只有约 12 条且没有 `continuation`。单频道失败不阻塞其他频道，也不额外重试。
 - `loadMore` 先每次展开 10 条本地池；池耗尽后最多挑 3 个仍有 `continuation` 的频道续拉，每频道仍取 20 条。
 - 下拉刷新 `force = true`：重新拉全部频道。部分频道失败时保留这些频道的旧内容，成功频道用新数据替换，避免一次弱网刷新把整页清空。
 
@@ -38,7 +38,7 @@
 - 首屏后静默预取下一页，结果放 `prefetchedRef`；预取可能只返回少量新视频，首次上滑时若仍不足 20 条，会再用 `continuation` 补一页；预取失败不报错，滑到底会用同一个 token 重试。
 - 首次无缓存时 RSS 与 innertube 并行：RSS 先到先展示，innertube 到后用 `videoId` 合并并补全 `duration` 等字段；两者都失败才显示错误。
 - 已加载多页时，后台刷新按 `videoId` 合并，新数据在前，旧数据保留，不清掉用户已经滑出来的内容。
-- 手动上滑没有 600 条上限，可以一直加载到 `continuation` 为空。
+- 手动上滑和"加载全部"都没有 600 条上限，可以一直加载到 `continuation` 为空。
 
 ## 3. 缓存键与清理
 
@@ -62,8 +62,10 @@
 3. 2000 条池只保存轻量 `VideoItem`，不预载缩略图；FlatList 仍然虚拟化渲染。
 4. 首屏缓存超过 30 分钟会后台刷新；刷新失败保留旧数据，不阻塞列表。
 5. 标题翻译仍只处理当前可见条目，最多 80 个标题，不会翻译整池。
-6. "一键加载全部" 未实现：工程没有 `expo-network` / NetInfo，而需求禁止新增第三方依赖，无法可靠判断 Wi-Fi/蜂窝网络。手动上滑本身不受 600 条限制，已覆盖核心的 "加载到 continuation 为空" 场景。
-7. 首页池新鲜期内不重复发起 100 个 browse 请求；新增 1 个订阅时只补拉该频道（缓存/当前池能识别已覆盖频道）。
+6. "加载全部" 已实现：Wi-Fi 和蜂窝网络都可以用，不再做网络类型判断，也没有 600 条上限；一直拉取到 `continuation` 为空，连续两批没有新增才停止，避免坏 token 死循环。手动上滑仍可随时继续。
+7. 续页 token 选择已修正：YouTube 首包同时包含视频网格、顶部筛选 chip 和简介面板的 continuation，旧实现取最后一个会拿到简介面板的 token，导致频道只加载 30 条；现在按路径优先选 `richGridRenderer.contents` / `playlistVideoListRenderer.contents`，并兼容新的 `continuationItemViewModel` 结构。
+8. 首页池新鲜期内不重复发起 100 个 browse 请求；新增 1 个订阅时只补拉该频道（缓存/当前池能识别已覆盖频道）。
+9. RSS 兜底时 cursor 不标记 exhausted：首页即使暂时只有约 12 条，底部仍显示可上滑，下一次上滑会再试 innertube 而不是永久停在 12 条。
 
 ## 5. 验证
 
@@ -71,6 +73,7 @@
 cd mobile
 npx tsc --noEmit
 node scripts/test-home-feed.mjs
+node scripts/test-channel-continuation.mjs
 node scripts/test-settings-sync.mjs
 node scripts/test-collection-sync.mjs
 node scripts/test-progress-sync.mjs
@@ -79,4 +82,4 @@ node scripts/test-webdav-folder.mjs
 node scripts/test-cache-keys.mjs
 ```
 
-`test-home-feed.mjs` 覆盖聚合池 2000 上限、按发布时间倒序、每频道 20 条分批、缓冲队列第 21–30 条不丢失、刷新合并保留已加载内容。
+`test-home-feed.mjs` 覆盖聚合池 2000 上限、按发布时间倒序、每频道 20 条分批、缓冲队列第 21–30 条不丢失、刷新合并保留已加载内容。`test-channel-continuation.mjs` 覆盖视频网格 token 优先于顶部 chip / 简介面板 token，以及新旧两种 continuation 结构。
