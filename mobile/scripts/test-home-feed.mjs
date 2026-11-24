@@ -73,7 +73,7 @@ check('channel batches expose 20 items at a time without duplicates', () => {
   );
 });
 
-check('buffered items 21-30 appear in the second scroll, never dropped', () => {
+check('buffered items 21-30 appear on the first scroll (second display batch), never dropped', () => {
   const firstPage = Array.from({ length: 30 }, (_, index) =>
     video(index, 'UC-test', 1000 - index)
   );
@@ -81,16 +81,20 @@ check('buffered items 21-30 appear in the second scroll, never dropped', () => {
   assert.equal(first.batch.length, 20);
   assert.equal(first.rest.length, 10);
   assert.deepEqual(
+    first.batch.map((item) => item.videoId),
+    Array.from({ length: 20 }, (_, index) => `v${index}`)
+  );
+  assert.deepEqual(
     first.rest.map((item) => item.videoId),
     Array.from({ length: 10 }, (_, index) => `v${index + 20}`)
   );
 
-  // continuation page 31-60 is older and appended behind the ten buffered
-  // items, exactly like a real channel timeline.
-  const secondPage = Array.from({ length: 30 }, (_, index) =>
+  // One upward swipe merges the 10 buffered items with the prefetched
+  // 31-60 page. The resulting second display batch must start at v20.
+  const continuationPage = Array.from({ length: 30 }, (_, index) =>
     video(index + 30, 'UC-test', 1000 - (index + 30))
   );
-  const buffer = uniqueVideoItems([...first.rest, ...secondPage]);
+  const buffer = uniqueVideoItems([...first.rest, ...continuationPage]);
   const second = takeChannelBatch(buffer, CHANNEL_BATCH_SIZE);
   const ids = second.batch.map((item) => item.videoId);
   for (let index = 20; index <= 29; index += 1) {

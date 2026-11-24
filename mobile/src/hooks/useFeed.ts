@@ -12,6 +12,7 @@ import {
   CHANNEL_BATCH_SIZE,
   FEED_FRESH_TTL,
   HOME_POOL_LIMIT,
+  HOME_REQUEST_TIMEOUT_MS,
 } from '../core/youtube/constants';
 import {
   fetchHomeFeed,
@@ -483,6 +484,7 @@ export function useFeed(channelFilter = '') {
             continuation: cursor.firstPageLoaded ? cursor.continuation : undefined,
             channelTitle: sub.title,
             channelAvatar: sub.avatar,
+            timeoutMs: HOME_REQUEST_TIMEOUT_MS,
           });
           if (requestId !== requestRef.current) return;
           cursor.firstPageLoaded = true;

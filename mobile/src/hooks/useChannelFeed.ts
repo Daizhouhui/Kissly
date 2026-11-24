@@ -352,7 +352,26 @@ export function useChannelFeed(channelId: string, options: ChannelFeedOptions = 
         }
       }
 
-      if (filled) {
+      if (
+        filled &&
+        bufferRef.current.length < CHANNEL_BATCH_SIZE &&
+        continuationRef.current
+      ) {
+        // A prefetched page can be short (or entirely duplicate after a
+        // refresh). The spec still expects a full 20-item batch when the
+        // channel has another continuation, so fetch one more page now.
+        const token = continuationRef.current;
+        try {
+          const page = await fetchContinuation(token);
+          if (generation !== generationRef.current) return;
+          addToBuffer(enrich(page.items, channelAvatar));
+          continuationRef.current = page.continuation;
+        } catch {
+          // Keep the token; the next onEndReached retries it.
+        }
+      }
+
+      if (bufferRef.current.length) {
         consumeBatch();
         if (continuationRef.current) void prefetchNext();
       }
