@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { mergeChannelItems, takeChannelBatch, uniqueVideoItems } from '../core/feedBatches';
 import { VideoItem } from '../core/types';
 import {
+  ChannelInfo,
   fetchChannelVideosPage,
   loadChannelFirstPage,
   peekChannelVideoPage,
@@ -42,7 +43,7 @@ export function useChannelFeed(channelId: string, options: ChannelFeedOptions = 
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [loadingAll, setLoadingAll] = useState(false);
+  const [channelInfo, setChannelInfo] = useState<ChannelInfo | undefined>();
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState('');
 
@@ -53,9 +54,6 @@ export function useChannelFeed(channelId: string, options: ChannelFeedOptions = 
   const prefetchingRef = useRef(false);
   const prefetchPromiseRef = useRef<Promise<void> | null>(null);
   const moreLock = useRef(false);
-  const bulkLoadingRef = useRef(false);
-  const allLock = useRef(false);
-  const pageSeqRef = useRef(0);
   const generationRef = useRef(0);
   const refreshSeqRef = useRef(0);
   const activeChannelRef = useRef('');
@@ -73,11 +71,6 @@ export function useChannelFeed(channelId: string, options: ChannelFeedOptions = 
     );
   };
 
-  const loadedCount = () =>
-    itemsRef.current.length +
-    bufferRef.current.length +
-    (prefetchedRef.current?.items.length ?? 0);
-
   const reset = () => {
     itemsRef.current = [];
     bufferRef.current = [];
@@ -86,12 +79,10 @@ export function useChannelFeed(channelId: string, options: ChannelFeedOptions = 
     prefetchingRef.current = false;
     prefetchPromiseRef.current = null;
     moreLock.current = false;
-    bulkLoadingRef.current = false;
-    allLock.current = false;
     setItems([]);
     setHasMore(false);
     setLoadingMore(false);
-    setLoadingAll(false);
+    setChannelInfo(undefined);
     setRefreshing(false);
     setError('');
   };
@@ -117,7 +108,12 @@ export function useChannelFeed(channelId: string, options: ChannelFeedOptions = 
     return true;
   };
 
-  const applyFirstPage = (page: { items: VideoItem[]; continuation?: string }, preserveLoaded: boolean) => {
+  const applyFirstPage = (page: {
+    items: VideoItem[];
+    continuation?: string;
+    channelInfo?: ChannelInfo;
+  }, preserveLoaded: boolean) => {
+    if (page.channelInfo) setChannelInfo(page.channelInfo);
     const incoming = enrich(page.items, channelAvatar);
     const current = itemsRef.current;
     if (!incoming.length && current.length) {
@@ -151,13 +147,11 @@ export function useChannelFeed(channelId: string, options: ChannelFeedOptions = 
 
   const fetchContinuation = useCallback(
     async (token: string) => {
-      const page = await fetchChannelVideosPage(channelId, {
+      return fetchChannelVideosPage(channelId, {
         continuation: token,
         channelTitle,
         channelAvatar,
       });
-      pageSeqRef.current += 1;
-      return page;
     },
     [channelAvatar, channelId, channelTitle]
   );
@@ -232,7 +226,7 @@ export function useChannelFeed(channelId: string, options: ChannelFeedOptions = 
         continuationRef.current = page.continuation;
         filled = true;
       } catch {
-        // Keep the token; the next onEndReached or loadAll retries it.
+        // Keep the token; the next onEndReached retries it.
       }
     }
 
@@ -261,7 +255,7 @@ export function useChannelFeed(channelId: string, options: ChannelFeedOptions = 
     }
 
     // A response can be entirely duplicate items. Report that a page was
-    // fetched so loadAll keeps walking the continuation instead of stopping.
+    // fetched so the next scroll keeps walking the continuation.
     return filled;
   }, [channelAvatar, fetchContinuation, prefetchNext]);
 
@@ -382,6 +376,7 @@ export function useChannelFeed(channelId: string, options: ChannelFeedOptions = 
       if (generation !== generationRef.current || refreshSeq !== refreshSeqRef.current) {
         return;
       }
+      if (page.channelInfo) setChannelInfo(page.channelInfo);
       if (page.items.length) {
         applyFirstPage(page, true);
         void saveChannelFirstPage(channelId, page);
@@ -399,7 +394,6 @@ export function useChannelFeed(channelId: string, options: ChannelFeedOptions = 
   const loadMore = useCallback(async () => {
     if (
       !enabled ||
-      bulkLoadingRef.current ||
       moreLock.current ||
       loading ||
       loadingMore ||
@@ -430,72 +424,16 @@ export function useChannelFeed(channelId: string, options: ChannelFeedOptions = 
     }
   }, [enabled, hasMore, loadNextBatch, loading, loadingMore]);
 
-  /**
-   * Load every remaining continuation in one action. This is intentionally
-   * available on Wi-Fi and cellular alike; it stops only when the channel has
-   * no further continuation and no buffered items.
-   */
-  const loadAll = useCallback(async () => {
-    if (!enabled || allLock.current || loading || loadingMore) return;
-    allLock.current = true;
-    bulkLoadingRef.current = true;
-    setLoadingAll(true);
-    const generation = generationRef.current;
-    try {
-      let previous = loadedCount();
-      let stagnant = 0;
-      while (generation === generationRef.current) {
-        const seqBefore = pageSeqRef.current;
-        const advanced = await loadNextBatch();
-        if (generation !== generationRef.current) return;
-        if (!advanced) break;
-
-        // Draining a buffer does not increase loadedCount, so only treat a
-        // call as stagnant when it actually fetched a new page.
-        if (pageSeqRef.current === seqBefore) continue;
-
-        const current = loadedCount();
-        if (current <= previous) {
-          stagnant += 1;
-          if (stagnant >= 2) break;
-        } else {
-          stagnant = 0;
-        }
-        previous = current;
-        // Yield so the footer progress can repaint while pages are fetched.
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      }
-
-      if (generation !== generationRef.current) return;
-      if (
-        !bufferRef.current.length &&
-        !continuationRef.current &&
-        !prefetchedRef.current
-      ) {
-        setHasMore(false);
-      } else {
-        syncHasMore();
-      }
-    } finally {
-      if (generation === generationRef.current) {
-        allLock.current = false;
-        bulkLoadingRef.current = false;
-        setLoadingAll(false);
-      }
-    }
-  }, [enabled, loadNextBatch, loading, loadingMore]);
-
   const active = enabled && activeChannelRef.current === channelId;
   return {
     items: active ? items : [],
     loading: active ? loading : enabled,
     refreshing: active ? refreshing : false,
     loadingMore: active ? loadingMore : false,
-    loadingAll: active ? loadingAll : false,
+    channelInfo: active ? channelInfo : undefined,
     hasMore: active ? hasMore : false,
     error: active ? error : '',
     refresh,
     loadMore,
-    loadAll,
   };
 }

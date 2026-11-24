@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { mergeHomePool } from '../core/feedBatches';
-import { shouldStopAutoPagination, shouldTranslateTitles } from '../core/feedPolicy';
+import {
+  hasMoreFeed,
+  isChannelExhausted,
+  shouldTranslateTitles,
+} from '../core/feedPolicy';
 import { translateTitles } from '../core/translate';
 import { useAppStore } from '../core/store';
 import { Subscription, VideoItem } from '../core/types';
@@ -11,6 +15,7 @@ import {
 import {
   CHANNEL_BATCH_SIZE,
   FEED_FRESH_TTL,
+  HOME_CONCURRENCY,
   HOME_POOL_LIMIT,
   HOME_REQUEST_TIMEOUT_MS,
 } from '../core/youtube/constants';
@@ -33,6 +38,7 @@ type ChannelCursor = {
   continuation?: string;
   exhausted: boolean;
   firstPageLoaded: boolean;
+  lastFetchAt: number;
 };
 
 function titleScopeOf(settings: {
@@ -129,6 +135,7 @@ export function useFeed(channelFilter = '') {
       avatar: sub.avatar,
       exhausted: false,
       firstPageLoaded: false,
+      lastFetchAt: 0,
     };
     cursorsRef.current.set(sub.channelId, cursor);
     return cursor;
@@ -171,12 +178,14 @@ export function useFeed(channelFilter = '') {
 
   const computeHasMore = () => {
     const subs = useAppStore.getState().subscriptions;
-    if (!subs.length) return false;
-    if (poolRef.current.length >= HOME_POOL_LIMIT) return false;
-    if (visibleRef.current < poolRef.current.length) return true;
-    return subs.some((sub) => {
-      const cursor = cursorsRef.current.get(sub.channelId);
-      return !cursor || !cursor.exhausted;
+    return hasMoreFeed({
+      visibleCount: visibleRef.current,
+      poolLength: poolRef.current.length,
+      poolLimit: HOME_POOL_LIMIT,
+      hasLiveChannel: subs.some((sub) => {
+        const cursor = cursorsRef.current.get(sub.channelId);
+        return !cursor || !cursor.exhausted;
+      }),
     });
   };
 
@@ -242,8 +251,9 @@ export function useFeed(channelFilter = '') {
         continuation: page.continuation,
         // RSS has no continuation, but keep the channel live so a later
         // scroll retries innertube instead of ending at ~12 RSS items.
-        exhausted: page.source === 'rss' ? false : !page.continuation,
+        exhausted: isChannelExhausted(page.source, page.continuation),
         firstPageLoaded: true,
+        lastFetchAt: Date.now(),
       });
     }
     scheduleCacheSave();
@@ -318,10 +328,12 @@ export function useFeed(channelFilter = '') {
             title: sub.title,
             avatar: sub.avatar,
             continuation: snapshot.continuation,
-            // Old caches may have marked an RSS fallback exhausted. Without a
-            // continuation we cannot know, so keep it live for one retry.
-            exhausted: snapshot.continuation ? snapshot.exhausted : false,
+            // Never trust a persisted "exhausted" flag: earlier builds could
+            // stop pagination after a transient failure. Retry once; a real
+            // end is re-marked after the next request.
+            exhausted: false,
             firstPageLoaded: snapshot.firstPageLoaded,
+            lastFetchAt: 0,
           });
         }
       }
@@ -395,8 +407,9 @@ export function useFeed(channelFilter = '') {
               continuation: page.continuation,
               // A timeout fallback to RSS must not permanently exhaust the
               // channel; the next scroll should try innertube again.
-              exhausted: page.source === 'rss' ? false : !page.continuation,
+              exhausted: isChannelExhausted(page.source, page.continuation),
               firstPageLoaded: true,
+              lastFetchAt: Date.now(),
             });
           }
         } else if (result.items.length) {
@@ -475,67 +488,85 @@ export function useFeed(channelFilter = '') {
     setLoadingMore(true);
     const requestId = requestRef.current;
     try {
-      let grew = false;
-      let attempts = 0;
-      let failures = 0;
       const selected = useAppStore.getState().subscriptions;
+      const live = selected
+        .filter((sub) => {
+          const cursor = cursorsRef.current.get(sub.channelId);
+          return !cursor || !cursor.exhausted;
+        })
+        .sort((a, b) => {
+          const aCursor = cursorsRef.current.get(a.channelId);
+          const bCursor = cursorsRef.current.get(b.channelId);
+          // First pass: channels whose first page has never been loaded.
+          // After that: least recently fetched, so no channel starves.
+          const aLoaded = aCursor?.firstPageLoaded ? 1 : 0;
+          const bLoaded = bCursor?.firstPageLoaded ? 1 : 0;
+          if (aLoaded !== bLoaded) return aLoaded - bLoaded;
+          return (aCursor?.lastFetchAt ?? 0) - (bCursor?.lastFetchAt ?? 0);
+        })
+        .slice(0, HOME_CONCURRENCY);
+      if (!live.length) {
+        setHasMore(computeHasMore());
+        return;
+      }
 
-      for (const sub of selected) {
-        if (attempts >= 3 || grew) break;
-        const cursor = rememberCursor(sub);
-        if (cursor.exhausted) continue;
-        attempts += 1;
-        try {
+      const results = await Promise.allSettled(
+        live.map(async (sub) => {
+          const cursor = rememberCursor(sub);
           const page = await fetchChannelVideosPage(sub.channelId, {
-            continuation: cursor.firstPageLoaded ? cursor.continuation : undefined,
+            continuation: cursor.firstPageLoaded
+              ? cursor.continuation
+              : undefined,
             channelTitle: sub.title,
             channelAvatar: sub.avatar,
             timeoutMs: HOME_REQUEST_TIMEOUT_MS,
           });
-          if (requestId !== requestRef.current) return;
+          if (requestId !== requestRef.current) return null;
           cursor.firstPageLoaded = true;
           cursor.continuation = page.continuation;
-          if (!page.continuation) cursor.exhausted = true;
-          const fresh = enrich(page.items).slice(0, CHANNEL_BATCH_SIZE);
-          const before = poolRef.current.length;
-          const merged = mergeHomePool(
-            poolRef.current,
-            fresh,
-            HOME_POOL_LIMIT
+          // fetchChannelVideosPage only returns innertube pages here; a
+          // failure is caught below and leaves the cursor retryable.
+          cursor.exhausted = !page.continuation;
+          cursor.lastFetchAt = Date.now();
+          return page;
+        })
+      );
+      if (requestId !== requestRef.current) return;
+
+      const fresh = results.flatMap((result) =>
+        result.status === 'fulfilled' && result.value
+          ? result.value.items.slice(0, CHANNEL_BATCH_SIZE)
+          : []
+      );
+      if (fresh.length) {
+        const before = poolRef.current.length;
+        const merged = mergeHomePool(
+          poolRef.current,
+          enrich(fresh),
+          HOME_POOL_LIMIT
+        );
+        if (merged.length > before) {
+          setPoolSafe(merged);
+          const next = Math.min(
+            merged.length,
+            visibleRef.current + NEXT_PAGE_SIZE
           );
-          if (merged.length > before) {
-            grew = true;
-            setPoolSafe(merged);
-            const next = Math.min(
-              merged.length,
-              visibleRef.current + NEXT_PAGE_SIZE
-            );
-            visibleRef.current = next;
-            setVisibleCount(next);
-            const stamp = Date.now();
-            updatedAtRef.current = stamp;
-            setUpdatedAt(stamp);
-            scheduleCacheSave();
-            void translateVisibleTitles(merged.slice(0, next), requestId);
-          }
-        } catch {
-          failures += 1;
+          visibleRef.current = next;
+          setVisibleCount(next);
+          const stamp = Date.now();
+          updatedAtRef.current = stamp;
+          setUpdatedAt(stamp);
+          scheduleCacheSave();
+          void translateVisibleTitles(merged.slice(0, next), requestId);
         }
       }
 
-      if (requestId !== requestRef.current) return;
-      const anyLive = selected.some((sub) => {
-        const cursor = cursorsRef.current.get(sub.channelId);
-        return !cursor || !cursor.exhausted;
-      });
-      if (shouldStopAutoPagination({ attempts, failures, grew, anyLive })) {
-        setHasMore(false);
-      } else {
-        setHasMore(computeHasMore());
-      }
+      // Keep pagination alive while any channel still has a cursor. A
+      // transient failure should be retryable by the next upward scroll.
+      setHasMore(computeHasMore());
     } finally {
+      moreLock.current = false;
       if (requestId === requestRef.current) {
-        moreLock.current = false;
         setLoadingMore(false);
       }
     }

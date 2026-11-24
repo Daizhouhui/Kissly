@@ -6,8 +6,11 @@ import {
   FEED_STORE_TTL,
 } from './constants';
 import { chooseContinuationToken } from './continuation';
+import { ChannelInfo, parseChannelInfo, parseCountLabel } from './channelMetadata';
 
 export { CHANNEL_BATCH_SIZE } from './constants';
+export type { ChannelInfo } from './channelMetadata';
+export { parseCountLabel } from './channelMetadata';
 
 const BROWSE_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
 const BROWSE_URL = `https://www.youtube.com/youtubei/v1/browse?key=${BROWSE_KEY}&prettyPrint=false`;
@@ -19,6 +22,7 @@ const PLAYLISTS_TAB = 'EglwbGF5bGlzdHPyBgQKAkIA';
 export type ChannelVideoPage = {
   items: VideoItem[];
   continuation?: string;
+  channelInfo?: ChannelInfo;
 };
 
 export type ChannelPlaylist = {
@@ -109,7 +113,10 @@ function relativeMs(value: string): number {
 }
 
 function thumbnailsOf(value: any): string {
-  const sources = value?.contentImage?.thumbnailViewModel?.image?.sources;
+  const sources =
+    value?.contentImage?.thumbnailViewModel?.image?.sources ??
+    value?.contentImage?.collectionThumbnailViewModel?.primaryThumbnail
+      ?.thumbnailViewModel?.image?.sources;
   if (Array.isArray(sources) && sources.length) {
     return String(sources[sources.length - 1]?.url ?? '');
   }
@@ -286,6 +293,7 @@ function parsePage(
       ? items.sort((a, b) => b.published - a.published)
       : items,
     continuation: chooseContinuationToken(data),
+    channelInfo: parseChannelInfo(data),
   };
 }
 
@@ -408,17 +416,26 @@ function parsePlaylistsPage(data: any): {
         const rows =
           lockup.metadata?.lockupMetadataViewModel?.metadata?.contentMetadataViewModel
             ?.metadataRows ?? [];
+        const badgeText =
+          lockup.contentImage?.collectionThumbnailViewModel?.primaryThumbnail
+            ?.thumbnailViewModel?.overlays
+            ?.flatMap(
+              (overlay: any) =>
+                overlay?.thumbnailOverlayBadgeViewModel?.thumbnailBadges ?? []
+            )
+            ?.map((badge: any) => textOf(badge?.thumbnailBadgeViewModel?.text))
+            ?.find((text: string) => /(video|视频)/i.test(text)) ?? '';
         const countText =
           rows
             .flatMap((row: any) => row?.metadataParts ?? [])
             .map((part: any) => textOf(part?.text))
-            .find((text: string) => /(video|视频)/i.test(text)) ?? '';
-        const count = Number(countText.replace(/[^\d]/g, '')) || undefined;
+            .find((text: string) => /(video|视频)/i.test(text)) ??
+          badgeText;
+        const count = parseCountLabel(countText);
         items.push({
           playlistId: id,
           title,
-          thumbnail:
-            thumbnailsOf(lockup) || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+          thumbnail: thumbnailsOf(lockup),
           videoCount: count,
         });
       }

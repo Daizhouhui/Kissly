@@ -1,7 +1,7 @@
 # 需求：首页订阅流与频道页视频加载改造（Kissly 手机端）
 
 > 交付对象：实现型 AI / 审查者。本文件既是最初需求，也是现状核对清单。
-> 当前状态：核心改造、续页 token 修复与 5.7 的 “加载全部” 按钮均已实现并推送到 `dev`；最新提交以分支记录为准。
+> 当前状态：核心改造、续页 token 修复、频道统计与播放列表展示均已实现；频道页只保留“上滑自动加载更多”，不再提供“加载全部”按钮。
 > 涉及工程：
 > `C:\Users\KNNY\Desktop\Code\kiss-translator\mobile`
 > 技术栈：Expo SDK 58 / React Native 0.88 / TypeScript
@@ -125,6 +125,7 @@ export const HOME_POOL_CACHE_KEY = 'feed:home-pool';
 * 合并去重、按 `published` 倒序后，**首页池保留最多 2000 条**（`HOME_POOL_LIMIT`）
 
 * 首页首屏只渲染 12 条（沿用 `HOME_PAGE_SIZE`），滚动每次 +10 条，从池中展开
+* `hasMore` 必须先判断 `visible < pool.length`：即使缓存池已经满 2000 条，只要还有未展示项就继续允许上滑；只有“池已满且全部展示”才结束
 
 * 如果后续需要调整上限，只改 `HOME_POOL_LIMIT`，其余逻辑不变
 
@@ -243,7 +244,7 @@ return feed.slice(0, CHANNEL_BATCH_SIZE);
 
 * 每次合并后立即 `slice(0, HOME_POOL_LIMIT)`
 
-* `loadMore` 仍先消费本地池（每次 +10，`NEXT_PAGE_SIZE = 10` 是首页滚动步长，与每频道 20 条不冲突），池耗尽后再向各频道续拉（沿用现有 `ChannelCursor` 逻辑，最多 3 个频道 / 轮）
+* `loadMore` 仍先消费本地池（每次 +10，`NEXT_PAGE_SIZE = 10` 是首页滚动步长，与每频道 20 条不冲突），池耗尽后最多并发 8 个频道续拉一轮，并优先选择尚未加载首屏或最久未拉取的频道；失败后保留 `hasMore`，下一次上滑继续重试。
 
 * 续拉时每频道仍取 20 条
 
@@ -373,19 +374,9 @@ continuationRef: string | undefined
 
 频道页头部 "播放最新" 按钮逻辑不变。
 
-### 5.7 频道页“加载全部”按钮（已实现）
+### 5.7 “加载全部”按钮（已移除）
 
-频道页底部 "上滑自动加载更多" 旁提供 "加载全部" 按钮，串行拉取后续所有 `continuation`：
-
-
-
-* 加载中显示 "已加载 N 条，正在加载…"
-
-* Wi-Fi 与蜂窝网络都可以使用，不做网络类型判断；不设 600 条 / 20 页上限
-
-* 连续两批没有新增才停止，防止异常 token 造成死循环
-
-状态：已实现。手动上滑与按钮都不受 600 条限制，一直加载到 `continuation` 为空。
+早期版本曾在频道页底部增加“加载全部”按钮。实际使用中上滑本身就会自动续拉，按钮属于重复入口，已移除；频道页只保留上滑自动加载，仍然不做 600 条截断，一直加载到 `continuation` 为空。
 
 
 
@@ -472,7 +463,7 @@ continuationRef: string | undefined
 
 6. **"全部视频" 的范围**：频道页只覆盖 YouTube 的 `videos` 标签页（长视频），Shorts 在独立标签页，不在本需求范围；`continuation` 为空时即视为该标签页已到底
 
-7. **频道页无人工条数上限**：手动上滑和 "加载全部" 按钮都可一直加载到 `continuation` 为空，不做 600 条截断
+7. **频道页无人工条数上限**：手动上滑可一直加载到 `continuation` 为空，不做 600 条截断
 
 
 
@@ -522,7 +513,7 @@ continuationRef: string | undefined
 
 * [ ] `npx tsc --noEmit` 通过（在 `mobile/` 下执行）
 
-* [ ] 现有测试全绿：`node scripts/test-settings-sync.mjs`、`test-collection-sync.mjs`、`test-progress-sync.mjs`、`test-subscription-sync.mjs`、`test-webdav-folder.mjs`、`test-cache-keys.mjs`、`test-home-feed.mjs`、`test-channel-continuation.mjs`
+* [ ] 现有测试全绿：`node scripts/test-settings-sync.mjs`、`test-collection-sync.mjs`、`test-progress-sync.mjs`、`test-subscription-sync.mjs`、`test-webdav-folder.mjs`、`test-cache-keys.mjs`、`test-home-feed.mjs`、`test-channel-continuation.mjs`、`test-channel-metadata.mjs`、`test-feed-policy.mjs`
 
 
 
@@ -543,11 +534,13 @@ continuationRef: string | undefined
 | `mobile/src/core/youtube/rss.ts`            | `fetchChannelFeed` 增加可选 `timeoutMs` 参数；`fetchSubscriptionFeed` 保留给旧调用                                                 |
 | `mobile/src/core/youtube/channelVideos.ts`  | `fetchChannelVideosPage` 增加可选 `timeoutMs`；新增 `peekChannelVideoPage` / `loadChannelFirstPage` / `saveChannelFirstPage`；续页 token 改为按主内容路径选择 |
 | `mobile/src/core/youtube/continuation.ts`（已实现） | 兼容 `continuationItemRenderer` 与 `continuationItemViewModel`，并排除顶部 chip / 简介面板 token |
-| `mobile/app/channel.tsx`                    | 先缓存后刷新、改用 `useChannelFeed`、RSS 并行兜底（“加载全部”按钮已实现）                                                                     |
+| `mobile/app/channel.tsx`                    | 先缓存后刷新、改用 `useChannelFeed`、RSS 并行兜底、频道统计与播放列表展示（不再提供“加载全部”按钮）                                                                     |
 | `mobile/app/_layout.tsx`                    | `pruneExpiredCaches` 的 TTL、`excludePrefixes` 与新增前缀                                                                    |
 | `mobile/src/core/youtube/constants.ts`（已实现） | 第 3.1 节所有常量                                                                                                           |
 | `mobile/scripts/test-home-feed.mjs`（已实现）    | 常量、聚合池上限、每频道 20 条、缓冲队列不丢条的断言                                                                                          |
 | `mobile/scripts/test-channel-continuation.mjs`（已实现） | 视频网格 token 优先级、新旧 continuation 结构断言                                                                                     |
+| `mobile/scripts/test-channel-metadata.mjs`（已实现） | 频道订阅者数、发布视频数解析断言                                                                                     |
+| `mobile/src/core/youtube/channelMetadata.ts`（已实现） | 解析频道 header 的 handle / 订阅者 / 视频总数 / 简介 |
 | `mobile/docs/feed-loading-notes.md`（已实现）    | 记录第 8 节取舍与缓存键说明                                                                                                       |
 
 
@@ -570,12 +563,12 @@ continuationRef: string | undefined
 
 6. `useFeed` 的 `channelFilter` 分支接入 `useChannelFeed`
 
-7. 频道页 RSS 并行兜底
+7. 频道页 RSS 并行兜底 + 频道统计/播放列表
 
-8. “加载全部”按钮（已实现，任意网络、无 600 条上限）
+8. 首页并发续拉与频道轮换（优先最久未拉取的频道），失败后保留可重试状态
 
 9. 测试脚本 + `tsc --noEmit` + 推送 `dev`
 
-当前进度：1–7、9 已完成并提交（`ad7b0b6b`、`dc9fff4b`）；第 8 步未做。
+当前进度：1–9 已完成；“加载全部”按钮已移除，频道页仅保留上滑自动加载。
 
 每步完成后可独立运行验证，不要一次性全改完再测。

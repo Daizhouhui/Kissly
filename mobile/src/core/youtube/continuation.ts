@@ -49,7 +49,7 @@ export function scoreContinuationPath(path: readonly string[]): number {
   if (joined.includes('header') || joined.includes('engagementPanel')) return 0;
   if (/richGridRenderer\/contents(\/|$)/.test(joined)) return 100;
   if (/playlistVideoListRenderer\/contents(\/|$)/.test(joined)) return 100;
-  if (/gridRenderer\/contents(\/|$)/.test(joined)) return 90;
+  if (/gridRenderer\/(?:contents|items)(\/|$)/.test(joined)) return 90;
   if (/itemSectionRenderer\/contents(\/|$)/.test(joined)) return 80;
   return 10;
 }

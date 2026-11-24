@@ -108,6 +108,17 @@ check('video-grid continuation outranks header chip and description tokens', () 
   assert.equal(pickContinuationToken(candidates), 'grid-token-long');
   assert.equal(scoreContinuationPath(['richGridRenderer', 'contents']), 100);
   assert.equal(scoreContinuationPath(['richGridRenderer', 'header']), 0);
+  assert.equal(
+    scoreContinuationPath([
+      'sectionListRenderer',
+      'contents',
+      'itemSectionRenderer',
+      'contents',
+      'gridRenderer',
+      'items',
+    ]),
+    90
+  );
 });
 
 check('walks a real-shaped page and ignores header-only tokens', () => {

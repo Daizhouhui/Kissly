@@ -435,6 +435,15 @@ export default function SubscriptionsScreen() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [swipeOpenId, setSwipeOpenId] = useState<string | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  // The stack slide is native; mounting 10 heavy swipe/drag rows on the JS
+  // thread at the same time drops its frames. Let the slide finish first.
+  const [listReady, setListReady] = useState(false);
+
+  useEffect(() => {
+    // Let the native stack slide finish before mounting heavy rows.
+    const timer = setTimeout(() => setListReady(true), 360);
+    return () => clearTimeout(timer);
+  }, []);
 
   const listRef = useRef<FlatList<Subscription>>(null);
   const listMetricsRef = useRef({ top: 0, height: 0, contentHeight: 0 });
@@ -849,10 +858,10 @@ export default function SubscriptionsScreen() {
       <DragIndexContext.Provider value={dragIndex}>
         <FlatList
           ref={listRef}
-          data={filteredSubscriptions}
+          data={listReady ? filteredSubscriptions : []}
           keyExtractor={(item) => item.channelId}
           scrollEnabled
-          extraData={{ dragIndex, swipeOpenId }}
+          extraData={{ dragIndex, swipeOpenId, listReady }}
           CellRendererComponent={DragCell}
           // The dragged row is pinned on screen with translateY while its
           // layout slot scrolls away during edge auto-scroll. Native view
@@ -926,7 +935,7 @@ export default function SubscriptionsScreen() {
             />
           )}
           ListEmptyComponent={
-            subscriptions.length ? (
+            !listReady ? undefined : subscriptions.length ? (
               <EmptyState
                 icon="search-outline"
                 title="没有找到频道"
