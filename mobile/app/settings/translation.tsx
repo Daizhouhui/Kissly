@@ -745,36 +745,37 @@ export default function TranslationSettingsScreen() {
             />
           ))}
         </Card>
-        <Card
-          style={{
-            paddingVertical: 6,
-            paddingHorizontal: 10,
-            marginTop: 10,
-          }}
-        >
-          <Text
+        <View style={{ marginTop: 14 }}>
+          <Card
             style={{
-              color: theme.colors.textSecondary,
-              fontSize: 12,
-              fontWeight: '700',
               paddingVertical: 6,
-              paddingHorizontal: 4,
+              paddingHorizontal: 10,
             }}
           >
-            付费引擎（仅在“免费失败自动用付费引擎”开启时尝试）
-          </Text>
-          {settings.autoPaidOrder.map((id, index) => (
-            <ProviderOrderRow
-              key={id}
-              label={PROVIDER_LABELS[id] ?? id}
-              index={index}
-              total={settings.autoPaidOrder.length}
-              onUp={() => movePaid(id, -1)}
-              onDown={() => movePaid(id, 1)}
-              last={index === settings.autoPaidOrder.length - 1}
-            />
-          ))}
-        </Card>
+            <Text
+              style={{
+                color: theme.colors.textSecondary,
+                fontSize: 12,
+                fontWeight: '700',
+                paddingVertical: 6,
+                paddingHorizontal: 4,
+              }}
+            >
+              付费引擎（仅在“免费失败自动用付费引擎”开启时尝试）
+            </Text>
+            {settings.autoPaidOrder.map((id, index) => (
+              <ProviderOrderRow
+                key={id}
+                label={PROVIDER_LABELS[id] ?? id}
+                index={index}
+                total={settings.autoPaidOrder.length}
+                onUp={() => movePaid(id, -1)}
+                onDown={() => movePaid(id, 1)}
+                last={index === settings.autoPaidOrder.length - 1}
+              />
+            ))}
+          </Card>
+        </View>
 
         <SectionTitle title="翻译策略" />
         <Card style={{ paddingVertical: 4 }}>
