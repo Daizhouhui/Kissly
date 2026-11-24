@@ -78,6 +78,9 @@ const radiusStyle = (radius: number) => ({
 // Portrait player gutter: keeps the back arrow, video, timestamps,
 // transcript text and progress bar on one left edge.
 const PLAYER_GUTTER = 20;
+// The player surface sits inside its own dark stage; keep its corners
+// shallower than the generic card radius so the video picture stays dominant.
+const PLAYER_VIDEO_RADIUS = 10;
 const CONTROLS_HIDE_DELAY_MS = 3000;
 const SEEK_GRAB_RADIUS = 22;
 const SEEK_CONFIRM_TIMEOUT_MS = 900;
@@ -5784,7 +5787,7 @@ const styles = StyleSheet.create({
     marginHorizontal: PLAYER_GUTTER,
     backgroundColor: '#000000',
     overflow: 'hidden',
-    ...radiusStyle(RADIUS.card),
+    ...radiusStyle(PLAYER_VIDEO_RADIUS),
   },
   videoFrameHidden: {
     height: 0,
@@ -5908,7 +5911,7 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     paddingHorizontal: 8,
     marginBottom: 6,
-    ...radiusStyle(RADIUS.control),
+    borderRadius: 0,
   },
   transcriptWrap: { flex: 1 },
   followCurrentButton: {
@@ -6189,8 +6192,7 @@ const styles = StyleSheet.create({
     maxWidth: '88%',
     paddingHorizontal: 18,
     paddingVertical: 10,
-    ...radiusStyle(RADIUS.card),
-    overflow: 'hidden',
+    borderRadius: 0,
   },
   landSubOriginal: {
     color: '#FFFFFF',

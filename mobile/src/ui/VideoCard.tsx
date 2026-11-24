@@ -11,6 +11,9 @@ import { useAppTheme } from './theme';
 
 export type VideoCardVariant = 'list' | 'grid' | 'large';
 
+// Covers are deliberately flatter than the app's generic control radius.
+const VIDEO_THUMBNAIL_RADIUS = 8;
+
 export function VideoCard({
   item,
   onPress,
@@ -80,7 +83,7 @@ export function VideoCard({
           style={{
             width: '100%',
             aspectRatio: 16 / 9,
-            borderRadius: large ? RADIUS.card : RADIUS.control,
+            borderRadius: VIDEO_THUMBNAIL_RADIUS,
             ...CONTINUOUS_CORNER,
             overflow: 'hidden',
             backgroundColor: theme.colors.surfaceAlt,
@@ -154,7 +157,7 @@ export function VideoCard({
         style={{
           width: thumbWidth,
           aspectRatio: 16 / 9,
-          borderRadius: RADIUS.control,
+          borderRadius: VIDEO_THUMBNAIL_RADIUS,
           ...CONTINUOUS_CORNER,
           overflow: 'hidden',
           backgroundColor: theme.colors.surfaceAlt,
