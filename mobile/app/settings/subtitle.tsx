@@ -69,7 +69,7 @@ export default function SubtitleSettingsScreen() {
             {subtitles.mode !== 'original' ? (
               <Text
                 style={{
-                  color: subtitles.mode === 'translation' ? '#FFFFFF' : '#BFD8C9',
+                  color: '#FFFFFF',
                   fontSize: subtitles.mode === 'translation' ? sizeText : sizeText * 0.86,
                   lineHeight: sizeText * 1.3,
                   marginTop: subtitles.mode === 'bilingual' ? 4 : 0,
