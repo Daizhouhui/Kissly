@@ -543,7 +543,11 @@ export default function HomeScreen() {
               {loadingMore ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
               <Text style={{ color: theme.colors.textTertiary, fontSize: 11 }}>
                 {hasMore
-                  ? `已加载 ${visible.length} / ${Math.max(total, visible.length)} 条 · 上滑加载更多`
+                  ? `已加载 ${visible.length}${
+                      total > visible.length
+                        ? ` / ${Math.max(total, visible.length)}`
+                        : ''
+                    } 条 · 上滑加载更多`
                   : `已加载全部 ${visible.length} 条`}
                 {updatedAt ? ` · ${relativeTime(updatedAt)}更新` : ''}
               </Text>

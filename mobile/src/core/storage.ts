@@ -78,7 +78,13 @@ export async function saveCached<T>(key: string, value: T): Promise<void> {
   await saveJson(key, { at: Date.now(), value });
 }
 
-export type CachePruneRule = { prefix: string; ttlMs: number };
+export type CachePruneRule = {
+  prefix: string;
+  ttlMs: number;
+  /** More specific prefixes that must survive this rule (for example a
+   * long-lived snapshot stored beside short-lived channel entries). */
+  excludePrefixes?: string[];
+};
 
 /**
  * One startup sweep deletes expired entries that may never be read again,
@@ -91,14 +97,26 @@ export async function pruneExpiredCaches(
   try {
     const allKeys = await AsyncStorage.getAllKeys();
     const matches = allKeys.filter((key) =>
-      rules.some((rule) => key.startsWith(NS + rule.prefix))
+      rules.some(
+        (rule) =>
+          key.startsWith(NS + rule.prefix) &&
+          !(rule.excludePrefixes ?? []).some((prefix) =>
+            key.startsWith(NS + prefix)
+          )
+      )
     );
     if (!matches.length) return 0;
     const entries = await AsyncStorage.multiGet(matches);
     const stale: string[] = [];
     for (const [key, raw] of entries) {
       if (!raw) continue;
-      const rule = rules.find((item) => key.startsWith(NS + item.prefix));
+      const rule = rules.find(
+        (item) =>
+          key.startsWith(NS + item.prefix) &&
+          !(item.excludePrefixes ?? []).some((prefix) =>
+            key.startsWith(NS + prefix)
+          )
+      );
       if (!rule) continue;
       if (shouldPruneCacheEntry(raw, rule.ttlMs)) stale.push(key);
     }

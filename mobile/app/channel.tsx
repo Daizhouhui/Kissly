@@ -19,17 +19,15 @@ import { fetchChannelDescription } from '../src/core/youtube/channel';
 import {
   ChannelPlaylist,
   fetchChannelPlaylistsPage,
-  fetchChannelVideosPage,
   fetchPlaylistVideosPage,
 } from '../src/core/youtube/channelVideos';
-import { fetchChannelFeed, fetchPlaylistFeed } from '../src/core/youtube/rss';
+import { fetchPlaylistFeed } from '../src/core/youtube/rss';
+import { useChannelFeed } from '../src/hooks/useChannelFeed';
 import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
 import { AppPressable } from '../src/ui/app-pressable';
 import { NavHeader } from '../src/ui/components';
 import { useAppTheme } from '../src/ui/theme';
 import { VideoCard } from '../src/ui/VideoCard';
-
-const PAGE = 10;
 
 function formatCount(value?: number) {
   if (!value) return '';
@@ -66,12 +64,19 @@ export default function ChannelScreen() {
     [history]
   );
 
-  const [items, setItems] = useState<VideoItem[]>([]);
-  const [visible, setVisible] = useState(PAGE);
-  const [continuation, setContinuation] = useState<string | undefined>();
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState('');
+  const {
+    items,
+    loading,
+    loadingMore,
+    hasMore,
+    error,
+    loadMore,
+  } = useChannelFeed(channelId, {
+    channelTitle: title,
+    channelAvatar: avatar || undefined,
+    enabled: Boolean(channelId),
+  });
+
   const [description, setDescription] = useState('');
   const [expandDescription, setExpandDescription] = useState(false);
   const [tab, setTab] = useState<'latest' | 'popular' | 'playlists'>('latest');
@@ -83,80 +88,22 @@ export default function ChannelScreen() {
   const [playlistContinuation, setPlaylistContinuation] = useState<string | undefined>();
   const [playlistVideosLoading, setPlaylistVideosLoading] = useState(false);
   const [playlistLoadingMore, setPlaylistLoadingMore] = useState(false);
-  const requestRef = useRef(0);
+  const descriptionRequestRef = useRef(0);
   const playlistRequestRef = useRef(0);
 
   useEffect(() => {
     if (!channelId) return;
-    const requestId = ++requestRef.current;
-    setLoading(true);
-    setError('');
-    setItems([]);
-    setVisible(PAGE);
-    setContinuation(undefined);
-    const run = async () => {
-      try {
-        const page = await fetchChannelVideosPage(channelId, {
-          channelTitle: title,
-          channelAvatar: avatar,
-          force: true,
-        });
-        if (requestId !== requestRef.current) return;
-        setItems(page.items);
-        setContinuation(page.continuation);
-        setVisible(Math.min(PAGE, page.items.length));
-      } catch {
-        try {
-          const feed = await fetchChannelFeed(channelId, true);
-          if (requestId !== requestRef.current) return;
-          setItems(feed);
-          setVisible(Math.min(PAGE, feed.length));
-        } catch (reason) {
-          if (requestId !== requestRef.current) return;
-          setError(reason instanceof Error ? reason.message : String(reason));
-        }
-      } finally {
-        if (requestId === requestRef.current) setLoading(false);
-      }
-    };
-    run();
-    fetchChannelDescription(channelId).then((text) => {
-      if (requestId === requestRef.current) setDescription(text);
-    });
+    setDescription('');
+    const requestId = ++descriptionRequestRef.current;
+    fetchChannelDescription(channelId)
+      .then((text) => {
+        if (requestId === descriptionRequestRef.current) setDescription(text);
+      })
+      .catch(() => {});
     return () => {
-      requestRef.current += 1;
+      descriptionRequestRef.current += 1;
     };
-  }, [avatar, channelId, title]);
-
-  const loadMore = async () => {
-    if (loadingMore || loading) return;
-    if (visible < items.length) {
-      setVisible((count) => Math.min(items.length, count + PAGE));
-      return;
-    }
-    if (!continuation) return;
-    setLoadingMore(true);
-    const requestId = requestRef.current;
-    try {
-      const page = await fetchChannelVideosPage(channelId, {
-        continuation,
-        channelTitle: title,
-        channelAvatar: avatar,
-      });
-      if (requestId !== requestRef.current) return;
-      const seen = new Set(items.map((item) => item.videoId));
-      const fresh = page.items.filter((item) => !seen.has(item.videoId));
-      const merged = [...items, ...fresh];
-      setItems(merged);
-      setContinuation(page.continuation);
-      setVisible((count) => Math.min(merged.length, count + PAGE));
-    } catch {
-      // Keep the continuation token so a transient network failure can be
-      // retried by tapping "load more" again instead of ending pagination.
-    } finally {
-      setLoadingMore(false);
-    }
-  };
+  }, [channelId]);
 
   const loadPlaylists = async () => {
     if (!channelId || playlistLoading || playlists.length) return;
@@ -271,7 +218,7 @@ export default function ChannelScreen() {
   const popularItems = [...items].sort(
     (a, b) => (b.viewCount ?? 0) - (a.viewCount ?? 0) || b.published - a.published
   );
-  const data = tab === 'latest' ? latestItems.slice(0, visible) : tab === 'popular' ? popularItems.slice(0, visible) : [];
+  const data = tab === 'latest' ? latestItems : tab === 'popular' ? popularItems : [];
   const averageDuration = items.length
     ? Math.round(items.reduce((sum, item) => sum + (item.duration ?? 0), 0) / items.length / 60)
     : 0;
@@ -386,7 +333,10 @@ export default function ChannelScreen() {
         {items.length ? (
           <View style={styles.statsRow}>
             <View style={styles.statItem}>
-              <Text style={[styles.statValue, { color: theme.colors.text }]}>{items.length}+</Text>
+              <Text style={[styles.statValue, { color: theme.colors.text }]}>
+                {items.length}
+                {hasMore ? '+' : ''}
+              </Text>
               <Text style={[styles.statLabel, { color: theme.colors.textTertiary }]}>已读取视频</Text>
             </View>
             <View style={[styles.statDivider, { backgroundColor: theme.colors.border }]} />
@@ -486,7 +436,9 @@ export default function ChannelScreen() {
                 这个频道暂时没有公开播放列表。
               </Text>
             )
-          ) : !loading && !error ? (
+          ) : loading ? (
+            <ActivityIndicator color={theme.colors.primary} style={{ marginTop: 26 }} />
+          ) : !error ? (
             <Text style={{ color: theme.colors.textTertiary, fontSize: 12, marginTop: 16 }}>
               这个频道暂时没有可读取的视频。
             </Text>
@@ -497,9 +449,7 @@ export default function ChannelScreen() {
             <View style={{ paddingVertical: 14, alignItems: 'center', gap: 6 }}>
               {loadingMore ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
               <Text style={{ color: theme.colors.textTertiary, fontSize: 11 }}>
-                {visible >= items.length && !continuation
-                  ? `已加载全部 ${items.length} 条`
-                  : '上滑加载更多'}
+                {hasMore ? '上滑加载更多' : `已加载全部 ${items.length} 条`}
               </Text>
             </View>
           ) : undefined

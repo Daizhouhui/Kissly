@@ -1,5 +1,12 @@
 import { BROWSER_HEADERS, httpJson } from '../http';
+import { loadCachedEntry, saveCached } from '../storage';
 import { VideoItem } from '../types';
+import {
+  CHANNEL_FIRST_CACHE_PREFIX,
+  FEED_STORE_TTL,
+} from './constants';
+
+export { CHANNEL_BATCH_SIZE } from './constants';
 
 const BROWSE_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
 const BROWSE_URL = `https://www.youtube.com/youtubei/v1/browse?key=${BROWSE_KEY}&prettyPrint=false`;
@@ -22,6 +29,42 @@ export type ChannelPlaylist = {
 
 const pageCache = new Map<string, { at: number; page: ChannelVideoPage }>();
 const PAGE_TTL = 5 * 60 * 1000;
+
+function pageCacheKey(channelId: string, continuation?: string): string {
+  return `${channelId}:${continuation ?? 'first'}`;
+}
+
+/** Read the in-memory first page without triggering a network request. */
+export function peekChannelVideoPage(
+  channelId: string,
+  continuation?: string
+): ChannelVideoPage | null {
+  const cached = pageCache.get(pageCacheKey(channelId, continuation));
+  if (!cached || Date.now() - cached.at >= PAGE_TTL) return null;
+  return cached.page;
+}
+
+export async function loadChannelFirstPage(
+  channelId: string
+): Promise<ChannelVideoPage | null> {
+  const entry = await loadCachedEntry<ChannelVideoPage>(
+    `${CHANNEL_FIRST_CACHE_PREFIX}${channelId}`,
+    FEED_STORE_TTL
+  );
+  if (!entry) return null;
+  // Preserve the persisted timestamp so a no-force fetch cannot treat a
+  // six-day-old snapshot as a fresh five-minute page cache hit.
+  pageCache.set(pageCacheKey(channelId), { at: entry.at, page: entry.value });
+  return entry.value;
+}
+
+export async function saveChannelFirstPage(
+  channelId: string,
+  page: ChannelVideoPage
+): Promise<void> {
+  if (!page.items.length) return;
+  await saveCached(`${CHANNEL_FIRST_CACHE_PREFIX}${channelId}`, page);
+}
 
 function textOf(value: any): string {
   if (!value) return '';
@@ -259,10 +302,16 @@ export async function fetchChannelVideosPage(
     channelTitle?: string;
     channelAvatar?: string;
     force?: boolean;
+    timeoutMs?: number;
   } = {}
 ): Promise<ChannelVideoPage> {
-  const { continuation, channelTitle = 'YouTube', channelAvatar } = options;
-  const cacheKey = `${channelId}:${continuation ?? 'first'}`;
+  const {
+    continuation,
+    channelTitle = 'YouTube',
+    channelAvatar,
+    timeoutMs = 20000,
+  } = options;
+  const cacheKey = pageCacheKey(channelId, continuation);
   const cached = pageCache.get(cacheKey);
   if (!options.force && cached && Date.now() - cached.at < PAGE_TTL) {
     return cached.page;
@@ -286,7 +335,7 @@ export async function fetchChannelVideosPage(
 
   const data = await httpJson(BROWSE_URL, {
     method: 'POST',
-    timeoutMs: 20000,
+    timeoutMs,
     headers: {
       ...BROWSER_HEADERS,
       'Content-Type': 'application/json',

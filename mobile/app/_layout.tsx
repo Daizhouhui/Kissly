@@ -12,6 +12,11 @@ import {
   markProgressDirty,
   maybeAutoSync,
 } from '../src/core/sync';
+import {
+  CHANNEL_FIRST_CACHE_PREFIX,
+  FEED_STORE_TTL,
+  HOME_POOL_CACHE_KEY,
+} from '../src/core/youtube/constants';
 import { AppAlertHost } from '../src/ui/app-alert';
 import { ErrorBoundary } from '../src/ui/error-boundary';
 import { useAppTheme } from '../src/ui/theme';
@@ -34,7 +39,13 @@ export default function RootLayout() {
       { prefix: 'captions:v2:', ttlMs: 30 * day },
       { prefix: 'cues:v3:', ttlMs: 30 * day },
       { prefix: 'cues:v4:', ttlMs: 30 * day },
-      { prefix: 'feed:', ttlMs: 10 * 60 * 1000 },
+      {
+        prefix: 'feed:',
+        ttlMs: FEED_STORE_TTL,
+        excludePrefixes: [HOME_POOL_CACHE_KEY],
+      },
+      { prefix: HOME_POOL_CACHE_KEY, ttlMs: FEED_STORE_TTL },
+      { prefix: CHANNEL_FIRST_CACHE_PREFIX, ttlMs: FEED_STORE_TTL },
       { prefix: 'video-meta:', ttlMs: 7 * day },
     ]).catch(() => {});
     maybeAutoSync().catch(() => {});

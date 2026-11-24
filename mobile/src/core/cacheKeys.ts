@@ -7,6 +7,7 @@ export const GLOBAL_CACHE_PREFIXES = [
   'captions:',
   'cues:',
   'feed:',
+  'channel:first:',
   'title-cache',
   'video-meta:',
 ] as const;
