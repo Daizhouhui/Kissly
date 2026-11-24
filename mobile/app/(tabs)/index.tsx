@@ -547,7 +547,7 @@ export default function HomeScreen() {
                       total > visible.length
                         ? ` / ${Math.max(total, visible.length)}`
                         : ''
-                    } 条 · 上滑加载更多`
+                    } 条 · 上滑自动加载更多`
                   : `已加载全部 ${visible.length} 条`}
                 {updatedAt ? ` · ${relativeTime(updatedAt)}更新` : ''}
               </Text>

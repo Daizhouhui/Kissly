@@ -449,7 +449,7 @@ export default function ChannelScreen() {
             <View style={{ paddingVertical: 14, alignItems: 'center', gap: 6 }}>
               {loadingMore ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
               <Text style={{ color: theme.colors.textTertiary, fontSize: 11 }}>
-                {hasMore ? '上滑加载更多' : `已加载全部 ${items.length} 条`}
+                {hasMore ? '上滑自动加载更多' : `已加载全部 ${items.length} 条`}
               </Text>
             </View>
           ) : undefined
@@ -527,7 +527,7 @@ export default function ChannelScreen() {
                         marginVertical: 12,
                       }}
                     >
-                      上滑加载更多
+                      上滑自动加载更多
                     </Text>
                   ) : undefined
                 }
