@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { Link, useRouter } from 'expo-router';
+import { Link, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -87,6 +87,7 @@ export default function HomeScreen() {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const navigation = useNavigation();
   const subscriptions = useAppStore((state) => state.subscriptions);
   const history = useAppStore((state) => state.history);
   const layout = useAppStore((state) => state.settings.discoverLayout);
@@ -97,6 +98,8 @@ export default function HomeScreen() {
   const [layoutAnchor, setLayoutAnchor] = useState({ top: 0, right: 16 });
   const [refreshToast, setRefreshToast] = useState('');
   const refreshToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const listRef = useRef<FlatList<VideoItem>>(null);
+  const lastVideoTabPress = useRef(0);
   const layoutButtonRef = useRef<any>(null);
   const { items, loading, refreshing, loadingMore, hasMore, total, updatedAt, refreshWithResult, loadMore } =
     useFeed(channelFilter);
@@ -109,6 +112,27 @@ export default function HomeScreen() {
       refreshToastTimer.current = null;
     }, 2200);
   }, []);
+
+  useEffect(() => {
+    // Double-tapping the active video tab returns the feed to the top.
+    const unsubscribeTab = (navigation as any).addListener('tabPress', () => {
+      if (!navigation.isFocused()) return;
+      const now = Date.now();
+      if (now - lastVideoTabPress.current < 350) {
+        lastVideoTabPress.current = 0;
+        listRef.current?.scrollToOffset({ offset: 0, animated: true });
+        return;
+      }
+      lastVideoTabPress.current = now;
+    });
+    const unsubscribeBlur = navigation.addListener('blur', () => {
+      lastVideoTabPress.current = 0;
+    });
+    return () => {
+      unsubscribeTab();
+      unsubscribeBlur();
+    };
+  }, [navigation]);
 
   useEffect(() => {
     return () => {
@@ -458,6 +482,7 @@ export default function HomeScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
       <FlatList
+        ref={listRef}
         key={layout}
         data={visible}
         keyExtractor={(item) => item.videoId}
