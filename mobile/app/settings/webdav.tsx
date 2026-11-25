@@ -29,6 +29,7 @@ import {
 } from '../../src/core/webdavProfiles';
 import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
 import { appAlert as Alert } from '../../src/ui/app-alert';
+import { toast } from '../../src/ui/app-toast';
 import { AppPressable } from '../../src/ui/app-pressable';
 import { Card, NavHeader, SectionTitle, SettingSwitch } from '../../src/ui/components';
 import { useAppTheme } from '../../src/ui/theme';
@@ -159,16 +160,6 @@ export default function WebdavSettingsScreen() {
   );
   const [profiles, setProfiles] = useState<WebdavSavedProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState('');
-  const [toast, setToast] = useState('');
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const showToast = (message: string) => {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    setToast(message);
-    toastTimer.current = setTimeout(() => {
-      setToast('');
-      toastTimer.current = null;
-    }, 2200);
-  };
   // The form mounts before AsyncStorage rehydration in some cold-start
   // cases, so initialize from defaults and refill once the saved config
   // arrives. Never overwrite text the user is currently editing.
@@ -178,13 +169,6 @@ export default function WebdavSettingsScreen() {
   const currentSavedProfile =
     profiles.find((profile) => profile.id === selectedProfileId) ??
     findMatchingWebdavProfile(profiles, { url, username, folder });
-
-  useEffect(
-    () => () => {
-      if (toastTimer.current) clearTimeout(toastTimer.current);
-    },
-    []
-  );
 
   useEffect(() => {
     if (formEdited.current) return;
@@ -356,11 +340,10 @@ export default function WebdavSettingsScreen() {
                 },
               });
               formEdited.current = false;
-              showToast('已清空保存');
+              toast.success('已清空保存');
             })().catch((error) => {
-              Alert.alert(
-                '清空失败',
-                error instanceof Error ? error.message : String(error)
+              toast.error(
+                `清空失败：${error instanceof Error ? error.message : String(error)}`
               );
             });
           },
@@ -381,9 +364,11 @@ export default function WebdavSettingsScreen() {
         folder: folder.trim() || 'Kissly',
         enabled,
       });
-      Alert.alert('连接成功', 'WebDAV 目录可以访问，保存后即可同步。');
+      toast.success('连接成功，WebDAV 目录可以访问');
     } catch (error) {
-      Alert.alert('连接失败', error instanceof Error ? error.message : String(error));
+      toast.error(
+        `连接失败：${error instanceof Error ? error.message : String(error)}`
+      );
     } finally {
       setTesting(false);
     }
@@ -392,7 +377,7 @@ export default function WebdavSettingsScreen() {
   const runSync = async () => {
     if (!passwordLoaded) return;
     if (!url.trim() || !username.trim() || !password) {
-      Alert.alert('配置不完整', '请先填写服务器地址、用户名和密码。');
+      toast.info('配置不完整，请先填写服务器地址、用户名和密码');
       return;
     }
     setSyncing(true);
@@ -400,9 +385,11 @@ export default function WebdavSettingsScreen() {
       await persist(true);
       setEnabled(true);
       const message = await syncNow();
-      showToast(message);
+      toast.success(message);
     } catch (error) {
-      Alert.alert('同步失败', error instanceof Error ? error.message : String(error));
+      toast.error(
+        `同步失败：${error instanceof Error ? error.message : String(error)}`
+      );
     } finally {
       setSyncing(false);
     }
@@ -420,11 +407,10 @@ export default function WebdavSettingsScreen() {
             onPress={async () => {
               try {
                 await persist();
-                showToast('已保存');
+                toast.success('已保存');
               } catch (error) {
-                Alert.alert(
-                  '保存失败',
-                  error instanceof Error ? error.message : String(error)
+                toast.error(
+                  `保存失败：${error instanceof Error ? error.message : String(error)}`
                 );
               }
             }}
@@ -485,9 +471,8 @@ export default function WebdavSettingsScreen() {
                 onPress={() => {
                   if (nextSavedProfile) {
                     void switchProfile(nextSavedProfile).catch((error) => {
-                      Alert.alert(
-                        '切换失败',
-                        error instanceof Error ? error.message : String(error)
+                      toast.error(
+                        `切换失败：${error instanceof Error ? error.message : String(error)}`
                       );
                     });
                     return;
@@ -775,33 +760,6 @@ export default function WebdavSettingsScreen() {
           同步订阅、视频收藏、句子收藏和播放进度。模型、API Key、字幕样式与主题不上传；进度最多每 3 分钟写入一次。密码保存在系统安全存储里。
         </Text>
       </ScrollView>
-      {toast ? (
-        <View
-          pointerEvents="none"
-          accessibilityLiveRegion="polite"
-          style={{
-            position: 'absolute',
-            alignSelf: 'center',
-            bottom: 96,
-            maxWidth: '84%',
-            backgroundColor: 'rgba(30,22,46,0.94)',
-            borderRadius: RADIUS.pill,
-            paddingHorizontal: 16,
-            paddingVertical: 9,
-          }}
-        >
-          <Text
-            style={{
-              color: '#F5F2FF',
-              fontSize: 12,
-              lineHeight: 17,
-              textAlign: 'center',
-            }}
-          >
-            {toast}
-          </Text>
-        </View>
-      ) : null}
     </View>
   );
 }

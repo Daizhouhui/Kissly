@@ -22,6 +22,7 @@ import { Subscription } from '../src/core/types';
 import { parseTakeoutCsv } from '../src/core/youtube/takeout';
 import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
 import { appAlert } from '../src/ui/app-alert';
+import { toast } from '../src/ui/app-toast';
 import { AppPressable } from '../src/ui/app-pressable';
 import { EmptyState, PrimaryButton } from '../src/ui/components';
 import { RipplePressable } from '../src/ui/ripple-pressable';
@@ -33,18 +34,42 @@ const ROW_HEIGHT = 74;
 const SWIPE_ACTION_WIDTH = 144;
 const SWIPE_ACTION_BUTTON_WIDTH = 68;
 const AUTO_SCROLL_EDGE = 82;
-const DragIndexContext = createContext<number | null>(null);
+const CHECKBOX_GAP = 38;
+const clamp = (v: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, v));
+const DragStateContext = createContext<{
+  from: number | null;
+  to: number | null;
+}>({ from: null, to: null });
 
 function DragCell({ children, index, style, ...props }: any) {
-  const dragIndex = useContext(DragIndexContext);
+  const drag = useContext(DragStateContext);
+  const isSource = drag.from === index;
+  let zIndex = 0;
+  let shift = 0;
+  if (isSource) {
+    zIndex = 100;
+  } else if (drag.from !== null && drag.to !== null && drag.from !== drag.to) {
+    if (drag.from < drag.to && index > drag.from && index <= drag.to) {
+      zIndex = 2;
+      shift = -ROW_HEIGHT;
+    } else if (drag.from > drag.to && index >= drag.to && index < drag.from) {
+      zIndex = 2;
+      shift = ROW_HEIGHT;
+    }
+  }
+
   return (
     <View
       {...props}
       style={[
         style,
-        dragIndex === index
-          ? { position: 'relative', zIndex: 100, elevation: 24 }
-          : null,
+        {
+          zIndex,
+          elevation: zIndex ? 2 : 0,
+          overflow: 'visible',
+          ...(shift ? { transform: [{ translateY: shift }] } : null),
+        },
       ]}
     >
       {children}
@@ -76,6 +101,104 @@ function CheckCircle({ checked }: { checked: boolean }) {
   );
 }
 
+function subscriptionSubtitle(item: Subscription) {
+  return (
+    [
+      item.subscriberCount ? `${item.subscriberCount} 订阅者` : null,
+      item.videoCount ? `${item.videoCount} 视频` : null,
+    ]
+      .filter(Boolean)
+      .join('  ·  ') ||
+    item.handle ||
+    '已订阅频道'
+  );
+}
+
+function DragGhost({
+  item,
+  selected,
+  translateY,
+}: {
+  item: Subscription;
+  selected: boolean;
+  translateY: Animated.Value;
+}) {
+  const theme = useAppTheme();
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 16,
+        right: 16,
+        height: ROW_HEIGHT,
+        zIndex: 1000,
+        elevation: 30,
+        transform: [{ translateY }],
+      }}
+    >
+      <View
+        style={{
+          height: ROW_HEIGHT,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 12,
+          paddingHorizontal: 14,
+          borderRadius: RADIUS.card,
+          ...CONTINUOUS_CORNER,
+          backgroundColor: theme.colors.bgElevated,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: theme.colors.border,
+          shadowColor: '#000',
+          shadowOpacity: 0.26,
+          shadowRadius: 14,
+          shadowOffset: { width: 0, height: 8 },
+          elevation: 30,
+        }}
+      >
+        <View style={{ marginLeft: CHECKBOX_GAP }}>
+          {item.avatar ? (
+            <Image
+              source={{ uri: item.avatar }}
+              style={{ width: 54, height: 54, borderRadius: RADIUS.pill } as any}
+              contentFit="cover"
+            />
+          ) : (
+            <View style={[styles.avatarFallback, { backgroundColor: theme.colors.primarySoft }]}>
+              <Text style={{ color: theme.colors.primary, fontSize: 20, fontWeight: '900' }}>
+                {item.title.slice(0, 1).toUpperCase()}
+              </Text>
+            </View>
+          )}
+        </View>
+        <View pointerEvents="none" style={styles.manageCheckbox}>
+          <CheckCircle checked={selected} />
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text
+            style={{ color: theme.colors.text, fontSize: 16, fontWeight: '800' }}
+            numberOfLines={1}
+          >
+            {item.title}
+          </Text>
+          <Text
+            style={{ color: theme.colors.textSecondary, fontSize: 11.5, marginTop: 4 }}
+            numberOfLines={1}
+          >
+            {subscriptionSubtitle(item)}
+          </Text>
+        </View>
+        <View
+          style={{ width: 30, height: 48, alignItems: 'center', justifyContent: 'center' }}
+        >
+          <Ionicons name="reorder-three-outline" size={24} color={theme.colors.textTertiary} />
+        </View>
+      </View>
+    </Animated.View>
+  );
+}
+
 function SortableRow({
   item,
   index,
@@ -84,7 +207,7 @@ function SortableRow({
   selected,
   openSwipe,
   canDrag,
-  scrollDeltaAnim,
+  hidden,
   onToggle,
   onSwipeOpen,
   onSwipeClose,
@@ -103,7 +226,7 @@ function SortableRow({
   selected: boolean;
   openSwipe: boolean;
   canDrag: boolean;
-  scrollDeltaAnim: Animated.Value;
+  hidden: boolean;
   onToggle: () => void;
   onSwipeOpen: () => void;
   onSwipeClose: () => void;
@@ -116,8 +239,6 @@ function SortableRow({
   onDragCancel: () => void;
 }) {
   const theme = useAppTheme();
-  const [dragging, setDragging] = useState(false);
-  const dragYAnim = useRef(new Animated.Value(0)).current;
   const dragYRef = useRef(0);
   const onDragStartRef = useRef(onDragStart);
   onDragStartRef.current = onDragStart;
@@ -212,55 +333,35 @@ function SortableRow({
           canDrag && Math.abs(gesture.dy) > 4,
         onMoveShouldSetPanResponderCapture: (_, gesture) =>
           canDrag && Math.abs(gesture.dy) > 4,
+        // iOS 的 ScrollView 会在纵向移动时请求接管手势；默认允许会让拖动
+        // 中途被滚动抢走，行也会回弹。拖动期间必须拒绝这次接管。
+        onPanResponderTerminationRequest: () => false,
+        onShouldBlockNativeResponder: () => true,
         onPanResponderGrant: (_, gesture) => {
-          setDragging(true);
           onDragStartRef.current(indexRef.current, gesture.y0 || gesture.moveY);
         },
         onPanResponderMove: (_, gesture) => {
           dragYRef.current = gesture.dy;
-          dragYAnim.setValue(gesture.dy);
           onDragMoveRef.current(gesture.moveY);
         },
         onPanResponderRelease: () => {
           onDragEndRef.current(indexRef.current, dragYRef.current);
           dragYRef.current = 0;
-          dragYAnim.setValue(0);
-          setDragging(false);
         },
         onPanResponderTerminate: () => {
           dragYRef.current = 0;
-          dragYAnim.setValue(0);
-          setDragging(false);
           onDragCancelRef.current();
         },
       }),
-    [canDrag, dragYAnim]
+    [canDrag]
   );
-
-  const subtitle =
-    [
-      item.subscriberCount ? `${item.subscriberCount} 订阅者` : null,
-      item.videoCount ? `${item.videoCount} 视频` : null,
-    ]
-      .filter(Boolean)
-      .join('  ·  ') ||
-    item.handle ||
-    '已订阅频道';
 
   return (
     <Animated.View
       style={{
         height: ROW_HEIGHT,
-        zIndex: dragging ? 100 : 0,
-        elevation: dragging ? 20 : 0,
         position: 'relative',
-        transform: [
-          {
-            translateY: dragging
-              ? Animated.add(dragYAnim, scrollDeltaAnim)
-              : dragYAnim,
-          },
-        ],
+        opacity: hidden ? 0 : 1,
       }}
     >
       {!manageMode ? (
@@ -327,12 +428,6 @@ function SortableRow({
         {...swipePan.panHandlers}
         style={{
           height: ROW_HEIGHT,
-          transform: [{ rotate: dragging ? '0.15deg' : '0deg' }],
-          shadowColor: '#000',
-          shadowOpacity: dragging ? 0.26 : 0,
-          shadowRadius: 14,
-          shadowOffset: { width: 0, height: 8 },
-          elevation: dragging ? 24 : 0,
           zIndex: 2,
         }}
       >
@@ -356,7 +451,7 @@ function SortableRow({
             flexDirection: 'row',
             alignItems: 'center',
             gap: 12,
-            backgroundColor: dragging ? theme.colors.bgElevated : theme.colors.card,
+            backgroundColor: theme.colors.card,
             paddingHorizontal: 14,
             borderTopLeftRadius: index === 0 ? RADIUS.card : 0,
             borderTopRightRadius: index === 0 ? RADIUS.card : 0,
@@ -367,20 +462,28 @@ function SortableRow({
             borderBottomColor: theme.colors.border,
           }}
         >
-          {item.avatar ? (
-            <Image
-              source={{ uri: item.avatar }}
-              style={{ width: 54, height: 54, borderRadius: RADIUS.pill } as any}
-              contentFit="cover"
-            />
-          ) : (
-            <View style={[styles.avatarFallback, { backgroundColor: theme.colors.primarySoft }]}>
-              <Text style={{ color: theme.colors.primary, fontSize: 20, fontWeight: '900' }}>
-                {item.title.slice(0, 1).toUpperCase()}
-              </Text>
+          {/* 头像始终是第一个子节点，只移动外层容器；如果直接把勾选框插到
+              头像前面，React 会重建 Image，进入管理态时头像会闪一下。 */}
+          <View style={manageMode ? { marginLeft: CHECKBOX_GAP } : null}>
+            {item.avatar ? (
+              <Image
+                source={{ uri: item.avatar }}
+                style={{ width: 54, height: 54, borderRadius: RADIUS.pill } as any}
+                contentFit="cover"
+              />
+            ) : (
+              <View style={[styles.avatarFallback, { backgroundColor: theme.colors.primarySoft }]}>
+                <Text style={{ color: theme.colors.primary, fontSize: 20, fontWeight: '900' }}>
+                  {item.title.slice(0, 1).toUpperCase()}
+                </Text>
+              </View>
+            )}
+          </View>
+          {manageMode ? (
+            <View pointerEvents="none" style={styles.manageCheckbox}>
+              <CheckCircle checked={selected} />
             </View>
-          )}
-          {manageMode ? <CheckCircle checked={selected} /> : null}
+          ) : null}
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text
               style={{ color: theme.colors.text, fontSize: 16, fontWeight: '800' }}
@@ -392,7 +495,7 @@ function SortableRow({
               style={{ color: theme.colors.textSecondary, fontSize: 11.5, marginTop: 4 }}
               numberOfLines={1}
             >
-              {subtitle}
+              {subscriptionSubtitle(item)}
             </Text>
           </View>
 
@@ -435,6 +538,7 @@ export default function SubscriptionsScreen() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [swipeOpenId, setSwipeOpenId] = useState<string | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragTargetIndex, setDragTargetIndex] = useState<number | null>(null);
   // The stack slide is native; mounting 10 heavy swipe/drag rows on the JS
   // thread at the same time drops its frames. Let the slide finish first.
   const [listReady, setListReady] = useState(false);
@@ -448,11 +552,16 @@ export default function SubscriptionsScreen() {
   const listRef = useRef<FlatList<Subscription>>(null);
   const listMetricsRef = useRef({ top: 0, height: 0, contentHeight: 0 });
   const scrollOffsetRef = useRef(0);
-  const dragRef = useRef<{ index: number; pointerY: number; startScroll: number } | null>(
-    null
-  );
-  const dragScrollDeltaRef = useRef(0);
-  const dragScrollDeltaAnim = useRef(new Animated.Value(0)).current;
+  const dragRef = useRef<{
+    index: number;
+    pointerY: number;
+    startPointerY: number;
+    startScroll: number;
+    count: number;
+    grabOffset: number;
+  } | null>(null);
+  const dragTargetRef = useRef<number | null>(null);
+  const dragGhostY = useRef(new Animated.Value(0)).current;
   const autoScrollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const searchInputRef = useRef<any>(null);
   const searchAnim = useRef(new Animated.Value(0)).current;
@@ -468,11 +577,41 @@ export default function SubscriptionsScreen() {
     );
   }, [query, subscriptions]);
 
+  const dragState = useMemo(
+    () => ({ from: dragIndex, to: dragTargetIndex }),
+    [dragIndex, dragTargetIndex]
+  );
+  const selectedKey = useMemo(() => Array.from(selected).join('|'), [selected]);
+  // 刻意不把 dragTargetIndex 放进 extraData：让位动画由 DragCell 通过
+  // DragStateContext 单独驱动，避免每跨过一行就重渲染全部 118 行。
+  const listExtraData = `${dragIndex ?? -1}|${swipeOpenId ?? ''}|${
+    manageMode ? 1 : 0
+  }|${searchActive ? 1 : 0}|${selectedKey}|${listReady ? 1 : 0}`;
+
   const stopAutoScroll = () => {
     if (autoScrollRef.current) {
       clearInterval(autoScrollRef.current);
       autoScrollRef.current = null;
     }
+  };
+
+  const updateDragTarget = (pointerY?: number) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const y = pointerY && pointerY > 0 ? pointerY : drag.pointerY;
+    // 用拖动起点做相对计算，而不是 pointerY 的绝对屏幕坐标。
+    // FlatList 在数据重排/重新挂载时可能把内容偏移悄悄归零，而 onScroll
+    // 不一定补发事件，绝对算法会沿用旧的 scrollOffset，导致目标行算错。
+    const delta =
+      y - drag.startPointerY + (scrollOffsetRef.current - drag.startScroll);
+    const target = clamp(
+      drag.index + Math.round(delta / ROW_HEIGHT),
+      0,
+      drag.count - 1
+    );
+    if (target === dragTargetRef.current) return;
+    dragTargetRef.current = target;
+    setDragTargetIndex(target);
   };
 
   const tickAutoScroll = () => {
@@ -500,28 +639,52 @@ export default function SubscriptionsScreen() {
     if (next === scrollOffsetRef.current) return;
     scrollOffsetRef.current = next;
     listRef.current?.scrollToOffset({ offset: next, animated: false });
-    // The visual compensation is applied in onScroll from the *actual* offset,
-    // so a one-frame lag between request and apply never jitters the row.
+    updateDragTarget();
   };
 
   const startAutoScroll = (index: number, pointerY: number) => {
     stopAutoScroll();
     const fallbackY =
       listMetricsRef.current.top + listMetricsRef.current.height / 2;
+    // 手柄在行内垂直居中，固定抓取半个行高，避免依赖可能过期的
+    // scrollOffset 去反推行顶位置。
+    const grabOffset = ROW_HEIGHT / 2;
+    const startY = pointerY || fallbackY;
     dragRef.current = {
       index,
-      pointerY: pointerY || fallbackY,
+      pointerY: startY,
+      startPointerY: startY,
       startScroll: scrollOffsetRef.current,
+      count: filteredSubscriptions.length,
+      grabOffset,
     };
-    dragScrollDeltaRef.current = 0;
-    dragScrollDeltaAnim.setValue(0);
+    dragTargetRef.current = index;
+    dragGhostY.setValue(
+      clamp(
+        startY - grabOffset,
+        listMetricsRef.current.top,
+        listMetricsRef.current.top +
+          Math.max(0, listMetricsRef.current.height - ROW_HEIGHT)
+      )
+    );
     setDragIndex(index);
+    setDragTargetIndex(index);
     setSwipeOpenId(null);
     autoScrollRef.current = setInterval(tickAutoScroll, 16);
   };
 
   const moveDragPointer = (pointerY: number) => {
-    if (dragRef.current && pointerY > 0) dragRef.current.pointerY = pointerY;
+    if (!dragRef.current || pointerY <= 0) return;
+    dragRef.current.pointerY = pointerY;
+    const metrics = listMetricsRef.current;
+    dragGhostY.setValue(
+      clamp(
+        pointerY - dragRef.current.grabOffset,
+        metrics.top,
+        metrics.top + Math.max(0, metrics.height - ROW_HEIGHT)
+      )
+    );
+    updateDragTarget(pointerY);
   };
 
   const move = (from: number, to: number) => {
@@ -535,17 +698,27 @@ export default function SubscriptionsScreen() {
   const cancelDrag = () => {
     stopAutoScroll();
     dragRef.current = null;
-    dragScrollDeltaRef.current = 0;
-    dragScrollDeltaAnim.setValue(0);
+    dragTargetRef.current = null;
     setDragIndex(null);
+    setDragTargetIndex(null);
   };
 
   const endDrag = (from: number, dragY: number) => {
-    const total = dragY + dragScrollDeltaRef.current;
-    const target = Math.max(
+    const drag = dragRef.current;
+    if (!drag) return;
+    updateDragTarget(drag.pointerY);
+    const fallback = clamp(
+      drag.index +
+        Math.round(
+          (drag.pointerY -
+            drag.startPointerY +
+            (scrollOffsetRef.current - drag.startScroll)) /
+            ROW_HEIGHT
+        ),
       0,
-      Math.min(subscriptions.length - 1, from + Math.round(total / ROW_HEIGHT))
+      drag.count - 1
     );
+    const target = dragTargetRef.current ?? fallback;
     cancelDrag();
     if (target !== from) move(from, target);
   };
@@ -606,15 +779,17 @@ export default function SubscriptionsScreen() {
       const before = new Set(subscriptions.map((sub) => sub.channelId));
       const fresh = parsed.filter((sub) => !before.has(sub.channelId));
       addSubscriptions(parsed);
-      appAlert.alert('导入完成', `识别 ${parsed.length} 个频道，其中新增 ${fresh.length} 个。`);
+      toast.success(`导入完成：识别 ${parsed.length} 个频道，新增 ${fresh.length} 个`);
     } catch (error) {
-      appAlert.alert('导入失败', error instanceof Error ? error.message : String(error));
+      toast.error(
+        `导入失败：${error instanceof Error ? error.message : String(error)}`
+      );
     }
   };
 
   const exportCsv = async () => {
     if (!subscriptions.length) {
-      appAlert.alert('还没有订阅', '先添加频道再导出。');
+      toast.info('还没有订阅，先添加频道再导出');
       return;
     }
     setBusy(true);
@@ -637,7 +812,9 @@ export default function SubscriptionsScreen() {
         UTI: 'public.comma-separated-values-text',
       });
     } catch (error) {
-      appAlert.alert('导出失败', error instanceof Error ? error.message : String(error));
+      toast.error(
+        `导出失败：${error instanceof Error ? error.message : String(error)}`
+      );
     } finally {
       setBusy(false);
     }
@@ -855,20 +1032,33 @@ export default function SubscriptionsScreen() {
         ) : null}
       </View>
 
-      <DragIndexContext.Provider value={dragIndex}>
+      <DragStateContext.Provider value={dragState}>
         <FlatList
           ref={listRef}
           data={listReady ? filteredSubscriptions : []}
           keyExtractor={(item) => item.channelId}
-          scrollEnabled
-          extraData={{ dragIndex, swipeOpenId, listReady }}
+          // 拖动时关闭列表自身滚动，边缘自动滚动改用 scrollToOffset 驱动。
+          // 否则 iOS 的 ScrollView 会和拖动手势抢 responder，表现为整页滑动、
+          // 拖动断触、被拖行回弹。
+          scrollEnabled={dragIndex === null}
+          // iOS 在列表顶/底被拖到边缘时会产生回弹偏移，和拖拽补偿叠加就会
+          // 造成被拖行上下弹跳。拖动期间关掉回弹，松手后再恢复。
+          bounces={dragIndex === null}
+          alwaysBounceVertical={dragIndex === null}
+          overScrollMode={
+            Platform.OS === 'android' ? (dragIndex === null ? 'always' : 'never') : undefined
+          }
+          extraData={listExtraData}
           CellRendererComponent={DragCell}
-          // The dragged row is pinned on screen with translateY while its
-          // layout slot scrolls away during edge auto-scroll. Native view
-          // clipping and the virtualization window both key off the layout
-          // slot, so they would detach/blank the row every scroll tick and
-          // make it flicker. Keep every cell attached while dragging.
+          // 被拖行已经移到列表外的 DragGhost 浮层，不再依赖 FlatList 的
+          // cell 裁剪/层级，因此可以正常启用虚拟化。固定行高让 scrollToOffset
+          // 和边缘自动滚动不必反复测量布局。
           removeClippedSubviews={false}
+          getItemLayout={(_, index) => ({
+            length: ROW_HEIGHT,
+            offset: ROW_HEIGHT * index,
+            index,
+          })}
           windowSize={dragIndex !== null ? 41 : 11}
           maxToRenderPerBatch={dragIndex !== null ? 40 : 10}
           updateCellsBatchingPeriod={dragIndex !== null ? 16 : 50}
@@ -879,12 +1069,7 @@ export default function SubscriptionsScreen() {
           onScroll={(event) => {
             const offset = event.nativeEvent.contentOffset.y;
             scrollOffsetRef.current = offset;
-            const drag = dragRef.current;
-            if (drag) {
-              const delta = offset - drag.startScroll;
-              dragScrollDeltaRef.current = delta;
-              dragScrollDeltaAnim.setValue(delta);
-            }
+            if (dragRef.current) updateDragTarget();
           }}
           onScrollBeginDrag={() => setSwipeOpenId(null)}
           onContentSizeChange={(_, height) => {
@@ -905,7 +1090,7 @@ export default function SubscriptionsScreen() {
               selected={selected.has(item.channelId)}
               openSwipe={swipeOpenId === item.channelId}
               canDrag={manageMode && !searchActive}
-              scrollDeltaAnim={dragScrollDeltaAnim}
+              hidden={dragIndex === index}
               onToggle={() => toggleSelected(item.channelId)}
               onSwipeOpen={() => setSwipeOpenId(item.channelId)}
               onSwipeClose={() => setSwipeOpenId(null)}
@@ -983,7 +1168,14 @@ export default function SubscriptionsScreen() {
           }
           showsVerticalScrollIndicator={false}
         />
-      </DragIndexContext.Provider>
+        {dragIndex !== null && filteredSubscriptions[dragIndex] ? (
+          <DragGhost
+            item={filteredSubscriptions[dragIndex]}
+            selected={selected.has(filteredSubscriptions[dragIndex].channelId)}
+            translateY={dragGhostY}
+          />
+        ) : null}
+      </DragStateContext.Provider>
 
       {manageMode && selected.size ? (
         <View
@@ -1057,6 +1249,12 @@ const styles = StyleSheet.create({
     ...CONTINUOUS_CORNER,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  manageCheckbox: {
+    position: 'absolute',
+    left: 14,
+    top: 24,
+    zIndex: 3,
   },
   subscribedMark: {
     width: 26,

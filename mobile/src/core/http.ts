@@ -29,6 +29,16 @@ export type HttpOptions = {
   body?: string | object;
 };
 
+/** Distinguishes an aborted request from a real network/HTTP failure. */
+export class HttpTimeoutError extends Error {
+  readonly code = 'ETIMEDOUT';
+
+  constructor(message = '请求超时') {
+    super(message);
+    this.name = 'HttpTimeoutError';
+  }
+}
+
 export async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -36,7 +46,10 @@ export async function withTimeout<T>(
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), Math.max(1, timeoutMs));
+    timer = setTimeout(
+      () => reject(new HttpTimeoutError(message)),
+      Math.max(1, timeoutMs)
+    );
   });
   try {
     return await Promise.race([promise, timeout]);
@@ -66,6 +79,11 @@ export async function httpText(
     });
     const text = await response.text();
     return { status: response.status, text, headers: response.headers };
+  } catch (error) {
+    // React Native reports the abort as a generic TypeError/AbortError. The
+    // signal is the reliable signal that our own deadline expired.
+    if (controller.signal.aborted) throw new HttpTimeoutError();
+    throw error;
   } finally {
     clearTimeout(timeout);
   }

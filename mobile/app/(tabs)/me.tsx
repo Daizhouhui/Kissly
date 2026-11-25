@@ -18,7 +18,7 @@ import { useAppStore } from '../../src/core/store';
 import { syncNow } from '../../src/core/sync';
 import { relativeTime } from '../../src/core/utils';
 import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
-import { appAlert as Alert } from '../../src/ui/app-alert';
+import { toast } from '../../src/ui/app-toast';
 import { AppPressable } from '../../src/ui/app-pressable';
 import { useAppTheme } from '../../src/ui/theme';
 
@@ -163,9 +163,11 @@ export default function MeScreen() {
     setSyncing(true);
     try {
       const message = await syncNow();
-      Alert.alert('同步完成', message);
+      toast.success(message);
     } catch (error) {
-      Alert.alert('同步失败', error instanceof Error ? error.message : String(error));
+      toast.error(
+        `同步失败：${error instanceof Error ? error.message : String(error)}`
+      );
     } finally {
       setSyncing(false);
     }

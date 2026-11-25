@@ -5,7 +5,7 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAppStore } from '../../src/core/store';
 import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
-import { appAlert as Alert } from '../../src/ui/app-alert';
+import { toast } from '../../src/ui/app-toast';
 import { AppPressable } from '../../src/ui/app-pressable';
 import { NavHeader } from '../../src/ui/components';
 import { useAppTheme } from '../../src/ui/theme';
@@ -19,7 +19,7 @@ function csvCell(value: unknown) {
 
 async function shareText(filename: string, content: string, mimeType: string) {
   if (!(await Sharing.isAvailableAsync())) {
-    Alert.alert('无法分享', '当前设备没有可用的系统分享面板。');
+    toast.info('当前设备没有可用的系统分享面板');
     return;
   }
   const path = `${FileSystem.cacheDirectory}${filename}`;
@@ -29,6 +29,12 @@ async function shareText(filename: string, content: string, mimeType: string) {
     dialogTitle: '导出 Kissly 数据',
     UTI: mimeType === 'text/csv' ? 'public.comma-separated-values-text' : 'public.json',
   });
+}
+
+function reportExportError(error: unknown) {
+  toast.error(
+    `导出失败：${error instanceof Error ? error.message : String(error)}`
+  );
 }
 
 function ExportRow({
@@ -173,30 +179,28 @@ export default function ExportScreen() {
             title="历史记录"
             subtitle="视频、频道、进度与时间"
             count={`${history.length} 条`}
-            onPress={() => exportHistory().catch((error) => Alert.alert('导出失败', String(error)))}
+            onPress={() => exportHistory().catch(reportExportError)}
           />
           <ExportRow
             icon="heart-outline"
             title="收藏"
             subtitle="收藏的视频与保存时间"
             count={`${favorites.length} 个`}
-            onPress={() => exportFavorites().catch((error) => Alert.alert('导出失败', String(error)))}
+            onPress={() => exportFavorites().catch(reportExportError)}
           />
           <ExportRow
             icon="albums-outline"
             title="订阅"
             subtitle="频道 ID、名称与主页地址"
             count={`${subscriptions.length} 个`}
-            onPress={() =>
-              exportSubscriptions().catch((error) => Alert.alert('导出失败', String(error)))
-            }
+            onPress={() => exportSubscriptions().catch(reportExportError)}
           />
           <ExportRow
             icon="options-outline"
             title="应用设置"
             subtitle="不含 WebDAV 密码"
             count="JSON"
-            onPress={() => exportSettings().catch((error) => Alert.alert('导出失败', String(error)))}
+            onPress={() => exportSettings().catch(reportExportError)}
           />
         </View>
         <Text style={{ color: theme.colors.textTertiary, fontSize: 11.5, lineHeight: 18, marginTop: 18 }}>

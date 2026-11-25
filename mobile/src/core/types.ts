@@ -96,6 +96,9 @@ export type WebDavConfig = {
   folder: string;
 };
 
+/** Accent used by system speech and by non-original English audio tracks. */
+export type SpeechAccent = 'en-US' | 'en-GB';
+
 export type Settings = {
   sourceLang: string;
   targetLang: string;
@@ -118,11 +121,15 @@ export type Settings = {
   keepAwake: boolean;
   speechRate: number;
   speechPitch: number;
+  /** Default English accent for speech preview and dub-only audio tracks. */
+  speechAccent: SpeechAccent;
   /** Android-reference design migration marker. */
   designVersion: number;
   subtitle: SubtitlePrefs;
   webdav: WebDavConfig;
   deepseekModel: string;
+  /** DeepSeek 思考模式；默认关闭，避免字幕翻译先写思维链导致变慢、变贵。 */
+  deepseekThinking: boolean;
   siliconflowModel: string;
   openrouterModel: string;
   /** Saved OpenAI-compatible endpoints; the active one mirrors the legacy fields below. */

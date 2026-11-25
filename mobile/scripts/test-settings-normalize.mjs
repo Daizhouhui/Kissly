@@ -52,8 +52,10 @@ const dirty = {
   themeAccent: 'broken',
   speechRate: Number.NaN,
   speechPitch: 99,
+  speechAccent: 'broken',
   requestTimeoutMs: -1,
   deepseekModel: '',
+  deepseekThinking: 'yes',
   subtitle: {
     ...DEFAULT_SETTINGS.subtitle,
     fontSize: 999,
@@ -88,8 +90,10 @@ assert.equal(fixed.theme, DEFAULT_SETTINGS.theme);
 assert.equal(fixed.themeAccent, DEFAULT_SETTINGS.themeAccent);
 assert.equal(fixed.speechRate, DEFAULT_SETTINGS.speechRate);
 assert.equal(fixed.speechPitch, 2);
+assert.equal(fixed.speechAccent, DEFAULT_SETTINGS.speechAccent);
 assert.equal(fixed.requestTimeoutMs, 5000);
 assert.equal(fixed.deepseekModel, DEFAULT_SETTINGS.deepseekModel);
+assert.equal(fixed.deepseekThinking, false);
 
 assert.equal(fixed.subtitle.fontSize, 40);
 assert.equal(fixed.subtitle.landscapeFontSize, 12);
@@ -114,4 +118,4 @@ assert.equal(
 assert.equal(fixed.subtitle.repeatCount, 1);
 assert.equal(fixed.subtitle.repeatInterval, 10);
 
-console.log('settings-normalize: 29 assertions passed');
+console.log('settings-normalize: 31 assertions passed');

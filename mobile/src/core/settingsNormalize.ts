@@ -37,6 +37,18 @@ function languageOf(value: unknown, fallback: string): string {
     : fallback;
 }
 
+/**
+ * `deepseek-chat` was the old default and is deprecated by the DeepSeek API;
+ * only replace it when the user never picked a custom model.
+ */
+function deepseekModelOf(value: unknown): string {
+  const model = typeof value === 'string' ? value.trim() : '';
+  if (!model || model === 'deepseek-chat') {
+    return DEFAULT_SETTINGS.deepseekModel;
+  }
+  return model;
+}
+
 export function normalizeSettings(settings: Settings): Settings {
   const openaiProfiles = normalizeOpenAiProfiles(
     settings.openaiProfiles,
@@ -104,6 +116,11 @@ export function normalizeSettings(settings: Settings): Settings {
     ),
     speechRate: numberInRange(settings.speechRate, 0.5, 2, DEFAULT_SETTINGS.speechRate),
     speechPitch: numberInRange(settings.speechPitch, 0.5, 2, DEFAULT_SETTINGS.speechPitch),
+    speechAccent: oneOf(
+      settings.speechAccent,
+      ['en-US', 'en-GB'] as const,
+      DEFAULT_SETTINGS.speechAccent
+    ),
     requestTimeoutMs: numberInRange(
       settings.requestTimeoutMs,
       5000,
@@ -111,7 +128,9 @@ export function normalizeSettings(settings: Settings): Settings {
       DEFAULT_SETTINGS.requestTimeoutMs,
       true
     ),
-    deepseekModel: settings.deepseekModel || DEFAULT_SETTINGS.deepseekModel,
+    deepseekModel: deepseekModelOf(settings.deepseekModel),
+    // Only a real `true` turns thinking on; corrupted strings fall back to off.
+    deepseekThinking: settings.deepseekThinking === true,
     siliconflowModel:
       settings.siliconflowModel || DEFAULT_SETTINGS.siliconflowModel,
     openrouterModel:

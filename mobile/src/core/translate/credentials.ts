@@ -1,4 +1,9 @@
-import { getSecret, openaiProfileSecretName } from '../secrets';
+import {
+  getSecret,
+  legacyOpenAiProfileSecretName,
+  openaiProfileSecretName,
+  setSecret,
+} from '../secrets';
 import type { Settings } from '../types';
 import {
   DEFAULT_OPENAI_PROFILE_ID,
@@ -20,8 +25,17 @@ export async function getOpenAiProfileKey(
 ): Promise<string> {
   const key = await getSecret(openaiProfileSecretName(id));
   if (key) return key;
-  if (fallbackToLegacy && id === DEFAULT_OPENAI_PROFILE_ID) {
-    return getSecret('openai');
+  if (fallbackToLegacy) {
+    // Best-effort read of the invalid legacy slot; SecureStore throws for it,
+    // and getSecret already degrades that to an empty string.
+    const legacy = await getSecret(legacyOpenAiProfileSecretName(id));
+    if (legacy) {
+      await setSecret(openaiProfileSecretName(id), legacy).catch(() => {});
+      return legacy;
+    }
+    if (id === DEFAULT_OPENAI_PROFILE_ID) {
+      return getSecret('openai');
+    }
   }
   return '';
 }

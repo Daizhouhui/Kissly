@@ -3,6 +3,8 @@ import type { ProviderId } from '../types';
 type CacheSettings = {
   provider: ProviderId;
   deepseekModel?: string;
+  /** Only a `true` value gets its own cache namespace; see providerCacheScope. */
+  deepseekThinking?: boolean;
   siliconflowModel?: string;
   openrouterModel?: string;
   openaiBaseUrl?: string;
@@ -19,13 +21,18 @@ function normalized(value: string | undefined): string {
  * The provider name alone is not enough for AI engines: the same provider can
  * point at a different model or a different OpenAI-compatible endpoint. Mixing
  * those into one cache key serves month-old translations from the old model.
+ *
+ * DeepSeek thinking is opt-in. Its disabled key stays byte-identical to the
+ * pre-toggle format so turning the switch off never invalidates the cache the
+ * user already paid for; turning it on moves the request to a separate
+ * namespace, because those translations were produced by a different request.
  */
 export function providerCacheScope(
   settings: CacheSettings,
   provider: ProviderId = settings.provider
 ): string {
   if (provider === 'auto') {
-    return `auto:${JSON.stringify({
+    const scope: Record<string, unknown> = {
       d: normalized(settings.deepseekModel),
       s: normalized(settings.siliconflowModel),
       r: normalized(settings.openrouterModel),
@@ -33,11 +40,15 @@ export function providerCacheScope(
       m: normalized(settings.openaiModel),
       f: settings.autoFreeOrder ?? [],
       p: settings.autoPaidOrder ?? [],
-    })}`;
+    };
+    if (settings.deepseekThinking) scope.t = true;
+    return `auto:${JSON.stringify(scope)}`;
   }
   switch (provider) {
     case 'deepseek':
-      return `deepseek:${normalized(settings.deepseekModel)}`;
+      return `deepseek:${normalized(settings.deepseekModel)}${
+        settings.deepseekThinking ? ':thinking' : ''
+      }`;
     case 'siliconflow':
       return `siliconflow:${normalized(settings.siliconflowModel)}`;
     case 'openrouter':

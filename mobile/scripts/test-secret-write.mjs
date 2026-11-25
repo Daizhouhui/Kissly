@@ -54,4 +54,29 @@ await (async () => {
   console.log('  ok unreadable credentials degrade to empty');
 })();
 
-console.log('secret-write: 2 checks passed');
+await (async () => {
+  const secrets = loadSecrets({
+    getItemAsync: async () => '',
+    setItemAsync: async () => {},
+    deleteItemAsync: async () => {},
+  });
+  const allowed = /^[A-Za-z0-9._-]+$/;
+  const names = [
+    secrets.openaiProfileSecretName('default'),
+    secrets.openaiProfileSecretName('openai-m1abc-2'),
+    secrets.openaiProfileSecretName('weird id:with/slash'),
+    secrets.webdavProfileSecretName('webdav-m1abc-x7k2'),
+  ];
+  // SecureStore rejects anything outside alphanumerics, ".", "-" and "_".
+  assert.ok(
+    names.every((name) => allowed.test(`kissmobile.secret.${name}`)),
+    `secret names must be SecureStore-safe: ${names.join(', ')}`
+  );
+  assert.ok(
+    names.every((name) => !name.includes(':')),
+    'profile secret names must not contain a colon'
+  );
+  console.log('  ok profile secret names are accepted by SecureStore');
+})();
+
+console.log('secret-write: 3 checks passed');

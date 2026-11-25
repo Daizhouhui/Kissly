@@ -6,20 +6,38 @@ export type SecretName =
   | 'openrouter'
   | 'openai'
   | 'webdavPassword'
-  | `openaiProfile:${string}`
+  | `openaiProfile-${string}`
   | `webdavProfile-${string}`;
 
 const PREFIX = 'kissmobile.secret.';
 
+// expo-secure-store rejects keys containing anything other than letters,
+// digits, ".", "-" and "_", so ids are normalized before becoming key names.
+function safeSecretId(id: string): string {
+  const normalized = String(id ?? '')
+    .trim()
+    .replace(/[^A-Za-z0-9._-]/g, '-');
+  return normalized || 'default';
+}
+
 export function openaiProfileSecretName(id: string): SecretName {
+  return `openaiProfile-${safeSecretId(id)}`;
+}
+
+/**
+ * Older builds stored OpenAI profile keys as `openaiProfile:<id>`, which
+ * SecureStore refuses to write. The name is kept only for a best-effort
+ * migration read, since values could never be saved under it.
+ */
+export function legacyOpenAiProfileSecretName(id: string): string {
   return `openaiProfile:${id}`;
 }
 
 export function webdavProfileSecretName(id: string): SecretName {
-  return `webdavProfile-${id}`;
+  return `webdavProfile-${safeSecretId(id)}`;
 }
 
-export async function getSecret(name: SecretName): Promise<string> {
+export async function getSecret(name: string): Promise<string> {
   try {
     return (await SecureStore.getItemAsync(PREFIX + name)) ?? '';
   } catch {

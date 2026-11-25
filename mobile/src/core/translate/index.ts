@@ -1,3 +1,4 @@
+import { findCueIndexAt } from '../cueIndex';
 import { getSecret } from '../secrets';
 import { getSettings } from '../store';
 import { loadCachedEntry, loadJson, saveCached, saveJson } from '../storage';
@@ -14,6 +15,7 @@ import { getActiveOpenAiKey } from './credentials';
 import { googleTranslate } from './google';
 import { google2Translate } from './google2';
 import { microsoftTranslate } from './microsoft';
+import { cueBatchRanges, pickNextCueBatch } from './schedule';
 import { systemTranslateTexts } from './system';
 
 export type TranslateOptions = {
@@ -24,6 +26,14 @@ export type TranslateOptions = {
   shouldStop?: () => boolean;
   /** Bypass saved batches for an explicit "translate again" action. */
   ignoreCache?: boolean;
+  /**
+   * Initial playback position, in seconds. Callers that can supply a live
+   * position should also set `getAnchorTime` so a seek can reprioritize the
+   * batches that have not started yet.
+   */
+  anchorTime?: number;
+  /** Read the current playback position for dynamic re-prioritization. */
+  getAnchorTime?: () => number;
 };
 
 export type CueTranslationProgress = (
@@ -37,9 +47,18 @@ export type CueTranslationProgress = (
  * both slow and rate-limit prone.
  */
 const CUE_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-/** Small enough that the first visible lines arrive quickly, large enough to
- * avoid one provider request per line. */
-const TRANSLATE_BATCH_SIZE = 8;
+/**
+ * Twelve lines still fit in one AI request after the 1600-character cap while
+ * cutting the request count by a third compared with the old size of eight.
+ */
+const TRANSLATE_BATCH_SIZE = 12;
+/**
+ * Two requests in flight is the safe middle ground for DeepSeek RPM/TPM limits:
+ * meaningful speedup without the 429 noise that three or more can cause.
+ */
+const TRANSLATE_CONCURRENCY = 2;
+/** A delayed retry is allowed for one transient batch failure. */
+const TRANSLATE_RETRY_DELAY_MS = 2000;
 
 const memoryTitles = new Map<string, string>();
 let titleCacheLoaded = false;
@@ -96,7 +115,12 @@ async function translateWithProvider(
     const key = await getSecret('deepseek');
     const settings = getSettings();
     return aiTranslate(
-      deepseekConfig(key, settings.deepseekModel, timeoutMs),
+      deepseekConfig(
+        key,
+        settings.deepseekModel,
+        timeoutMs,
+        settings.deepseekThinking
+      ),
       texts,
       from,
       to,
@@ -201,6 +225,44 @@ export async function translateOne(
   return result.texts[0] ?? text;
 }
 
+function cueAnchorIndex(cues: Cue[], options: TranslateOptions): number {
+  let liveTime: number | undefined;
+  try {
+    liveTime = options.getAnchorTime?.();
+  } catch {
+    liveTime = undefined;
+  }
+  const time =
+    typeof liveTime === 'number' && Number.isFinite(liveTime)
+      ? liveTime
+      : options.anchorTime;
+  if (typeof time !== 'number' || !Number.isFinite(time)) return -1;
+  return findCueIndexAt(cues, time);
+}
+
+function timeoutLike(error: unknown): boolean {
+  const name = (error as { name?: unknown })?.name;
+  if (name === 'AbortError' || name === 'HttpTimeoutError' || name === 'TimeoutError') {
+    return true;
+  }
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return /timeout|timed out|aborted|超时/i.test(message);
+}
+
+function retryableBatchError(error: unknown): boolean {
+  // The AI layer already splits a timed-out batch, so retrying the whole batch
+  // here would double the worst-case wait. 429s and transient server errors are
+  // worth one delayed retry after the other worker has made progress.
+  if (timeoutLike(error)) return false;
+  const status = (error as { status?: unknown })?.status;
+  if (typeof status !== 'number') return true;
+  return status === 429 || status >= 500;
+}
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
 export async function translateCueList(
   videoId: string,
   cues: Cue[],
@@ -267,11 +329,22 @@ export async function translateCueList(
       ...cue,
       translation: values[index] ?? '',
     }));
+  // Empty caption lines do not need a provider request. Asking a model to
+  // translate "" is one of the easiest ways to make it return fewer items than
+  // requested and trigger a false "条数不匹配".
+  const sourceNeedsTranslation = (index: number) =>
+    Boolean(cues[index]?.text?.trim());
 
-  if (provider && translations.every(Boolean)) {
+  if (
+    cues.every(
+      (_, index) =>
+        !sourceNeedsTranslation(index) || Boolean(translations[index])
+    )
+  ) {
     const complete = build(translations);
-    onProgress?.(complete, provider);
-    return { cues: complete, provider };
+    const completeProvider = provider ?? settings.provider;
+    onProgress?.(complete, completeProvider);
+    return { cues: complete, provider: completeProvider };
   }
 
   const saveCueCache = async (
@@ -313,38 +386,131 @@ export async function translateCueList(
     );
   };
 
-  for (let start = 0; start < cues.length; start += TRANSLATE_BATCH_SIZE) {
-    if (options.shouldStop?.()) {
-      return {
-        cues: build(translations),
-        provider: provider ?? settings.provider,
-      };
+  if (provider) {
+    // A partially cached translation should be visible before the first
+    // network batch returns, instead of showing 0/N until then.
+    onProgress?.(build(translations), provider);
+  }
+
+  const ranges = cueBatchRanges(cues.length, TRANSLATE_BATCH_SIZE);
+  const completedBatches = new Set<number>();
+  ranges.forEach((range, index) => {
+    let complete = true;
+    for (let cueIndex = range.start; cueIndex < range.end; cueIndex += 1) {
+      if (sourceNeedsTranslation(cueIndex) && !translations[cueIndex]) {
+        complete = false;
+        break;
+      }
     }
-    const end = Math.min(cues.length, start + TRANSLATE_BATCH_SIZE);
+    if (complete) completedBatches.add(index);
+  });
+  const activeBatches = new Set<number>();
+  /**
+   * A provider can return an array of the right length with an empty string for
+   * one line. Without this guard the worker would see that cue as still missing
+   * and re-request the same batch forever.
+   */
+  const attemptedBatches = new Set<number>();
+
+  // Cache writes are serialized: concurrent batches finish out of order, and
+  // every write replaces the whole video snapshot. Without this queue an older
+  // snapshot could land after a newer one and erase freshly translated lines.
+  let cacheWrite: Promise<void> = Promise.resolve();
+  const queueCacheSave = (actualProvider: ProviderId) => {
+    const snapshot = translations.slice();
+    cacheWrite = cacheWrite
+      .catch(() => {})
+      .then(() => saveCueCache(snapshot, actualProvider))
+      .catch(() => {
+        // A cache write failure must not throw away subtitles already shown.
+      });
+    return cacheWrite;
+  };
+
+  const translateBatch = async (batchIndex: number) => {
+    const range = ranges[batchIndex];
     const missing: number[] = [];
-    for (let index = start; index < end; index += 1) {
-      if (!translations[index]) missing.push(index);
+    for (let cueIndex = range.start; cueIndex < range.end; cueIndex += 1) {
+      if (sourceNeedsTranslation(cueIndex) && !translations[cueIndex]) {
+        missing.push(cueIndex);
+      }
     }
-    if (!missing.length) continue;
+    if (!missing.length) {
+      completedBatches.add(batchIndex);
+      attemptedBatches.add(batchIndex);
+      return;
+    }
 
     const result = await translateTexts(
-      missing.map((index) => cues[index].text),
+      missing.map((cueIndex) => cues[cueIndex].text),
       options
     );
-    if (options.shouldStop?.()) {
-      return {
-        cues: build(translations),
-        provider: provider ?? result.provider,
-      };
-    }
-    missing.forEach((index, offset) => {
-      translations[index] = result.texts[offset] ?? '';
+    if (options.shouldStop?.()) return;
+
+    // Results are always merged by the original cue index, never by request
+    // order, so re-prioritized batches cannot scramble the subtitle list.
+    missing.forEach((cueIndex, offset) => {
+      translations[cueIndex] = result.texts[offset] ?? '';
     });
     provider = result.provider;
 
-    await saveCueCache(translations, result.provider);
+    let covered = true;
+    for (let cueIndex = range.start; cueIndex < range.end; cueIndex += 1) {
+      if (sourceNeedsTranslation(cueIndex) && !translations[cueIndex]) {
+        covered = false;
+        break;
+      }
+    }
+    if (covered) completedBatches.add(batchIndex);
+    attemptedBatches.add(batchIndex);
+
     onProgress?.(build(translations), result.provider);
-  }
+    void queueCacheSave(result.provider);
+  };
+
+  let failedError: unknown = null;
+  let retryBudget = 1;
+  const worker = async () => {
+    while (!failedError && !options.shouldStop?.()) {
+      // Re-read the playback position before each pick. A seek therefore
+      // reprioritizes every batch that has not started yet; in-flight requests
+      // are left alone, which wastes at most TRANSLATE_CONCURRENCY batches.
+      const batchIndex = pickNextCueBatch(
+        ranges,
+        cueAnchorIndex(cues, options),
+        (index) =>
+          !completedBatches.has(index) &&
+          !attemptedBatches.has(index) &&
+          !activeBatches.has(index)
+      );
+      if (batchIndex < 0) return;
+
+      activeBatches.add(batchIndex);
+      try {
+        await translateBatch(batchIndex);
+      } catch (error) {
+        if (
+          retryBudget > 0 &&
+          retryableBatchError(error) &&
+          !options.shouldStop?.()
+        ) {
+          retryBudget -= 1;
+          await wait(TRANSLATE_RETRY_DELAY_MS);
+          continue;
+        }
+        failedError ??= error;
+      } finally {
+        activeBatches.delete(batchIndex);
+      }
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: TRANSLATE_CONCURRENCY }, () => worker())
+  );
+  await cacheWrite;
+
+  if (failedError && !options.shouldStop?.()) throw failedError;
 
   const complete = build(translations);
   const finalProvider = provider ?? settings.provider;
