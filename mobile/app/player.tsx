@@ -46,6 +46,7 @@ import {
   getVideoMeta,
   pickCaptionTracks,
 } from '@/src/core/youtube/innertube';
+import { pickPreferredAudioTrack } from '@/src/core/youtube/audioTrackSelection';
 import {
   clearCachedCaptions,
   loadCachedCaptions,
@@ -58,6 +59,7 @@ import {
 } from '@/src/core/youtube/videoInfoCache';
 import { fontWeightFor, fontFamilyFor, sentenceCues } from '@/src/ui/subtitleStyle';
 import { appAlert as Alert } from '@/src/ui/app-alert';
+import { toast } from '@/src/ui/app-toast';
 import { AppPressable, AppPressableProps } from '@/src/ui/app-pressable';
 import { RipplePressable } from '@/src/ui/ripple-pressable';
 import { CollapseIcon, LoopIcon, SpeedIcon } from '@/src/ui/player-icons';
@@ -70,6 +72,14 @@ const PlayerPressable = forwardRef<any, AppPressableProps>((props, ref) => (
 PlayerPressable.displayName = 'PlayerPressable';
 const Pressable = PlayerPressable;
 
+// Keep player feedback above the control bar instead of covering it.
+const PLAYER_TOAST_OFFSET = { bottomOffset: 120 };
+const playerToast = {
+  success: (message: string) => toast.success(message, PLAYER_TOAST_OFFSET),
+  info: (message: string) => toast.info(message, PLAYER_TOAST_OFFSET),
+  error: (message: string) => toast.error(message, PLAYER_TOAST_OFFSET),
+};
+
 const radiusStyle = (radius: number) => ({
   borderRadius: radius,
   ...CONTINUOUS_CORNER,
@@ -78,9 +88,9 @@ const radiusStyle = (radius: number) => ({
 // Portrait player gutter: keeps the back arrow, video, timestamps,
 // transcript text and progress bar on one left edge.
 const PLAYER_GUTTER = 20;
-// The player surface sits inside its own dark stage; keep its corners
-// shallower than the generic card radius so the video picture stays dominant.
-const PLAYER_VIDEO_RADIUS = 10;
+// The player surface sits inside its own dark stage; 16 keeps the video
+// visibly rounded without making the picture feel like a small card.
+const PLAYER_VIDEO_RADIUS = 16;
 const CONTROLS_HIDE_DELAY_MS = 3000;
 const SEEK_GRAB_RADIUS = 22;
 const SEEK_CONFIRM_TIMEOUT_MS = 900;
@@ -94,7 +104,7 @@ function CueFade(props: {
 }) {
   if (!props.visible) {
     return (
-      <View style={{ opacity: props.past ? 0.6 : 0.4 }}>
+      <View style={{ opacity: 0.7 }}>
         {props.children}
       </View>
     );
@@ -145,20 +155,28 @@ function CueFadeAnimated({
   children: ReactNode;
 }) {
   const opacity = useRef(
-    new Animated.Value(active ? 1 : past ? 0.6 : 0.4)
+    new Animated.Value(active ? 1 : 0.7)
   ).current;
   useEffect(() => {
-    const dim = past ? 0.6 : 0.4;
-    if (!active && !visible) {
+    const dim = 0.7;
+    if (active) {
+      // The incoming sentence must be fully readable as soon as it becomes
+      // current. Animating it while the transcript is scrolling made it look
+      // like it was still fading out after it had already reached the top.
+      opacity.stopAnimation();
+      opacity.setValue(1);
+      return;
+    }
+    if (!visible) {
       // Off-screen rows snap back to the default grey, so a later fast scroll
       // always starts from grey and then fades in after they become visible.
       opacity.setValue(dim);
       return;
     }
-    const target = active ? 1 : paused ? 1 : dim;
+    const target = paused ? 0.9 : dim;
     Animated.timing(opacity, {
       toValue: target,
-      duration: target === 1 && !active ? 1200 : 650,
+      duration: paused ? 650 : 500,
       useNativeDriver: true,
     }).start();
   }, [active, opacity, past, paused, visible]);
@@ -355,6 +373,119 @@ function playerBridgeScript(startAt = 0) {
       try { if (p && p.setVolume) p.setVolume(100); } catch(e) {}
       return unmuteOverlay();
     }
+    function availableAudioTracks(){
+      var p = getPlayer();
+      try {
+        if (p && typeof p.getAvailableAudioTracks === 'function') {
+          return p.getAvailableAudioTracks() || [];
+        }
+        if (p && typeof p.getAudioTracks === 'function') {
+          return p.getAudioTracks() || [];
+        }
+        if (p && typeof p.getOptions === 'function') {
+          return p.getOptions('audio', 'tracklist') || [];
+        }
+      } catch(e) {}
+      return [];
+    }
+    function audioTrackInfo(track){
+      var info = {};
+      try {
+        info = track && track.getLanguageInfo
+          ? track.getLanguageInfo()
+          : (track && track.Yb) || {};
+      } catch(e) { info = {}; }
+      var name = String((info && info.name) || (track && track.name) || '');
+      var id = String(
+        (info && info.id) ||
+        (track && track.id) ||
+        (track && track.Yb && track.Yb.id) ||
+        ''
+      );
+      var isOriginal = false;
+      try {
+        if (track && track.K === true) isOriginal = true;
+      } catch(e) {}
+      if (/原始|原声|原聲|original/i.test(name)) isOriginal = true;
+      var autoDubbed = false;
+      try {
+        autoDubbed = !!(track && track.isAutoDubbed && track.isAutoDubbed());
+      } catch(e) {}
+      return {
+        id: id,
+        name: name,
+        isDefault: !!(info && info.isDefault),
+        isOriginal: isOriginal,
+        isAutoDubbed: autoDubbed
+      };
+    }
+    function currentAudioTrackId(){
+      var p = getPlayer();
+      try {
+        var current = p && p.getAudioTrack ? p.getAudioTrack() : null;
+        return current ? audioTrackInfo(current).id : '';
+      } catch(e) { return ''; }
+    }
+    function sendAudioTracks(){
+      if (!bridge.alive) return false;
+      var list = availableAudioTracks();
+      var tracks = [];
+      for (var i = 0; i < list.length; i += 1) {
+        var info = audioTrackInfo(list[i]);
+        if (info.id || info.name) tracks.push(info);
+      }
+      send({
+        type: 'audio-tracks',
+        available: tracks.length > 0,
+        currentId: currentAudioTrackId(),
+        tracks: tracks
+      });
+      return tracks.length > 0;
+    }
+    function setAudioTrackById(id){
+      if (!bridge.alive) return false;
+      var wanted = String(id || '');
+      if (!wanted) return false;
+      var list = availableAudioTracks();
+      var target = null;
+      for (var i = 0; i < list.length; i += 1) {
+        var info = audioTrackInfo(list[i]);
+        if (String(info.id) === wanted) {
+          target = list[i];
+          break;
+        }
+      }
+      if (!target) {
+        send({ type: 'audio-track-result', ok: false, id: wanted, reason: 'not-found' });
+        return false;
+      }
+      if (currentAudioTrackId() === wanted) {
+        send({ type: 'audio-track-result', ok: true, id: wanted, name: audioTrackInfo(target).name });
+        return true;
+      }
+      var p = getPlayer();
+      var changed = false;
+      try {
+        if (p && p.setAudioTrack) {
+          p.setAudioTrack(target);
+          changed = true;
+        }
+      } catch(e) {}
+      if (!changed) {
+        try {
+          if (p && p.setOption) {
+            p.setOption('audio', 'track', target);
+            changed = true;
+          }
+        } catch(e) {}
+      }
+      if (!changed) {
+        send({ type: 'audio-track-result', ok: false, id: wanted, reason: 'unsupported' });
+        return false;
+      }
+      send({ type: 'audio-track-result', ok: true, id: wanted, name: audioTrackInfo(target).name });
+      return true;
+    }
     function scheduleAudio(delay){
       if (audioFixTimer) clearTimeout(audioFixTimer);
       audioFixTimer = setTimeout(function(){ ensureAudio(); }, delay || 250);
@@ -461,11 +592,12 @@ function playerBridgeScript(startAt = 0) {
           active && active.alive && active.wantPlay && !active.userPaused;
         var visible = true;
         try { visible = document.visibilityState !== 'hidden'; } catch(e) {}
-        if (wantsPlay && visible && !v.ended && !isAdShowing()) {
+        if (wantsPlay && visible && !v.ended) {
           // YouTube pauses itself on some internal buffering/visibility
-          // transitions (notably right after leaving fullscreen). This app
-          // owns playback intent, so ignore those pauses while the user
-          // still wants to play. A real pause sets userPaused first.
+          // transitions (notably right after leaving fullscreen). This also
+          // happens to ad playback. This app owns playback intent, so ignore
+          // those pauses while the user still wants to play. A real pause sets
+          // userPaused first.
           return;
         }
         return rawPause.apply(v, arguments);
@@ -1118,6 +1250,8 @@ function playerBridgeScript(startAt = 0) {
       rate: function(rate){ var v=getVideo(); try{ if(v)v.playbackRate=Number(rate)||1; }catch(e){}; return true; },
       mute: function(muted){ var v=getVideo(); try{ if(v)v.muted=!!muted; }catch(e){}; return true; },
       audio: function(){ ensureAudio(); return true; },
+      audioTracks: function(){ sendAudioTracks(); return true; },
+      audioTrack: function(id){ return setAudioTrackById(id); },
       captions: function(lang, tracks, videoId){
         var requestedId = String(videoId || '');
         if (
@@ -1340,7 +1474,7 @@ export default function PlayerScreen() {
     attempts: number;
   } | null>(null);
   const progressRef = useRef({
-    current: 0,
+    current: Number.isFinite(initialStartAt) ? Math.max(0, initialStartAt) : 0,
     duration: 0,
     bufferedStart: 0,
     bufferedEnd: 0,
@@ -1349,6 +1483,8 @@ export default function PlayerScreen() {
   });
   const persistProgressRef = useRef<() => void>(() => {});
   const webReadyRef = useRef(false);
+  const audioTracksAttemptRef = useRef(0);
+  const audioTracksRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const webCaptionRequestRef = useRef<{
     resolve: (cues: Cue[]) => void;
     reject: (error: Error) => void;
@@ -1490,7 +1626,6 @@ export default function PlayerScreen() {
   );
 
   const [trackKey, setTrackKey] = useState('');
-  const [toast, setToast] = useState('');
   const [rate, setRate] = useState(1);
   const [rateSheet, setRateSheet] = useState(false);
   const [loopSentence, setLoopSentence] = useState(false);
@@ -1501,6 +1636,8 @@ export default function PlayerScreen() {
   const [precisionElapsed, setPrecisionElapsed] = useState(0);
   const [precisionCueIndex, setPrecisionCueIndex] = useState(-1);
   const precisionStartedAtRef = useRef<number | null>(null);
+  const precisionContentOpacity = useRef(new Animated.Value(1)).current;
+  const precisionContentFadeRef = useRef<any>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisText, setAnalysisText] = useState('');
   const [analysisError, setAnalysisError] = useState('');
@@ -1535,7 +1672,7 @@ export default function PlayerScreen() {
   const showOriginal = subtitleMode !== 'translation';
   const fontSize = settings.subtitle.fontSize ?? 20;
   const landscapeFontSize = settings.subtitle.landscapeFontSize ?? 24;
-  const transcriptOriginalLineHeight = Math.round(Math.max(14, fontSize) * 1.48);
+  const transcriptOriginalLineHeight = Math.round(Math.max(14, fontSize) * 1.4);
   const transcriptTranslationLineHeight = Math.round(
     Math.max(12, fontSize - (showOriginal ? 3 : 0)) * 1.48
   );
@@ -1547,19 +1684,58 @@ export default function PlayerScreen() {
   const subtitlePosition = settings.subtitle.position ?? 'bottom';
   const subtitleBackground = settings.subtitle.backgroundOpacity ?? 0.55;
   const learningLang = settings.learningLang;
+  const requestAudioTracks = (attempt = 0) => {
+    if (!webReadyRef.current || !webRef.current) return;
+    audioTracksAttemptRef.current = attempt;
+    try {
+      webRef.current.injectJavaScript(
+        'window.__kiss && typeof window.__kiss.audioTracks === "function" && window.__kiss.audioTracks(); true;'
+      );
+    } catch {
+      // The WebView may still be swapping documents; the next attempt retries.
+    }
+  };
+  useEffect(() => {
+    if (!ready) return;
+    audioTracksAttemptRef.current = 0;
+    const timer = setTimeout(() => requestAudioTracks(0), 320);
+    return () => clearTimeout(timer);
+  }, [ready, settings.learningLang, settings.speechAccent]);
+  useEffect(
+    () => () => {
+      if (audioTracksRetryRef.current) {
+        clearTimeout(audioTracksRetryRef.current);
+        audioTracksRetryRef.current = null;
+      }
+    },
+    []
+  );
   const originalFont = fontFamilyFor(settings.subtitle.originalFont, 'source');
   const translationFont = fontFamilyFor(settings.subtitle.translationFont, 'translation');
   const originalWeight = fontWeightFor(settings.subtitle.originalWeight);
   const translationWeight = fontWeightFor(settings.subtitle.translationWeight);
+  // The default medium original text reads a touch light in the transcript;
+  // bump it one notch while leaving explicit regular/bold choices untouched.
+  const transcriptOriginalWeight =
+    originalWeight === '600' ? '700' : originalWeight;
+  // Regular Chinese glyphs look a little too thin in the transcript; step the
+  // default up one notch without overriding an explicit medium/bold choice.
+  const transcriptTranslationWeight =
+    translationWeight === '400' ? '500' : translationWeight;
   const cues = useMemo(
     () => sentenceCues(translatedCues ?? sourceCues, settings.subtitle.sentenceMode),
     [settings.subtitle.sentenceMode, sourceCues, translatedCues]
   );
 
-  const activeIndex = useMemo(
-    () => findCueIndexAt(cues, current, 0.12),
-    [cues, current]
-  );
+  const activeIndex = useMemo(() => {
+    const found = findCueIndexAt(cues, current, 0.12);
+    if (found >= 0) return found;
+    // Before the first caption actually starts, the first sentence is still
+    // the one the reader should see highlighted. YouTube tracks often begin
+    // well after 0:00, and leaving it at -1 made the whole transcript look dim.
+    if (cues.length && current < cues[0].start) return 0;
+    return found;
+  }, [cues, current]);
   const transcriptViewabilityConfig = useRef({
     minimumViewTime: 80,
     itemVisiblePercentThreshold: 20,
@@ -1612,12 +1788,6 @@ export default function PlayerScreen() {
           rawListeningTranslationMode === 'after'
         ? 'tap'
         : 'together';
-
-  useEffect(() => {
-    if (!toast) return;
-    const timer = setTimeout(() => setToast(''), 1800);
-    return () => clearTimeout(timer);
-  }, [toast]);
 
   const openMainSettings = () => {
     setRateSheet(false);
@@ -1843,6 +2013,8 @@ export default function PlayerScreen() {
             from,
             shouldStop: () => cancelled,
             ignoreCache,
+            anchorTime: startAtRef.current,
+            getAnchorTime: () => progressRef.current.current,
           },
           (partial, provider) => {
             if (cancelled) return;
@@ -2199,7 +2371,6 @@ export default function PlayerScreen() {
     orientationResumeTimers.current.forEach((timer) => clearTimeout(timer));
     orientationResumeTimers.current = [];
   };
-
   const scheduleOrientationResume = () => {
     clearOrientationResume();
     // Android WebView can lose its playing state while the activity rotates
@@ -2653,6 +2824,38 @@ export default function PlayerScreen() {
       setVideoProblem('');
       return;
     }
+    if (message.type === 'audio-tracks') {
+      const availableTracks = Array.isArray(message.tracks) ? message.tracks : [];
+      if (!availableTracks.length) {
+        const attempt = audioTracksAttemptRef.current + 1;
+        if (attempt > 3) return;
+        if (audioTracksRetryRef.current) clearTimeout(audioTracksRetryRef.current);
+        audioTracksRetryRef.current = setTimeout(() => {
+          audioTracksRetryRef.current = null;
+          requestAudioTracks(attempt);
+        }, 800);
+        return;
+      }
+      if (audioTracksRetryRef.current) {
+        clearTimeout(audioTracksRetryRef.current);
+        audioTracksRetryRef.current = null;
+      }
+      audioTracksAttemptRef.current = 0;
+      const picked = pickPreferredAudioTrack(
+        availableTracks,
+        learningLang,
+        settings.speechAccent
+      );
+      if (!picked?.id || picked.id === message.currentId) return;
+      try {
+        webRef.current?.injectJavaScript(
+          `window.__kiss && window.__kiss.audioTrack(${JSON.stringify(picked.id)}); true;`
+        );
+      } catch {
+        // The player may still be rebuilding after an internal navigation.
+      }
+      return;
+    }
     if (message.type === 'caption-payload') {
       let cues: Cue[] = [];
       if (Array.isArray(message.cues)) {
@@ -2806,7 +3009,8 @@ export default function PlayerScreen() {
       thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
       savedAt: Date.now(),
     });
-    setToast(added ? '已收藏视频' : '已取消视频收藏');
+    if (added) playerToast.success('已收藏视频');
+    else playerToast.info('已取消视频收藏');
   };
 
   const toggleCueFavorite = (cue: Cue) => {
@@ -2823,13 +3027,16 @@ export default function PlayerScreen() {
       savedAt: Date.now(),
     });
     if (result === 'limit') {
-      setToast(`句子收藏已满 ${SENTENCE_FAVORITE_LIMIT} 条，请先清理`);
+      playerToast.error(`句子收藏已满 ${SENTENCE_FAVORITE_LIMIT} 条，请先清理`);
       return;
     }
-    setToast(result === 'added' ? '已收藏这句' : '已取消句子收藏');
+    if (result === 'added') playerToast.success('已收藏这句');
+    else playerToast.info('已取消句子收藏');
   };
 
   const exitPrecision = () => {
+    precisionContentFadeRef.current?.stop();
+    precisionContentOpacity.setValue(1);
     setBlindMode(false);
     setBlindReveal(false);
     setPrecisionTranslationVisible(true);
@@ -2844,6 +3051,8 @@ export default function PlayerScreen() {
   };
 
   const enterPrecision = () => {
+    precisionContentFadeRef.current?.stop();
+    precisionContentOpacity.setValue(1);
     const targetIndex = activeCue
       ? activeIndex
       : cues.length
@@ -2876,19 +3085,46 @@ export default function PlayerScreen() {
     else enterPrecision();
   };
 
+  const animatePrecisionContent = (apply: () => void) => {
+    precisionContentFadeRef.current?.stop();
+    const fadeOut = Animated.timing(precisionContentOpacity, {
+      toValue: 0,
+      duration: 90,
+      useNativeDriver: true,
+    });
+    precisionContentFadeRef.current = fadeOut;
+    fadeOut.start(({ finished }) => {
+      if (!finished) return;
+      apply();
+      requestAnimationFrame(() => {
+        const fadeIn = Animated.timing(precisionContentOpacity, {
+          toValue: 1,
+          duration: 180,
+          useNativeDriver: true,
+        });
+        precisionContentFadeRef.current = fadeIn;
+        fadeIn.start();
+      });
+    });
+  };
+
   const togglePrecisionOriginal = () => {
     if (blindReveal) {
-      setBlindReveal(false);
+      animatePrecisionContent(() => setBlindReveal(false));
       return;
     }
-    setBlindReveal(true);
-    setPrecisionTranslationVisible(true);
+    animatePrecisionContent(() => {
+      setBlindReveal(true);
+      setPrecisionTranslationVisible(true);
+    });
   };
 
   const revealPrecisionText = () => {
     if (!blindReveal || !precisionTranslationVisible) {
-      setBlindReveal(true);
-      setPrecisionTranslationVisible(true);
+      animatePrecisionContent(() => {
+        setBlindReveal(true);
+        setPrecisionTranslationVisible(true);
+      });
     }
   };
 
@@ -2910,7 +3146,8 @@ export default function PlayerScreen() {
         ? deepseekConfig(
             deepseekKey,
             currentSettings.deepseekModel,
-            currentSettings.requestTimeoutMs
+            currentSettings.requestTimeoutMs,
+            currentSettings.deepseekThinking
           )
         : null,
       currentSettings.provider === 'siliconflow' && siliconflowKey
@@ -2942,7 +3179,8 @@ export default function PlayerScreen() {
       return deepseekConfig(
         deepseekKey,
         currentSettings.deepseekModel,
-        currentSettings.requestTimeoutMs
+        currentSettings.requestTimeoutMs,
+        currentSettings.deepseekThinking
       );
     }
     if (siliconflowKey) {
@@ -2974,7 +3212,7 @@ export default function PlayerScreen() {
     if (analysisLoading) return;
     const cue = precisionCue ?? activeCue;
     if (!cue) {
-      setToast('当前还没有可分析的对话');
+      playerToast.info('当前还没有可分析的对话');
       return;
     }
     const config = await getConfiguredAiConfig();
@@ -3047,7 +3285,7 @@ export default function PlayerScreen() {
 
   const exportSubtitlePdf = async () => {
     if (!cues.length) {
-      setToast('还没有可导出的字幕');
+      playerToast.info('还没有可导出的字幕');
       return;
     }
     try {
@@ -3086,10 +3324,12 @@ export default function PlayerScreen() {
           UTI: 'com.adobe.pdf',
         });
       } else {
-        setToast('文件已生成，但当前设备不支持分享');
+        playerToast.error('文件已生成，但当前设备不支持分享');
       }
     } catch (error) {
-      setToast(`导出失败：${error instanceof Error ? error.message : String(error)}`);
+      playerToast.error(
+        `导出失败：${error instanceof Error ? error.message : String(error)}`
+      );
     }
   };
 
@@ -3166,27 +3406,27 @@ export default function PlayerScreen() {
       }
     >
       {nativeVideo ? (
-        <AnyWebView
-          key="watch"
-          ref={webRef}
-          source={{ uri: webUrl }}
-          style={
-            hideVideo && !landscape
-              ? [
-                  styles.hiddenWebview,
-                  {
-                    width: windowSize.width,
-                    height: Math.round(windowSize.width * 9 / 16),
-                  },
-                ]
-              : styles.webview
-          }
-          originWhitelist={['*']}
-          javaScriptEnabled
-          domStorageEnabled
-          allowsInlineMediaPlayback
-          mediaPlaybackRequiresUserAction={false}
-          allowsFullscreenVideo={false}
+          <AnyWebView
+            key="watch"
+            ref={webRef}
+            source={{ uri: webUrl }}
+            style={
+              hideVideo && !landscape
+                ? [
+                    styles.hiddenWebview,
+                    {
+                      width: windowSize.width,
+                      height: Math.round(windowSize.width * 9 / 16),
+                    },
+                  ]
+                : styles.webview
+            }
+            originWhitelist={['*']}
+            javaScriptEnabled
+            domStorageEnabled
+            allowsInlineMediaPlayback
+            mediaPlaybackRequiresUserAction={false}
+            allowsFullscreenVideo={false}
           setSupportMultipleWindows={false}
           cacheEnabled
           javaScriptCanOpenWindowsAutomatically={false}
@@ -3346,16 +3586,21 @@ export default function PlayerScreen() {
   const bufferWidth = Math.max(0, (bufferEndRatio - bufferStartRatio) * progressWidth);
   const progressRailHeight = seekGrow.interpolate({
     inputRange: [0, 1],
-    outputRange: [4, 8],
+    outputRange: [3, 7],
   });
   const progressThumbScale = seekGrow.interpolate({
     inputRange: [0, 1],
-    outputRange: [1, 1.34],
+    outputRange: [1, 1.7],
+  });
+  const landProgressRailHeight = seekGrow.interpolate({
+    inputRange: [0, 1],
+    outputRange: [4, 8],
   });
 
   const progress = (
     <View
       style={styles.progressTouch}
+      hitSlop={{ top: 13, bottom: 13, left: 12, right: 12 }}
       pointerEvents={blindMode || adShowing ? 'none' : 'auto'}
       onLayout={(event) => {
         if (seekDragRef.current) return;
@@ -3384,7 +3629,7 @@ export default function PlayerScreen() {
         pointerEvents="none"
         style={[
           styles.progressRail,
-          { backgroundColor: theme.colors.surfaceAlt, height: progressRailHeight },
+          { backgroundColor: theme.colors.borderStrong, height: progressRailHeight },
         ]}
       >
         <View
@@ -3414,25 +3659,27 @@ export default function PlayerScreen() {
           ]}
         />
       </Animated.View>
-      <Animated.View
-        pointerEvents="none"
-        style={[
-          styles.progressThumb,
-          {
-            backgroundColor: theme.colors.primary,
-            transform: [{ scale: progressThumbScale }],
-            left: duration
-              ? Math.max(
-                  0,
-                  Math.min(
-                    progressWidth,
-                    ((seekPreview ?? current) / duration) * progressWidth
+      {seeking ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.progressThumb,
+            {
+              backgroundColor: theme.colors.primary,
+              transform: [{ scale: progressThumbScale }],
+              left: duration
+                ? Math.max(
+                    0,
+                    Math.min(
+                      progressWidth,
+                      ((seekPreview ?? current) / duration) * progressWidth
+                    )
                   )
-                )
-              : 0,
-          },
-        ]}
-      />
+                : 0,
+            },
+          ]}
+        />
+      ) : null}
     </View>
   );
 
@@ -3455,7 +3702,7 @@ export default function PlayerScreen() {
         style={styles.speedButton}
         accessibilityLabel={`播放速度 ${rateLabel}`}
       >
-        <SpeedIcon color={theme.colors.textSecondary} size={27} />
+        <SpeedIcon color={theme.colors.text} size={27} />
         {!defaultRate ? (
           <View
             style={[
@@ -3470,14 +3717,14 @@ export default function PlayerScreen() {
       <RipplePressable
         onPress={() => (blindMode ? jumpPrecisionCue(-1) : jumpCue(-1))}
         hitSlop={10}
-        haptic="light"
+        haptic="tiny"
         style={styles.transportSmall}
       >
-        <Ionicons name="play-skip-back" size={22} color={theme.colors.textSecondary} />
+        <Ionicons name="play-skip-back" size={22} color={theme.colors.text} />
       </RipplePressable>
       <RipplePressable
         onPress={blindMode ? togglePrecisionPlay : togglePlay}
-        haptic="light"
+        haptic="tiny"
         style={[styles.playButton, { backgroundColor: theme.colors.primary }]}
       >
         <PlayPauseIcon playing={playing} size={24} />
@@ -3485,10 +3732,10 @@ export default function PlayerScreen() {
       <RipplePressable
         onPress={() => (blindMode ? jumpPrecisionCue(1) : jumpCue(1))}
         hitSlop={10}
-        haptic="light"
+        haptic="tiny"
         style={styles.transportSmall}
       >
-        <Ionicons name="play-skip-forward" size={22} color={theme.colors.textSecondary} />
+        <Ionicons name="play-skip-forward" size={22} color={theme.colors.text} />
       </RipplePressable>
       {blindMode ? (
         <Pressable
@@ -3514,8 +3761,8 @@ export default function PlayerScreen() {
           style={styles.loopButton}
         >
           <LoopIcon
-            color={loopSentence ? theme.colors.primary : theme.colors.textTertiary}
-            barColor={loopSentence ? theme.colors.text : theme.colors.textTertiary}
+            color={loopSentence ? theme.colors.primary : theme.colors.text}
+            barColor={theme.colors.text}
             size={24}
           />
         </Pressable>
@@ -3530,7 +3777,7 @@ export default function PlayerScreen() {
         {
           backgroundColor: theme.colors.playerSurface,
           borderTopColor: theme.colors.border,
-          paddingBottom: Math.max(12, insets.bottom),
+          paddingBottom: Math.max(16, insets.bottom),
         },
       ]}
     >
@@ -3538,22 +3785,22 @@ export default function PlayerScreen() {
       {!blindMode ? timeRow : null}
       {transport}
       {blindMode ? (
-        <View style={styles.precisionActions}>
+        <View style={styles.bottomActions}>
           <Pressable
-            style={styles.precisionAction}
+            style={styles.action}
             onPress={analyzeCurrentCue}
             accessibilityLabel="AI 对话分析"
           >
-            <Ionicons name="sparkles-outline" size={23} color={theme.colors.textSecondary} />
+            <Ionicons name="sparkles-outline" size={24} color={theme.colors.textSecondary} />
           </Pressable>
           <Pressable
-            style={styles.precisionAction}
+            style={styles.action}
             onPress={togglePrecisionTranslation}
             accessibilityLabel="显示或隐藏译文"
           >
             <Ionicons
               name="language"
-              size={23}
+              size={24}
               color={
                 precisionTranslationVisible
                   ? theme.colors.primary
@@ -3562,24 +3809,27 @@ export default function PlayerScreen() {
             />
           </Pressable>
           <Pressable
-            style={[
-              styles.precisionAction,
-              styles.precisionActionActive,
-              { backgroundColor: theme.colors.primarySoft },
-            ]}
+            style={styles.action}
             onPress={exitPrecision}
             accessibilityLabel="退出精听"
           >
+            <View
+              pointerEvents="none"
+              style={[
+                styles.precisionActiveBadge,
+                { backgroundColor: theme.colors.primarySoft },
+              ]}
+            />
             <Ionicons name="headset" size={24} color={theme.colors.primary} />
           </Pressable>
           <Pressable
-            style={styles.precisionAction}
+            style={styles.action}
             onPress={() => precisionCue && toggleCueFavorite(precisionCue)}
             accessibilityLabel="收藏当前句"
           >
             <Ionicons
               name={precisionCueSaved ? 'heart' : 'heart-outline'}
-              size={23}
+              size={24}
               color={precisionCueSaved ? theme.colors.primary : theme.colors.textSecondary}
             />
           </Pressable>
@@ -3596,7 +3846,7 @@ export default function PlayerScreen() {
             <Ionicons
               name={subtitleModeOption(subtitleMode).icon}
               size={24}
-              color={theme.colors.textSecondary}
+              color={theme.colors.text}
             />
           </Pressable>
           <Pressable
@@ -3607,7 +3857,7 @@ export default function PlayerScreen() {
             <Ionicons
               name={isFavorite ? 'bookmark' : 'bookmark-outline'}
               size={24}
-              color={isFavorite ? theme.colors.primary : theme.colors.textSecondary}
+              color={isFavorite ? theme.colors.primary : theme.colors.text}
             />
           </Pressable>
           <Pressable
@@ -3618,7 +3868,7 @@ export default function PlayerScreen() {
             <Ionicons
               name="headset-outline"
               size={24}
-              color={theme.colors.textSecondary}
+              color={theme.colors.text}
             />
           </Pressable>
           <Pressable
@@ -3626,7 +3876,7 @@ export default function PlayerScreen() {
             onPress={handleFullscreen}
             accessibilityLabel="全屏"
           >
-            <Ionicons name="resize-outline" size={24} color={theme.colors.textSecondary} />
+            <Ionicons name="resize-outline" size={24} color={theme.colors.text} />
           </Pressable>
         </View>
       )}
@@ -3663,6 +3913,7 @@ export default function PlayerScreen() {
               <View
                 pointerEvents={adShowing ? 'none' : 'auto'}
                 style={styles.landProgressTouch}
+                hitSlop={{ top: 10, bottom: 10, left: 12, right: 12 }}
                 onLayout={(event) => {
                   if (seekDragRef.current) return;
                   setProgressWidth(event.nativeEvent.layout.width);
@@ -3671,6 +3922,7 @@ export default function PlayerScreen() {
                 onMoveShouldSetResponder={() => true}
                 onResponderGrant={(event) => {
                   keepControlsVisible();
+                  setSeeking(true);
                   beginSeekDrag(event.nativeEvent.locationX, event.nativeEvent.pageX);
                 }}
                 onResponderMove={(event) => {
@@ -3680,14 +3932,22 @@ export default function PlayerScreen() {
                 onResponderRelease={() => {
                   keepControlsVisible();
                   commitPreviewSeek();
+                  setSeeking(false);
                 }}
                 onResponderTerminate={() => {
                   keepControlsVisible();
                   commitPreviewSeek();
+                  setSeeking(false);
                 }}
                 onResponderTerminationRequest={() => false}
               >
-                <View pointerEvents="none" style={styles.landProgressRail}>
+                <Animated.View
+                  pointerEvents="none"
+                  style={[
+                    styles.landProgressRail,
+                    { height: landProgressRailHeight },
+                  ]}
+                >
                   <View
                     style={[
                       styles.landProgressBuffer,
@@ -3713,7 +3973,28 @@ export default function PlayerScreen() {
                       },
                     ]}
                   />
-                </View>
+                </Animated.View>
+                {seeking ? (
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[
+                      styles.landProgressThumb,
+                      {
+                        backgroundColor: theme.colors.primary,
+                        transform: [{ scale: progressThumbScale }],
+                        left: duration
+                          ? Math.max(
+                              0,
+                              Math.min(
+                                progressWidth,
+                                ((seekPreview ?? current) / duration) * progressWidth
+                              )
+                            )
+                          : 0,
+                      },
+                    ]}
+                  />
+                ) : null}
               </View>
               <Text style={styles.landTime}>{formatTime(duration)}</Text>
             </View>
@@ -3770,7 +4051,7 @@ export default function PlayerScreen() {
                 keepControlsVisible();
                 jumpCue(-1);
               }}
-              haptic="light"
+              haptic="tiny"
               style={styles.landTransportButton}
             >
               <Ionicons name="play-skip-back" size={18} color="#FFFFFF" />
@@ -3780,7 +4061,7 @@ export default function PlayerScreen() {
                 keepControlsVisible();
                 togglePlay();
               }}
-              haptic="light"
+              haptic="tiny"
               style={styles.landPlay}
             >
               {showVideoBuffering ? (
@@ -3794,7 +4075,7 @@ export default function PlayerScreen() {
                 keepControlsVisible();
                 jumpCue(1);
               }}
-              haptic="light"
+              haptic="tiny"
               style={styles.landTransportButton}
             >
               <Ionicons name="play-skip-forward" size={18} color="#FFFFFF" />
@@ -3915,31 +4196,33 @@ export default function PlayerScreen() {
       : false;
     return (
       <View style={styles.cue}>
-        {active ? (
-          <View style={styles.cueHeader}>
-            <Pressable
-              onPress={() => seekFromTranscript(cue, index)}
-              hitSlop={6}
-              accessibilityLabel="跳到本句"
-            >
-              <Text style={[styles.cueTime, { color: theme.colors.textTertiary }]}>
-                {formatTime(cue.start)}
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => toggleCueFavorite(cue)}
-              hitSlop={8}
-              accessibilityLabel={saved ? '取消收藏这句' : '收藏这句'}
-              style={styles.cueHeart}
-            >
-              <Ionicons
-                name={saved ? 'heart' : 'heart-outline'}
-                size={22}
-                color={saved ? theme.colors.primary : theme.colors.textTertiary}
-              />
-            </Pressable>
-          </View>
-        ) : null}
+        <View style={styles.cueHeader}>
+          {active ? (
+            <>
+              <Pressable
+                onPress={() => seekFromTranscript(cue, index)}
+                hitSlop={6}
+                accessibilityLabel="跳到本句"
+              >
+                <Text style={[styles.cueTime, { color: theme.colors.textSecondary }]}>
+                  {formatTime(cue.start)}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => toggleCueFavorite(cue)}
+                hitSlop={8}
+                accessibilityLabel={saved ? '取消收藏这句' : '收藏这句'}
+                style={styles.cueHeart}
+              >
+                <Ionicons
+                  name={saved ? 'heart' : 'heart-outline'}
+                  size={19}
+                  color={saved ? theme.colors.primary : theme.colors.textSecondary}
+                />
+              </Pressable>
+            </>
+          ) : null}
+        </View>
         <Pressable onPress={() => seekFromTranscript(cue, index)}>
           <CueFade
             active={active}
@@ -3956,9 +4239,8 @@ export default function PlayerScreen() {
                     fontSize: Math.max(14, fontSize),
                     lineHeight: transcriptOriginalLineHeight,
                     fontFamily: originalFont,
-                    fontWeight: originalWeight,
+                    fontWeight: transcriptOriginalWeight,
                   },
-                  active && { fontWeight: '800' },
                 ]}
               >
                 {cue.text}
@@ -3974,7 +4256,7 @@ export default function PlayerScreen() {
                     lineHeight: transcriptTranslationLineHeight,
                     marginTop: showOriginal ? 10 : 0,
                     fontFamily: translationFont,
-                    fontWeight: translationWeight,
+                    fontWeight: transcriptTranslationWeight,
                   },
                   active && {
                     color: showOriginal
@@ -3997,7 +4279,7 @@ export default function PlayerScreen() {
                   )
                 )}
                 marginTop={showOriginal ? 10 : 0}
-                opacity={active ? 1 : past ? 0.5 : 0.38}
+                opacity={active ? 1 : past ? 0.85 : 0.7}
               />
             ) : null}
           </CueFade>
@@ -4102,6 +4384,15 @@ export default function PlayerScreen() {
   const precisionWords = precisionCue
     ? precisionCue.text.split(/\s+/).filter(Boolean)
     : [];
+  const precisionTextSize = Math.max(20, Math.min(30, fontSize + 4));
+  const precisionTextLineHeight = Math.max(29, Math.min(43, fontSize + 13));
+  const precisionMaskHeight = precisionTextSize;
+  const precisionMaskRadius = 8;
+  const precisionMaskColumnGap = Math.max(5, Math.round(precisionTextSize * 0.28));
+  const precisionMaskRowGap = Math.max(
+    7,
+    precisionTextLineHeight - precisionMaskHeight
+  );
 
   const blindCard = (
     <View style={{ flex: 1, paddingHorizontal: 16, paddingTop: 4, paddingBottom: 2 }}>
@@ -4140,12 +4431,13 @@ export default function PlayerScreen() {
 
         {precisionCue ? (
           <View style={{ flex: 1, marginTop: 22 }}>
+            <Animated.View style={{ flex: 1, opacity: precisionContentOpacity }}>
             {blindReveal ? (
               <Text
                 style={{
                   color: theme.colors.text,
-                  fontSize: Math.max(20, Math.min(30, fontSize + 4)),
-                  lineHeight: Math.max(29, Math.min(43, fontSize + 13)),
+                  fontSize: precisionTextSize,
+                  lineHeight: precisionTextLineHeight,
                   fontFamily: originalFont,
                   fontWeight: originalWeight,
                 }}
@@ -4158,20 +4450,36 @@ export default function PlayerScreen() {
                   flexDirection: 'row',
                   flexWrap: 'wrap',
                   alignItems: 'center',
-                  columnGap: 7,
-                  rowGap: 9,
+                  columnGap: precisionMaskColumnGap,
+                  rowGap: precisionMaskRowGap,
                 }}
               >
                 {precisionWords.map((word, index) => (
                   <View
                     key={`${word}-${index}`}
                     style={{
-                      height: 18,
-                      width: Math.max(18, Math.min(74, word.replace(/[^\w'-]/g, '').length * 7.2)),
-                      ...radiusStyle(RADIUS.badge),
+                      height: precisionMaskHeight,
+                      minWidth: precisionMaskHeight,
+                      justifyContent: 'center',
+                      borderRadius: precisionMaskRadius,
                       backgroundColor: theme.colors.border,
                     }}
-                  />
+                  >
+                    <Text
+                      accessible={false}
+                      importantForAccessibility="no-hide-descendants"
+                      numberOfLines={1}
+                      style={{
+                        opacity: 0,
+                        fontSize: precisionTextSize,
+                        lineHeight: precisionTextLineHeight,
+                        fontFamily: originalFont,
+                        fontWeight: originalWeight,
+                      }}
+                    >
+                      {word}
+                    </Text>
+                  </View>
                 ))}
               </View>
             )}
@@ -4206,6 +4514,7 @@ export default function PlayerScreen() {
                   : '轻点显示译文'}
               </Text>
             ) : null}
+            </Animated.View>
           </View>
         ) : (
           <View style={{ flex: 1, justifyContent: 'center' }}>
@@ -4460,10 +4769,30 @@ export default function PlayerScreen() {
 
       {videoBlock}
 
+      {!landscape && !hideVideo ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.videoBottomGap,
+            blindMode && styles.precisionVideoGap,
+            { backgroundColor: theme.colors.playerBg },
+          ]}
+        />
+      ) : null}
+
       {!landscape ? (
         <View style={{ flex: 1 }}>
           {blindMode ? (
-            <View style={{ paddingHorizontal: PLAYER_GUTTER, paddingTop: 10 }}>
+            <View
+              style={{
+                paddingHorizontal: PLAYER_GUTTER,
+                // The progress rail is 3dp high inside a 22dp touch area.
+                // With the precision-only 6.5dp video gap and the 4dp card
+                // padding, 2.5dp bottom padding leaves 16dp above and below
+                // the rail. The remaining height goes to the precision card.
+                paddingBottom: 2.5,
+              }}
+            >
               {progress}
             </View>
           ) : null}
@@ -4497,12 +4826,6 @@ export default function PlayerScreen() {
       )}
 
       {rateSheet ? rateSheetOverlay() : null}
-
-      {toast ? (
-        <View style={styles.toast} pointerEvents="none">
-          <Text style={styles.toastText}>{toast}</Text>
-        </View>
-      ) : null}
 
       {modeMenu ? modeMenuOverlay() : null}
       {sheet ? sheetOverlay() : null}
@@ -5677,7 +6000,7 @@ export default function PlayerScreen() {
 
   async function retranslate() {
     if (!videoId) {
-      setToast('没有可重新翻译的字幕');
+      playerToast.info('没有可重新翻译的字幕');
       return;
     }
     setStatus('正在重新加载字幕…');
@@ -5779,7 +6102,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
-    paddingBottom: 8,
+    paddingBottom: 10,
     gap: 4,
   },
   headerPlain: {
@@ -5916,12 +6239,14 @@ const styles = StyleSheet.create({
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 5, maxWidth: '70%' },
   statusText: { color: '#8D849D', fontSize: 11, flexShrink: 1 },
   cue: {
-    paddingVertical: 13,
+    paddingVertical: 4,
     paddingHorizontal: 8,
-    marginBottom: 6,
+    marginBottom: 1,
     borderRadius: 0,
   },
   transcriptWrap: { flex: 1 },
+  videoBottomGap: { height: 15 },
+  precisionVideoGap: { height: 6.5 },
   followCurrentButton: {
     position: 'absolute',
     right: 18,
@@ -5945,11 +6270,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     minHeight: 32,
-    marginBottom: 8,
+    marginBottom: 4,
   },
   cueTime: {
-    fontSize: 13.5,
-    fontWeight: '600',
+    fontSize: 12.5,
+    fontWeight: '500',
     fontVariant: ['tabular-nums'],
     letterSpacing: 0.2,
   },
@@ -5964,27 +6289,28 @@ const styles = StyleSheet.create({
   cueTranslation: { color: '#746B85', lineHeight: 24, marginTop: 0 },
   emptyTranscript: { alignItems: 'center', paddingTop: 36, gap: 10 },
   emptyTranscriptText: { color: '#8D849D', fontSize: 12, textAlign: 'center', lineHeight: 18, paddingHorizontal: 20 },
-  controls: { backgroundColor: '#120E1B', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#241C33', paddingHorizontal: PLAYER_GUTTER, paddingTop: 6 },
+  controls: { backgroundColor: '#120E1B', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#241C33', paddingHorizontal: PLAYER_GUTTER, paddingTop: 13 },
   progressTouch: { height: 22, justifyContent: 'center' },
   progressRail: { height: 4, ...radiusStyle(RADIUS.pill), backgroundColor: '#2B2340', overflow: 'hidden' },
   progressBuffer: { position: 'absolute', top: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.22)' },
   progressFill: { height: '100%', ...radiusStyle(RADIUS.pill), backgroundColor: '#446B5B' },
   progressThumb: {
     position: 'absolute',
+    top: 5,
     width: 12,
     height: 12,
     ...radiusStyle(RADIUS.pill),
     backgroundColor: '#C4B5FD',
     marginLeft: -6,
   },
-  timeRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 0 },
+  timeRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 },
   timeText: { color: '#8A8099', fontSize: 11, fontVariant: ['tabular-nums'] },
   transport: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 6,
-    paddingHorizontal: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
   },
   transportSmall: { width: 42, height: 38, alignItems: 'center', justifyContent: 'center' },
   speedButton: {
@@ -6025,31 +6351,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#446B5B',
-    shadowOpacity: 0.4,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    shadowOffset: { width: 0, height: 0 },
   },
-  bottomActions: { flexDirection: 'row', justifyContent: 'space-around', paddingTop: 2 },
-  action: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    minWidth: 56,
-    minHeight: 36,
-    paddingVertical: 6,
-  },
-  precisionActions: {
+  // Both the normal and precision rows use the same 52dp row with 46dp
+  // touch targets. That keeps every icon on one horizontal line and prevents
+  // the action rows from changing height when entering/leaving precision mode.
+  bottomActions: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
-    paddingTop: 6,
+    height: 52,
   },
-  precisionAction: {
-    width: 54,
-    height: 42,
+  action: {
     alignItems: 'center',
     justifyContent: 'center',
+    width: 56,
+    height: 46,
+    position: 'relative',
   },
-  precisionActionActive: {
+  precisionActiveBadge: {
+    position: 'absolute',
+    left: 5,
+    top: 0,
     width: 46,
     height: 46,
     ...radiusStyle(RADIUS.pill),
@@ -6113,10 +6438,21 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 11,
     ...radiusStyle(RADIUS.pill),
-    overflow: 'hidden',
   },
   landProgressTouch: { flex: 1, height: 28, justifyContent: 'center', minWidth: 80 },
   landProgressRail: { height: 4, ...radiusStyle(RADIUS.pill), backgroundColor: 'rgba(255,255,255,0.28)', overflow: 'hidden' },
+  landProgressThumb: {
+    position: 'absolute',
+    top: 8,
+    width: 12,
+    height: 12,
+    ...radiusStyle(RADIUS.pill),
+    marginLeft: -6,
+    shadowColor: '#000000',
+    shadowOpacity: 0.28,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 1 },
+  },
   landProgressBuffer: { position: 'absolute', top: 0, bottom: 0, backgroundColor: 'rgba(255,255,255,0.42)' },
   landProgressFill: { height: '100%', backgroundColor: '#FFFFFF' },
   landIconButton: {
@@ -6247,16 +6583,6 @@ const styles = StyleSheet.create({
     gap: 9,
   },
   modeRowLabel: { flex: 1, fontSize: 13.5 },
-  toast: {
-    position: 'absolute',
-    alignSelf: 'center',
-    bottom: 120,
-    backgroundColor: 'rgba(30,22,46,0.94)',
-    ...radiusStyle(RADIUS.pill),
-    paddingHorizontal: 16,
-    paddingVertical: 9,
-  },
-  toastText: { color: '#F5F2FF', fontSize: 12 },
   sheetMask: {
     position: 'absolute',
     top: 0,

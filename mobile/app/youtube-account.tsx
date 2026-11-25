@@ -21,6 +21,7 @@ import { resolveChannelInput } from '@/src/core/youtube/channel';
 import { CONTINUOUS_CORNER, RADIUS } from '@/src/tokens';
 import { AppPressable } from '@/src/ui/app-pressable';
 import { useAppTheme } from '@/src/ui/theme';
+import { normalizeYoutubeAvatarUrl } from '@/src/ui/youtube-avatar-url';
 
 const Pressable = AppPressable;
 
@@ -265,6 +266,7 @@ const CHANNEL_BRIDGE = `
       type:'channels',
       items:items,
       loggedIn:detectLogin(),
+      avatar:avatarOf(),
       count:items.length,
       debug:{ data:dataCount, dom:domCount, domLinks:domLinks, unresolved:unresolved, path:location.pathname }
     });
@@ -277,6 +279,24 @@ const CHANNEL_BRIDGE = `
       return true;
     }catch(e){ return false; }
   }
+  function avatarOf(){
+    try{
+      var selectors=[
+        'ytm-pivot-bar-item-renderer.pivot-you img',
+        '.pivot-you img',
+        '#avatar-btn img',
+        'ytm-account-button img',
+        'button[aria-label*="Account"] img',
+        'a[href*="account"] img'
+      ];
+      for(var i=0;i<selectors.length;i++){
+        var img=document.querySelector(selectors[i]);
+        var src=img && (img.currentSrc || img.src || '');
+        if(src) return src;
+      }
+    }catch(e){}
+    return '';
+  }
   function pageState(){
     var text='';
     try{ text=(document.body&&document.body.innerText||'').toLowerCase(); }catch(e){}
@@ -285,7 +305,7 @@ const CHANNEL_BRIDGE = `
       text.indexOf('this browser or app may not be secure')>=0 ||
       text.indexOf('couldn\\'t sign you in')>=0 ||
       text.indexOf('无法登录')>=0;
-    post({ type:'page', url:location.href, loggedIn:detectLogin(), blocked:blocked });
+    post({ type:'page', url:location.href, loggedIn:detectLogin(), blocked:blocked, avatar:avatarOf() });
   }
   window.__kissExtractChannels = function(){
     var tries=0;
@@ -370,15 +390,18 @@ export default function YoutubeAccountScreen() {
   const addSubscriptions = useAppStore((state) => state.addSubscriptions);
   const subscriptions = useAppStore((state) => state.subscriptions);
   const setYoutubeLoginStatus = useAppStore((state) => state.setYoutubeLoginStatus);
+  const setYoutubeAvatar = useAppStore((state) => state.setYoutubeAvatar);
   const webRef = useRef<any>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const progressHideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasLoadedRef = useRef(false);
   const firstLoadRef = useRef(true);
-  const [loading, setLoading] = useState(true);
-  const [status, setStatus] = useState('请在下方网页中登录 YouTube 账号');
+  const [status, setStatus] = useState('请在上方网页中登录 YouTube 账号');
+  const [progress, setProgress] = useState(0.06);
+  const [progressVisible, setProgressVisible] = useState(true);
   const [extracting, setExtracting] = useState(false);
   const [loggedIn, setLoggedIn] = useState(false);
   const [loginChecked, setLoginChecked] = useState(false);
-  const [blockedByGoogle, setBlockedByGoogle] = useState(false);
   const [failed, setFailed] = useState(false);
   const [lastCount, setLastCount] = useState<number | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -393,16 +416,24 @@ export default function YoutubeAccountScreen() {
     timeoutRef.current = null;
   };
 
+  const clearProgressHide = () => {
+    if (progressHideRef.current) clearTimeout(progressHideRef.current);
+    progressHideRef.current = null;
+  };
+
   const beginLoad = () => {
     clearTimer();
-    setLoading(true);
+    clearProgressHide();
+    hasLoadedRef.current = false;
+    setProgress(0.06);
+    setProgressVisible(true);
     setFailed(false);
     setLoginChecked(false);
     timeoutRef.current = setTimeout(() => {
       // Never cover the WebView. Google's consent/login redirect chain can
       // legitimately take longer than 20 s on slow networks; hiding the page
       // behind an overlay made the previous build look "stuck forever".
-      setLoading(false);
+      setProgressVisible(false);
       setFailed(true);
       setStatus('页面仍在加载。可以继续等待，或点下方按钮重试/改用浏览器。');
     }, 20000);
@@ -410,11 +441,13 @@ export default function YoutubeAccountScreen() {
 
   useEffect(() => {
     beginLoad();
-    return clearTimer;
+    return () => {
+      clearTimer();
+      clearProgressHide();
+    };
   }, []);
 
   const reload = () => {
-    setBlockedByGoogle(false);
     setStatus('正在重新打开 YouTube…');
     firstLoadRef.current = true;
     beginLoad();
@@ -576,12 +609,18 @@ export default function YoutubeAccountScreen() {
         setLoginChecked(true);
         if (!message.blocked) {
           setYoutubeLoginStatus(message.loggedIn ? 'loggedIn' : 'loggedOut');
+          if (message.loggedIn) {
+            const avatar = normalizeYoutubeAvatarUrl(message.avatar);
+            if (avatar) setYoutubeAvatar(avatar);
+          } else {
+            setYoutubeAvatar('');
+          }
         }
       }
-      if (typeof message.blocked === 'boolean') setBlockedByGoogle(message.blocked);
       if (message.blocked) {
         clearTimer();
-        setLoading(false);
+        clearProgressHide();
+        setProgressVisible(false);
         setFailed(true);
         setStatus('Google 拦截了应用内登录，请改用 CSV 导入订阅。');
       }
@@ -589,11 +628,16 @@ export default function YoutubeAccountScreen() {
     }
     if (message?.type === 'channels') {
       clearTimer();
-      setLoading(false);
       if (typeof message.loggedIn === 'boolean') {
         setLoggedIn(message.loggedIn);
         setLoginChecked(true);
         setYoutubeLoginStatus(message.loggedIn ? 'loggedIn' : 'loggedOut');
+        if (message.loggedIn) {
+          const avatar = normalizeYoutubeAvatarUrl(message.avatar);
+          if (avatar) setYoutubeAvatar(avatar);
+        } else {
+          setYoutubeAvatar('');
+        }
       }
       void importChannels(message);
       return;
@@ -630,25 +674,20 @@ export default function YoutubeAccountScreen() {
         </View>
       </View>
 
-      <View
-        style={[
-          styles.notice,
-          {
-            backgroundColor: blockedByGoogle ? '#2A1719' : theme.colors.card,
-            borderColor: blockedByGoogle ? '#63302F' : theme.colors.border,
-          },
-        ]}
-      >
-        <Ionicons
-          name={blockedByGoogle ? 'alert-circle-outline' : 'information-circle-outline'}
-          size={17}
-          color={blockedByGoogle ? '#FF9D8A' : theme.colors.primary}
-        />
-        <Text style={[styles.noticeText, { color: theme.colors.textSecondary }]}>
-          {blockedByGoogle
-            ? 'Google 不允许在应用内嵌网页里登录。可以在电脑/手机浏览器登录后导出订阅 CSV，再从这里导入；已登录账号的播放权限仍可在播放器里尝试。'
-            : '先在这里登录 YouTube，再点“导入订阅”。登录成功的 Cookie 会与播放器共享；若 Google 提示“此浏览器或应用可能不安全”，用 CSV 导入即可。'}
-        </Text>
+      <View style={styles.progressSlot} pointerEvents="none">
+        {progressVisible ? (
+          <View style={[styles.progressTrack, { backgroundColor: theme.colors.surfaceAlt }]}>
+            <View
+              style={[
+                styles.progressFill,
+                {
+                  width: `${Math.max(2, Math.min(100, Math.round(progress * 100)))}%`,
+                  backgroundColor: theme.colors.primary,
+                },
+              ]}
+            />
+          </View>
+        ) : null}
       </View>
 
       <View style={[styles.webCard, { borderColor: theme.colors.border }]}>
@@ -667,28 +706,43 @@ export default function YoutubeAccountScreen() {
           cacheEnabled
           javaScriptCanOpenWindowsAutomatically
           onLoadStart={() => {
+            if (!hasLoadedRef.current) {
+              clearProgressHide();
+              setProgress(0.06);
+              setProgressVisible(true);
+            }
             if (firstLoadRef.current) {
               firstLoadRef.current = false;
               beginLoad();
-            } else {
-              setLoading(true);
+            }
+          }}
+          onLoadProgress={({ nativeEvent }: any) => {
+            if (hasLoadedRef.current) return;
+            const next = Number(nativeEvent?.progress);
+            if (Number.isFinite(next)) {
+              setProgress(Math.max(0.06, Math.min(0.98, next)));
             }
           }}
           onLoadEnd={() => {
+            hasLoadedRef.current = true;
             clearTimer();
-            setLoading(false);
+            clearProgressHide();
+            setProgress(1);
+            setProgressVisible(true);
+            progressHideRef.current = setTimeout(() => setProgressVisible(false), 250);
             setFailed(false);
             firstLoadRef.current = false;
             setStatus((current) =>
               current.startsWith('页面仍在加载') || current.startsWith('正在打开')
-                ? '登录页已加载，请在网页中完成 Google 登录。'
+                ? '请在上方网页中登录 YouTube 账号'
                 : current
             );
             webRef.current?.injectJavaScript(CHANNEL_BRIDGE);
           }}
           onError={() => {
             clearTimer();
-            setLoading(false);
+            clearProgressHide();
+            setProgressVisible(false);
             setFailed(true);
             setStatus('网页加载失败，请检查网络后重试。');
           }}
@@ -708,20 +762,6 @@ export default function YoutubeAccountScreen() {
             return false;
           }}
         />
-        {loading ? (
-          <View
-            pointerEvents="none"
-            style={[
-              styles.loadBar,
-              { backgroundColor: theme.dark ? 'rgba(20,16,28,.92)' : 'rgba(255,255,255,.94)' },
-            ]}
-          >
-            <ActivityIndicator size="small" color={theme.colors.primary} />
-            <Text style={{ color: theme.colors.textSecondary, fontSize: 11.5 }}>
-              正在打开 YouTube… 首次可能需要 10–20 秒
-            </Text>
-          </View>
-        ) : null}
       </View>
 
       {failed ? (
@@ -926,24 +966,11 @@ const styles = StyleSheet.create({
   subtitle: { color: '#8D849D', fontSize: 11, marginTop: 2 },
   avatar: { width: 36, height: 36, borderRadius: RADIUS.pill, backgroundColor: 'rgba(124,92,255,0.25)', alignItems: 'center', justifyContent: 'center' },
   avatarOn: { backgroundColor: '#2FB980' },
-  notice: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', backgroundColor: '#1B1427', marginHorizontal: 14, padding: 12, borderRadius: RADIUS.card, ...CONTINUOUS_CORNER, borderWidth: StyleSheet.hairlineWidth, borderColor: '#2B223B' },
-  noticeBlocked: { backgroundColor: '#2A1719', borderColor: '#63302F' },
-  noticeText: { flex: 1, color: '#A99FBA', fontSize: 11.5, lineHeight: 17 },
-  webCard: { flex: 1, backgroundColor: '#FFFFFF', marginHorizontal: 14, marginTop: 10, borderRadius: RADIUS.card, ...CONTINUOUS_CORNER, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth },
+  progressSlot: { height: 2, marginTop: 8, marginHorizontal: 16 },
+  progressTrack: { flex: 1, height: 2, borderRadius: 1, overflow: 'hidden' },
+  progressFill: { height: 2, borderRadius: 1 },
+  webCard: { flex: 1, backgroundColor: '#FFFFFF', marginHorizontal: 14, marginTop: 8, borderRadius: RADIUS.card, ...CONTINUOUS_CORNER, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth },
   webview: { flex: 1, backgroundColor: '#FFFFFF' },
-  loadBar: {
-    position: 'absolute',
-    left: 10,
-    right: 10,
-    top: 10,
-    height: 34,
-    borderRadius: RADIUS.pill,
-    paddingHorizontal: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    zIndex: 5,
-  },
   failBanner: {
     marginHorizontal: 14,
     marginTop: 10,

@@ -22,7 +22,7 @@ import { Subscription } from '../src/core/types';
 import { resolveChannelInput } from '../src/core/youtube/channel';
 import { ChannelSearchResult, searchChannels } from '../src/core/youtube/search';
 import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
-import { appAlert as Alert } from '../src/ui/app-alert';
+import { toast } from '../src/ui/app-toast';
 import { AppPressable } from '../src/ui/app-pressable';
 import { GhostButton } from '../src/ui/components';
 import { useAppTheme } from '../src/ui/theme';
@@ -307,13 +307,13 @@ export default function SearchChannelsScreen() {
   const addPreview = () => {
     if (!preview) return;
     if (subscribedIds.has(preview.channelId)) {
-      Alert.alert('已在订阅中', `「${preview.title}」已经订阅过了。`);
+      toast.info(`「${preview.title}」已经订阅过了`);
       setPreview(null);
       setInput('');
       return;
     }
     addSubscription(preview);
-    Alert.alert('已添加', `「${preview.title}」已加入订阅。`);
+    toast.success(`「${preview.title}」已加入订阅`);
     setPreview(null);
     setInput('');
   };

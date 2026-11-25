@@ -3,13 +3,19 @@ import * as Speech from 'expo-speech';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAppStore } from '../../src/core/store';
+import type { SpeechAccent } from '../../src/core/types';
 import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
-import { appAlert as Alert } from '../../src/ui/app-alert';
+import { toast } from '../../src/ui/app-toast';
 import { AppPressable } from '../../src/ui/app-pressable';
 import { NavHeader } from '../../src/ui/components';
 import { useAppTheme } from '../../src/ui/theme';
 
 const Pressable = AppPressable;
+
+const ACCENTS: { value: SpeechAccent; label: string; hint: string }[] = [
+  { value: 'en-US', label: '美式', hint: 'en-US' },
+  { value: 'en-GB', label: '英式', hint: 'en-GB' },
+];
 
 function Stepper({
   value,
@@ -59,18 +65,20 @@ export default function VoiceSettingsScreen() {
     try {
       await Speech.stop();
       Speech.speak('Hello, this is Kissly. Let us learn English together.', {
-        language: 'en-US',
+        language: settings.speechAccent,
         rate: settings.speechRate,
         pitch: settings.speechPitch,
       });
     } catch (error) {
-      Alert.alert('无法朗读', error instanceof Error ? error.message : String(error));
+      toast.error(
+        `无法朗读：${error instanceof Error ? error.message : String(error)}`
+      );
     }
   };
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
-      <NavHeader title="发音与朗读" subtitle="系统语音的音速与音高" />
+      <NavHeader title="发音与朗读" subtitle="系统朗读与视频音轨的英语口音" />
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}
@@ -130,6 +138,75 @@ export default function VoiceSettingsScreen() {
             { backgroundColor: theme.colors.card, borderColor: theme.colors.border, marginTop: 14 },
           ]}
         >
+          <View style={styles.accentHeader}>
+            <View style={[styles.iconBox, { backgroundColor: theme.colors.primarySoft }]}>
+              <Ionicons name="mic-outline" size={20} color={theme.colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '700' }}>
+                英语口音
+              </Text>
+              <Text style={{ color: theme.colors.textTertiary, fontSize: 11, marginTop: 3 }}>
+                用于朗读和视频配音轨；有原始英语音轨时优先保留原声
+              </Text>
+            </View>
+          </View>
+          <View style={styles.accentOptions}>
+            {ACCENTS.map((accent) => {
+              const active = settings.speechAccent === accent.value;
+              return (
+                <Pressable
+                  key={accent.value}
+                  feedback="opacity"
+                  onPress={() => patchSettings({ speechAccent: accent.value })}
+                  style={[
+                    styles.accentOption,
+                    {
+                      backgroundColor: active
+                        ? theme.colors.primarySoft
+                        : theme.colors.surfaceAlt,
+                      borderColor: active ? theme.colors.primary : theme.colors.border,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={{
+                      color: active ? theme.colors.primary : theme.colors.text,
+                      fontSize: 14,
+                      fontWeight: '800',
+                    }}
+                  >
+                    {accent.label}
+                  </Text>
+                  <Text
+                    style={{
+                      color: theme.colors.textTertiary,
+                      fontSize: 10.5,
+                      marginTop: 2,
+                    }}
+                  >
+                    {accent.hint}
+                  </Text>
+                  {active ? (
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={18}
+                      color={theme.colors.primary}
+                      style={{ position: 'absolute', right: 10, top: 8 }}
+                    />
+                  ) : null}
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+
+        <View
+          style={[
+            styles.card,
+            { backgroundColor: theme.colors.card, borderColor: theme.colors.border, marginTop: 14 },
+          ]}
+        >
           <View style={styles.row}>
             <View style={[styles.iconBox, { backgroundColor: theme.colors.primarySoft }]}>
               <Ionicons name="person-outline" size={20} color={theme.colors.primary} />
@@ -159,7 +236,7 @@ export default function VoiceSettingsScreen() {
         </Pressable>
 
         <Text style={{ color: theme.colors.textTertiary, fontSize: 11.5, lineHeight: 18, marginTop: 16 }}>
-          该设置用于系统朗读试听与单词发音；视频原声仍由 YouTube 播放器控制。部分安卓机型需要在系统设置里安装英文语音包。
+          该设置用于系统朗读试听、单词发音和视频音轨。视频本身有原始英语音轨时优先保留原声，不会强行切换成美式或英式。部分安卓机型需要在系统设置里安装对应口音的语音包。
         </Text>
       </ScrollView>
     </View>
@@ -198,6 +275,28 @@ const styles = StyleSheet.create({
   },
   stepButton: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
   stepValue: { minWidth: 50, textAlign: 'center', fontSize: 12.5, fontWeight: '800' },
+  accentHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingTop: 14,
+  },
+  accentOptions: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 14,
+  },
+  accentOption: {
+    flex: 1,
+    minHeight: 58,
+    borderRadius: RADIUS.control,
+    ...CONTINUOUS_CORNER,
+    borderWidth: StyleSheet.hairlineWidth,
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+  },
   previewButton: {
     marginTop: 18,
     height: 46,

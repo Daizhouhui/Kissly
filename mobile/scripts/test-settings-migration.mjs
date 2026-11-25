@@ -11,7 +11,7 @@ function settings(patch = {}) {
 const oldGrid = migrateSettingsForDesign(3, settings({ discoverLayout: 'grid' }));
 assert.equal(oldGrid.discoverLayout, 'list');
 assert.equal(oldGrid.designVersion, DESIGN_VERSION);
-assert.equal(DESIGN_VERSION, 4);
+assert.equal(DESIGN_VERSION, 5);
 
 // 2. 旧版本已经停在列表：保持列表
 assert.equal(
@@ -32,9 +32,22 @@ assert.equal(migrateSettingsForDesign(2, settings({ themeAccent: 'violet' })).th
 assert.equal(migrateSettingsForDesign(0, settings({ themeAccent: 'blue' })).themeAccent, 'sage');
 assert.equal(migrateSettingsForDesign(4, settings({ themeAccent: 'violet' })).themeAccent, 'violet');
 
-// 6. 迁移不修改传入对象
+function withAutoNext(value) {
+  const next = settings();
+  next.subtitle = { ...next.subtitle, autoNext: value };
+  return next;
+}
+
+// 6. 旧版本曾持久化 autoNext=false：升级后恢复产品默认开启
+assert.equal(migrateSettingsForDesign(4, withAutoNext(false)).subtitle.autoNext, true);
+
+// 7. 已经迁移过的版本：用户明确关闭时保留
+assert.equal(migrateSettingsForDesign(5, withAutoNext(false)).subtitle.autoNext, false);
+
+// 8. 迁移不修改传入对象
 const input = settings({ discoverLayout: 'grid' });
 migrateSettingsForDesign(3, input);
 assert.equal(input.discoverLayout, 'grid');
+assert.equal(migrateSettingsForDesign(4, withAutoNext(false)).designVersion, DESIGN_VERSION);
 
-console.log('settings-migration: 10 assertions passed');
+console.log('settings-migration: 13 assertions passed');

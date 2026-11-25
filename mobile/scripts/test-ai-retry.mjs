@@ -78,4 +78,74 @@ await (async () => {
   console.log('  ok temporary AI errors retain their bounded retry');
 })();
 
-console.log('ai-retry: 2 checks passed');
+await (async () => {
+  const timeoutError = Object.assign(new Error('Aborted'), {
+    name: 'AbortError',
+  });
+  let calls = 0;
+  const { aiTranslate } = loadAi(async (_url, options) => {
+    calls += 1;
+    if (calls === 1) throw timeoutError;
+    const texts = JSON.parse(options.body.messages[1].content);
+    return {
+      status: 200,
+      text: JSON.stringify({
+        choices: [
+          { message: { content: JSON.stringify(texts.map((text) => `译:${text}`)) } },
+        ],
+      }),
+    };
+  });
+  const result = await aiTranslate(config, ['one', 'two'], 'en', 'zh-CN');
+  assert.equal(calls, 3, 'a timeout must split immediately instead of replaying the same batch');
+  assert.deepEqual(Array.from(result), ['译:one', '译:two']);
+  console.log('  ok timeouts split immediately and preserve line order');
+})();
+
+await (async () => {
+  let calls = 0;
+  const { aiTranslate } = loadAi(async (_url, options) => {
+    calls += 1;
+    const texts = JSON.parse(options.body.messages[1].content);
+    if (texts.length > 1) {
+      return {
+        status: 200,
+        text: JSON.stringify({
+          choices: [{ message: { content: JSON.stringify(['少了一条']) } }],
+        }),
+      };
+    }
+    return {
+      status: 200,
+      text: JSON.stringify({
+        choices: [
+          { message: { content: JSON.stringify(texts.map((text) => `译:${text}`)) } },
+        ],
+      }),
+    };
+  });
+  const result = await aiTranslate(config, ['one', 'two'], 'en', 'zh-CN');
+  assert.equal(
+    calls,
+    3,
+    'a count mismatch must split immediately instead of replaying the same batch'
+  );
+  assert.deepEqual(Array.from(result), ['译:one', '译:two']);
+  console.log('  ok count mismatches split immediately without an exact replay');
+})();
+
+await (async () => {
+  let calls = 0;
+  const { aiTranslate } = loadAi(async () => {
+    calls += 1;
+    return { status: 429, text: 'rate limited' };
+  });
+  await assert.rejects(
+    () => aiTranslate(config, ['one', 'two'], 'en', 'zh-CN'),
+    /429/
+  );
+  assert.equal(calls, 1, '429 must not be replayed or split immediately');
+  console.log('  ok 429 errors leave the batch for the provider fallback chain');
+})();
+
+console.log('ai-retry: 5 checks passed');

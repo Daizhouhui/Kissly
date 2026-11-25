@@ -4,6 +4,7 @@ import { AppState, Platform, StyleSheet, View } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 
 import { useAppStore } from '../core/store';
+import { normalizeYoutubeAvatarUrl } from './youtube-avatar-url';
 import { isAllowedYoutubeProbeUrl } from './youtube-login-probe-url';
 import { shouldProbeYoutubeLogin } from './youtube-login-probe-path';
 
@@ -20,9 +21,28 @@ const LOGIN_CHECK_SCRIPT = `
     try{
       window.ReactNativeWebView.postMessage(JSON.stringify({
         type: 'youtube-login',
-        loggedIn: loggedIn
+        loggedIn: loggedIn,
+        avatar: avatarOf()
       }));
     }catch(e){}
+  }
+  function avatarOf(){
+    try{
+      var selectors=[
+        'ytm-pivot-bar-item-renderer.pivot-you img',
+        '.pivot-you img',
+        '#avatar-btn img',
+        'ytm-account-button img',
+        'button[aria-label*="Account"] img',
+        'a[href*="account"] img'
+      ];
+      for(var i=0;i<selectors.length;i++){
+        var img=document.querySelector(selectors[i]);
+        var src=img && (img.currentSrc || img.src || '');
+        if(src) return src;
+      }
+    }catch(e){}
+    return '';
   }
   function detectLogin(){
     try{
@@ -36,9 +56,9 @@ const LOGIN_CHECK_SCRIPT = `
     var value=detectLogin();
     if(value!==null) post(value);
   }
-  setTimeout(check, 400);
-  setTimeout(check, 1400);
-  setTimeout(check, 3000);
+  setTimeout(check, 1200);
+  setTimeout(check, 2600);
+  setTimeout(check, 4500);
 })();
 true;
 `;
@@ -50,6 +70,7 @@ export function YoutubeLoginProbe({ enabled }: { enabled: boolean }) {
   const status = useAppStore((state) => state.youtubeLoginStatus);
   const checkedAt = useAppStore((state) => state.youtubeLoginCheckedAt);
   const setYoutubeLoginStatus = useAppStore((state) => state.setYoutubeLoginStatus);
+  const setYoutubeAvatar = useAppStore((state) => state.setYoutubeAvatar);
   const [active, setActive] = useState(false);
   const [foregroundAt, setForegroundAt] = useState(0);
   const fallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -98,6 +119,12 @@ export function YoutubeLoginProbe({ enabled }: { enabled: boolean }) {
       return;
     }
     setYoutubeLoginStatus(message.loggedIn ? 'loggedIn' : 'loggedOut');
+    if (message.loggedIn) {
+      const avatar = normalizeYoutubeAvatarUrl(message.avatar);
+      if (avatar) setYoutubeAvatar(avatar);
+    } else {
+      setYoutubeAvatar('');
+    }
     setActive(false);
   };
 

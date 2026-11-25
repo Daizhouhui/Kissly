@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -32,6 +33,7 @@ import {
 } from '../../src/core/translate/system';
 import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
 import { appAlert as Alert } from '../../src/ui/app-alert';
+import { toast } from '../../src/ui/app-toast';
 import { AppPressable } from '../../src/ui/app-pressable';
 import { Card, NavHeader, SectionTitle, SettingSwitch } from '../../src/ui/components';
 import { useAppTheme } from '../../src/ui/theme';
@@ -127,6 +129,7 @@ const AI: Engine[] = [
 
 export default function TranslationSettingsScreen() {
   const theme = useAppTheme();
+  const router = useRouter();
   const settings = useAppStore((state) => state.settings);
   const patchSettings = useAppStore((state) => state.patchSettings);
   const [provider, setProvider] = useState<ProviderId>(settings.provider);
@@ -135,6 +138,7 @@ export default function TranslationSettingsScreen() {
   const [openrouterKey, setOpenrouterKey] = useState('');
   const [openaiKeys, setOpenaiKeys] = useState<Record<string, string>>({});
   const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [systemAvailable, setSystemAvailable] = useState(false);
   const [secretsLoaded, setSecretsLoaded] = useState(false);
@@ -198,13 +202,12 @@ export default function TranslationSettingsScreen() {
                 );
                 setProvider(id);
                 patchSettings({ provider: id });
-                Alert.alert('语言包已就绪', '系统内置翻译已启用，可以离线翻译字幕。');
+                toast.success('语言包已就绪，可以离线翻译字幕');
               } catch (error) {
-                Alert.alert(
-                  error instanceof UnsupportedSystemLanguageError
+                toast.error(
+                  `${error instanceof UnsupportedSystemLanguageError
                     ? '无法启用系统翻译'
-                    : '语言包下载失败',
-                  error instanceof Error ? error.message : String(error)
+                    : '语言包下载失败'}：${error instanceof Error ? error.message : String(error)}`
                 );
               } finally {
                 setPreparing(false);
@@ -286,7 +289,7 @@ export default function TranslationSettingsScreen() {
   const deleteOpenAiProfile = (profile: OpenAiProfile) => {
     const current = useAppStore.getState().settings;
     if (current.openaiProfiles.length <= 1) {
-      Alert.alert('无法删除', '至少保留一套 OpenAI 兼容配置。');
+      toast.info('无法删除：至少保留一套 OpenAI 兼容配置');
       return;
     }
     Alert.alert(
@@ -325,10 +328,11 @@ export default function TranslationSettingsScreen() {
     );
   };
 
-  const saveKeys = async () => {
+  const persistKeys = async (): Promise<boolean> => {
     // Do not write the empty placeholders back over saved keys while the
     // SecureStore reads are still in flight.
-    if (!secretsLoaded) return;
+    if (!secretsLoaded || saving) return false;
+    setSaving(true);
     try {
       await Promise.all([
         setSecret('deepseek', deepseekKey.trim()),
@@ -352,13 +356,23 @@ export default function TranslationSettingsScreen() {
         );
       }
       patchSettings({ provider });
-      Alert.alert('已保存', '翻译引擎与密钥已更新。');
+      return true;
     } catch (error) {
-      Alert.alert(
-        '保存失败',
-        error instanceof Error ? error.message : String(error)
+      toast.error(
+        `保存失败：${error instanceof Error ? error.message : String(error)}`
       );
+      return false;
+    } finally {
+      setSaving(false);
     }
+  };
+
+  const saveKeys = async () => {
+    if (await persistKeys()) toast.success('翻译引擎与密钥已保存');
+  };
+
+  const saveAndExit = async () => {
+    if (await persistKeys()) router.back();
   };
 
   const test = async () => {
@@ -386,9 +400,11 @@ export default function TranslationSettingsScreen() {
         await setSecret(name, (openaiKeys[activeProfile.id] ?? '').trim());
       }
       const text = await testTranslation(target);
-      Alert.alert('连接成功', `返回：${text}`);
+      toast.success(`连接成功：${text}`);
     } catch (error) {
-      Alert.alert('连接失败', error instanceof Error ? error.message : String(error));
+      toast.error(
+        `连接失败：${error instanceof Error ? error.message : String(error)}`
+      );
     } finally {
       if (temporarySecret) {
         await setSecret(temporarySecret.name, temporarySecret.previous).catch(() => {});
@@ -507,7 +523,7 @@ export default function TranslationSettingsScreen() {
         right={
           <Pressable
             onPress={saveKeys}
-            disabled={!secretsLoaded}
+            disabled={!secretsLoaded || saving}
             hitSlop={8}
             feedback="opacity"
           >
@@ -516,7 +532,7 @@ export default function TranslationSettingsScreen() {
                 color: theme.colors.primary,
                 fontSize: 14,
                 fontWeight: '700',
-                opacity: secretsLoaded ? 1 : 0.45,
+                opacity: secretsLoaded && !saving ? 1 : 0.45,
               }}
             >
               保存
@@ -604,13 +620,21 @@ export default function TranslationSettingsScreen() {
                 </>
               ) : null}
               {provider === 'deepseek' ? (
-                <Field
-                  label="模型"
-                  value={settings.deepseekModel}
-                  onChangeText={(value) => patchSettings({ deepseekModel: value })}
-                  placeholder="deepseek-chat"
-                  autoCapitalize="none"
-                />
+                <>
+                  <Field
+                    label="模型"
+                    value={settings.deepseekModel}
+                    onChangeText={(value) => patchSettings({ deepseekModel: value })}
+                    placeholder="deepseek-flash"
+                    autoCapitalize="none"
+                  />
+                  <SettingRow
+                    title="思考模式（深度思考）"
+                    desc="默认关闭。开启后先推理再翻译：速度更慢、费用更高，长句和俚语可能更准"
+                    value={settings.deepseekThinking}
+                    onChange={(value) => patchSettings({ deepseekThinking: value })}
+                  />
+                </>
               ) : null}
               {provider === 'siliconflow' ? (
                 <Field
@@ -658,26 +682,54 @@ export default function TranslationSettingsScreen() {
                 secureTextEntry
                 autoCapitalize="none"
               />
-              <Pressable
-                onPress={test}
-                disabled={testing || !secretsLoaded}
-                style={{
-                  height: 44,
-                  borderRadius: RADIUS.control,
-                  ...CONTINUOUS_CORNER,
-                  backgroundColor: theme.colors.surfaceAlt,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexDirection: 'row',
-                  gap: 8,
-                  opacity: testing || !secretsLoaded ? 0.6 : 1,
-                }}
-              >
-                {testing ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
-                <Text style={{ color: theme.colors.text, fontSize: 13, fontWeight: '700' }}>
-                  {testing ? '正在测试…' : '测试连接'}
-                </Text>
-              </Pressable>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <Pressable
+                  onPress={test}
+                  disabled={testing || saving || !secretsLoaded}
+                  style={{
+                    flex: 1,
+                    height: 44,
+                    borderRadius: RADIUS.control,
+                    ...CONTINUOUS_CORNER,
+                    backgroundColor: theme.colors.surfaceAlt,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexDirection: 'row',
+                    gap: 8,
+                    opacity: testing || saving || !secretsLoaded ? 0.6 : 1,
+                  }}
+                >
+                  {testing ? <ActivityIndicator size="small" color={theme.colors.primary} /> : null}
+                  <Text style={{ color: theme.colors.text, fontSize: 13, fontWeight: '700' }}>
+                    {testing ? '正在测试…' : '测试连接'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={saveAndExit}
+                  disabled={saving || !secretsLoaded}
+                  style={{
+                    flex: 1,
+                    height: 44,
+                    borderRadius: RADIUS.control,
+                    ...CONTINUOUS_CORNER,
+                    backgroundColor: theme.colors.primary,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexDirection: 'row',
+                    gap: 8,
+                    opacity: saving || !secretsLoaded ? 0.6 : 1,
+                  }}
+                >
+                  {saving ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Ionicons name="checkmark" size={16} color="#FFFFFF" />
+                  )}
+                  <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '700' }}>
+                    {saving ? '正在保存…' : '保存并退出'}
+                  </Text>
+                </Pressable>
+              </View>
             </Card>
           </View>
         ) : null}

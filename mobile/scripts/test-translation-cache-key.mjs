@@ -157,4 +157,33 @@ check('automatic mode invalidates its alias cache when provider order changes', 
   assert.notEqual(before, after);
 });
 
+check('deepseek disabled thinking keeps the legacy cache key', () => {
+  assert.equal(
+    providerCacheScope(base),
+    providerCacheScope({ ...base, deepseekThinking: false })
+  );
+});
+
+check('deepseek thinking moves to its own cache namespace', () => {
+  const before = providerCacheScope(base);
+  const after = providerCacheScope({ ...base, deepseekThinking: true });
+  assert.notEqual(before, after);
+  assert.match(after, /:thinking$/);
+});
+
+check('automatic mode keeps thinking state in its alias cache scope', () => {
+  const automatic = {
+    ...base,
+    provider: 'auto',
+    autoFreeOrder: ['microsoft'],
+    autoPaidOrder: ['deepseek'],
+  };
+  const before = cueCacheKey('vid', 'en', 'auto', 'zh-CN', automatic);
+  const after = cueCacheKey('vid', 'en', 'auto', 'zh-CN', {
+    ...automatic,
+    deepseekThinking: true,
+  });
+  assert.notEqual(before, after);
+});
+
 console.log(`translation-cache-key: ${count} assertions passed`);

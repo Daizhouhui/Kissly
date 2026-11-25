@@ -18,7 +18,7 @@ import { useAppTheme } from './theme';
 
 type Feedback = 'ripple' | 'opacity' | 'none';
 type RippleTone = 'surface' | 'onColor';
-type HapticStrength = 'light' | 'medium' | 'heavy' | false;
+type HapticStrength = 'tiny' | 'light' | 'medium' | 'heavy' | false;
 
 export type AppPressableProps = Omit<PressableProps, 'style' | 'children'> & {
   children?: ReactNode;
@@ -38,6 +38,20 @@ export type AppPressableProps = Omit<PressableProps, 'style' | 'children'> & {
 
 function triggerHaptic(strength: Exclude<HapticStrength, false>) {
   if (Platform.OS === 'web') return;
+  if (strength === 'tiny') {
+    if (Platform.OS === 'android') {
+      const type =
+        Number(Platform.Version) >= 34
+          ? Haptics.AndroidHaptics.Segment_Frequent_Tick
+          : Haptics.AndroidHaptics.Clock_Tick;
+      Haptics.performAndroidHapticsAsync(type).catch(() => {
+        Haptics.selectionAsync().catch(() => {});
+      });
+      return;
+    }
+    Haptics.selectionAsync().catch(() => {});
+    return;
+  }
   const style =
     strength === 'heavy'
       ? Haptics.ImpactFeedbackStyle.Heavy

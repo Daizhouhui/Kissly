@@ -90,6 +90,8 @@ type AppState = {
   syncMessage: string;
   youtubeLoginStatus: YoutubeLoginStatus;
   youtubeLoginCheckedAt: number;
+  /** Avatar URL of the signed-in YouTube account; empty when signed out. */
+  youtubeAvatar: string;
   setHydrated: (value: boolean) => void;
   patchSettings: (patch: DeepPartial<Settings>) => void;
   resetSettings: () => void;
@@ -127,6 +129,7 @@ type AppState = {
   replaceHistorySync: (items: HistoryItem[], tombstones: UserTombstones) => void;
   setSync: (state: SyncState, message?: string, at?: number) => void;
   setYoutubeLoginStatus: (status: YoutubeLoginStatus, checkedAt?: number) => void;
+  setYoutubeAvatar: (avatar: string) => void;
 };
 
 export const useAppStore = create<AppState>()(
@@ -150,6 +153,7 @@ export const useAppStore = create<AppState>()(
       syncMessage: '',
       youtubeLoginStatus: 'unknown',
       youtubeLoginCheckedAt: 0,
+      youtubeAvatar: '',
       setHydrated: (value) => set({ hydrated: value }),
       patchSettings: (patch) =>
         set((state) => {
@@ -433,6 +437,7 @@ export const useAppStore = create<AppState>()(
           youtubeLoginStatus: status,
           youtubeLoginCheckedAt: checkedAt ?? Date.now(),
         }),
+      setYoutubeAvatar: (avatar) => set({ youtubeAvatar: avatar }),
     }),
     {
       name: 'kissmobile.app',
@@ -456,6 +461,7 @@ export const useAppStore = create<AppState>()(
         settingsUpdatedAt: state.settingsUpdatedAt,
         youtubeLoginStatus: state.youtubeLoginStatus,
         youtubeLoginCheckedAt: state.youtubeLoginCheckedAt,
+        youtubeAvatar: state.youtubeAvatar,
       }),
       merge: (persisted, current) => {
         const saved = persisted as Partial<AppState> | undefined;
@@ -490,6 +496,7 @@ export const useAppStore = create<AppState>()(
           settingsUpdatedAt,
           youtubeLoginStatus: saved?.youtubeLoginStatus ?? 'unknown',
           youtubeLoginCheckedAt: saved?.youtubeLoginCheckedAt ?? 0,
+          youtubeAvatar: saved?.youtubeAvatar ?? '',
         };
       },
       onRehydrateStorage: (currentState) => (state, error) => {

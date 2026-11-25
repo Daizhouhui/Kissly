@@ -18,6 +18,7 @@ import {
   HOME_POOL_CACHE_KEY,
 } from '../src/core/youtube/constants';
 import { AppAlertHost } from '../src/ui/app-alert';
+import { AppToastHost } from '../src/ui/app-toast';
 import { ErrorBoundary } from '../src/ui/error-boundary';
 import { useAppTheme } from '../src/ui/theme';
 import { YoutubeLoginProbe } from '../src/ui/youtube-login-probe';
@@ -107,6 +108,7 @@ export default function RootLayout() {
           <YoutubeLoginProbe enabled={hydrated} />
         </ErrorBoundary>
         <AppAlertHost />
+        <AppToastHost />
       </View>
     </SafeAreaProvider>
   );

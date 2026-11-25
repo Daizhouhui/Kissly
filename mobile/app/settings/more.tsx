@@ -17,12 +17,14 @@ import { clearGlobalCaches } from '../../src/core/appCache';
 import { useAppStore } from '../../src/core/store';
 import { Card, NavHeader, Row, SectionTitle } from '../../src/ui/components';
 import { appAlert as Alert } from '../../src/ui/app-alert';
+import { toast } from '../../src/ui/app-toast';
 import { useAppTheme } from '../../src/ui/theme';
 
-type AndroidRelease = {
+type AppRelease = {
   version: string;
-  apkUrl: string;
+  downloadUrl: string;
   size: number;
+  fileName?: string;
 };
 
 type UpdatePhase = 'idle' | 'checking' | 'downloading' | 'installing';
@@ -56,14 +58,37 @@ function isNewerVersion(latest: string, current: string) {
   return false;
 }
 
-async function fetchLatestAndroidRelease(): Promise<AndroidRelease | null> {
+const RELEASES_LATEST_PAGE = 'https://github.com/Daizhouhui/Kissly/releases/latest';
+
+function releaseFromAsset(
+  platform: 'android' | 'ios',
+  version: string,
+  assetPath: string,
+  size = 0
+): AppRelease | null {
+  const extension = platform === 'ios' ? '.ipa' : '.apk';
+  if (!assetPath.toLowerCase().endsWith(extension)) return null;
+  const fileName = assetPath.split('/').pop() || '';
+  return {
+    version,
+    downloadUrl: assetPath.startsWith('http')
+      ? assetPath
+      : `https://github.com${assetPath}`,
+    size,
+    fileName: decodeURIComponent(fileName),
+  };
+}
+
+async function fetchLatestReleaseFromApi(
+  platform: 'android' | 'ios'
+): Promise<AppRelease | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
     const response = await fetch(RELEASES_API, {
       headers: {
         Accept: 'application/vnd.github+json',
-        'User-Agent': 'Kissly-Android-Update',
+        'User-Agent': 'Kissly-Update',
       },
       signal: controller.signal,
     });
@@ -72,30 +97,107 @@ async function fetchLatestAndroidRelease(): Promise<AndroidRelease | null> {
     }
     const release = (await response.json()) as {
       tag_name?: string;
+      html_url?: string;
       assets?: Array<{
         name?: string;
         browser_download_url?: string;
         size?: number;
       }>;
     };
-    const apk = release.assets?.find((asset) =>
-      asset.name?.toLowerCase().endsWith('.apk')
+    if (!release.tag_name) return null;
+    const extension = platform === 'ios' ? '.ipa' : '.apk';
+    const asset = release.assets?.find((item) =>
+      item.name?.toLowerCase().endsWith(extension)
     );
-    if (!release.tag_name || !apk?.browser_download_url) return null;
+    if (!asset?.browser_download_url) {
+      if (platform === 'ios') {
+        return {
+          version: cleanVersion(release.tag_name),
+          downloadUrl: release.html_url || RELEASES_PAGE,
+          size: 0,
+        };
+      }
+      return null;
+    }
     return {
       version: cleanVersion(release.tag_name),
-      apkUrl: apk.browser_download_url,
-      size: apk.size ?? 0,
+      downloadUrl: asset.browser_download_url,
+      size: asset.size ?? 0,
+      fileName: asset.name,
     };
   } finally {
     clearTimeout(timeout);
   }
 }
 
+/**
+ * The unauthenticated GitHub API is rate limited aggressively (403). Fall back
+ * to the public release page and its expanded-assets fragment, which are not
+ * subject to that quota.
+ */
+async function fetchLatestReleaseFromHtml(
+  platform: 'android' | 'ios'
+): Promise<AppRelease | null> {
+  const page = await fetch(RELEASES_LATEST_PAGE, {
+    headers: { 'User-Agent': 'Kissly-Update' },
+  });
+  if (!page.ok) throw new Error(`GitHub 返回 ${page.status}`);
+  const finalUrl = page.url || RELEASES_LATEST_PAGE;
+  const html = await page.text();
+  const tag =
+    finalUrl.match(/\/releases\/tag\/([^/?#]+)/i)?.[1] ||
+    html.match(/\/releases\/tag\/([^"?#]+)/)?.[1];
+  if (!tag) throw new Error('无法解析最新版本号');
+
+  const assets = await fetch(
+    `https://github.com/Daizhouhui/Kissly/releases/expanded_assets/${encodeURIComponent(tag)}`,
+    { headers: { 'User-Agent': 'Kissly-Update' } }
+  );
+  if (!assets.ok) throw new Error(`GitHub 返回 ${assets.status}`);
+  const assetsHtml = await assets.text();
+  const links: string[] = [];
+  const pattern = /href="(\/Daizhouhui\/Kissly\/releases\/download\/[^"]+)"/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(assetsHtml))) links.push(match[1]);
+
+  const version = cleanVersion(tag);
+  const extension = platform === 'ios' ? '.ipa' : '.apk';
+  const assetPath = links.find((item) =>
+    item.toLowerCase().endsWith(extension)
+  );
+  if (!assetPath) {
+    if (platform === 'ios') {
+      return {
+        version,
+        downloadUrl: finalUrl,
+        size: 0,
+      };
+    }
+    return null;
+  }
+  return releaseFromAsset(platform, version, assetPath);
+}
+
+async function fetchLatestRelease(
+  platform: 'android' | 'ios'
+): Promise<AppRelease | null> {
+  try {
+    return await fetchLatestReleaseFromApi(platform);
+  } catch (apiError) {
+    try {
+      return await fetchLatestReleaseFromHtml(platform);
+    } catch {
+      throw apiError;
+    }
+  }
+}
+
 export default function MoreSettingsScreen() {
   const theme = useAppTheme();
   const router = useRouter();
-  const currentVersion = cleanVersion(Constants.expoConfig?.version ?? '1.2.11');
+  const currentVersion = cleanVersion(
+    Constants.nativeAppVersion ?? Constants.expoConfig?.version ?? '1.2.11'
+  );
   const resetSettings = useAppStore((state) => state.resetSettings);
   const [updatePhase, setUpdatePhase] = useState<UpdatePhase>('idle');
   const [downloadProgress, setDownloadProgress] = useState(0);
@@ -114,20 +216,20 @@ export default function MoreSettingsScreen() {
     });
   };
 
-  const downloadAndInstall = async (release: AndroidRelease) => {
+  const downloadAndInstall = async (release: AppRelease) => {
     const cacheDirectory = FileSystem.cacheDirectory;
     if (!cacheDirectory) {
-      Alert.alert('更新失败', '没有可用的缓存目录，无法下载安装包。');
+      toast.error('更新失败：没有可用的缓存目录');
       return;
     }
 
-    const target = `${cacheDirectory}kissly-${release.version}.apk`;
+    const target = `${cacheDirectory}${release.fileName || `kissly-${release.version}.apk`}`;
     setUpdatePhase('downloading');
     setDownloadProgress(0);
     try {
       await FileSystem.deleteAsync(target, { idempotent: true });
       const task = FileSystem.createDownloadResumable(
-        release.apkUrl,
+        release.downloadUrl,
         target,
         { headers: { Accept: 'application/octet-stream' } },
         (event) => {
@@ -170,9 +272,9 @@ export default function MoreSettingsScreen() {
     if (Platform.OS !== 'android' || updatePhase !== 'idle') return;
     setUpdatePhase('checking');
     try {
-      const release = await fetchLatestAndroidRelease();
+      const release = await fetchLatestRelease('android');
       if (!release) {
-        Alert.alert('检查更新', '最新版本没有提供安卓安装包。');
+        toast.info('最新版本没有提供安卓安装包');
         return;
       }
       if (!isNewerVersion(release.version, currentVersion)) {
@@ -206,22 +308,42 @@ export default function MoreSettingsScreen() {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      Alert.alert('检查更新失败', `无法读取远程版本信息：${message}`);
+      toast.error(`检查更新失败：无法读取远程版本信息（${message}）`);
+    } finally {
+      setUpdatePhase('idle');
+    }
+  };
+
+  const checkForIosUpdate = async () => {
+    if (updatePhase !== 'idle') return;
+    setUpdatePhase('checking');
+    try {
+      const release = await fetchLatestRelease('ios');
+      if (!release) {
+        toast.info('最新版本没有提供 iOS 安装包');
+        return;
+      }
+      if (!isNewerVersion(release.version, currentVersion)) {
+        toast.info(`已是最新版本 v${currentVersion}`);
+        return;
+      }
+      await Linking.openURL(release.downloadUrl);
+    } catch (error) {
+      toast.error(
+        `打开下载链接失败：${error instanceof Error ? error.message : String(error)}`
+      );
     } finally {
       setUpdatePhase('idle');
     }
   };
 
   const checkForUpdate = () => {
+    if (Platform.OS === 'ios') {
+      void checkForIosUpdate();
+      return;
+    }
     if (Platform.OS !== 'android') {
-      Alert.alert(
-        '检查更新',
-        `当前版本 v${currentVersion}。\niOS 版需要在电脑上重新安装 IPA，应用内暂不支持自动更新。`,
-        [
-          { text: '取消', style: 'cancel' },
-          { text: '查看发布页', onPress: () => Linking.openURL(RELEASES_PAGE) },
-        ]
-      );
+      toast.info('当前平台暂不支持应用内更新');
       return;
     }
     void checkForAndroidUpdate();
@@ -241,14 +363,10 @@ export default function MoreSettingsScreen() {
     setMaintenance('cache');
     try {
       const removed = await clearGlobalCaches();
-      Alert.alert(
-        '缓存已清除',
-        `已清理 ${removed} 项字幕、翻译、订阅流和视频信息缓存。\n\n历史、收藏、订阅、设置和账号数据都没有改动。`
-      );
+      toast.success(`缓存已清除：已清理 ${removed} 项临时缓存`);
     } catch (error) {
-      Alert.alert(
-        '清除缓存失败',
-        error instanceof Error ? error.message : String(error)
+      toast.error(
+        `清除缓存失败：${error instanceof Error ? error.message : String(error)}`
       );
     } finally {
       setMaintenance(null);
@@ -287,10 +405,7 @@ export default function MoreSettingsScreen() {
             setMaintenance('reset');
             resetSettings();
             setMaintenance(null);
-            Alert.alert(
-              '已恢复默认设置',
-              '偏好设置已重置为初始值，WebDAV 连接和账号数据已保留。'
-            );
+            toast.success('已恢复默认设置，WebDAV 连接和账号数据已保留');
           },
         },
       ]
@@ -360,6 +475,11 @@ export default function MoreSettingsScreen() {
           <Row
             icon={updatePhase !== 'idle' ? 'sync-outline' : 'cloud-download-outline'}
             title="检查更新"
+            subtitle={
+              Platform.OS === 'ios'
+                ? '检测到新版本会打开浏览器下载 IPA，需自行签名安装'
+                : undefined
+            }
             value={updateLabel}
             onPress={checkForUpdate}
             last

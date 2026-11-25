@@ -1,11 +1,11 @@
 import type { Settings } from './types';
 
-export const DESIGN_VERSION = 4;
+export const DESIGN_VERSION = 5;
 
 /**
- * One-time visual defaults applied when a saved install predates a design
- * revision. Pure and idempotent so it can be unit-tested: the caller passes
- * the persisted version and receives a migrated copy.
+ * One-time defaults and behavior migrations applied when a saved install
+ * predates a design revision. Pure and idempotent so it can be unit-tested:
+ * the caller passes the persisted version and receives a migrated copy.
  */
 export function migrateSettingsForDesign(previousDesign: number, settings: Settings): Settings {
   const next: Settings = { ...settings };
@@ -20,6 +20,12 @@ export function migrateSettingsForDesign(previousDesign: number, settings: Setti
   // later manual choices (designVersion already 4) are kept.
   if (previousDesign < 4 && next.discoverLayout === 'grid') {
     next.discoverLayout = 'list';
+  }
+  // Older installs could persist autoNext=false from the previous build even
+  // though the product default is on. Restore the default once; after this
+  // migration an explicit off choice is preserved.
+  if (previousDesign < 5 && !next.subtitle.autoNext) {
+    next.subtitle = { ...next.subtitle, autoNext: true };
   }
   next.designVersion = DESIGN_VERSION;
   return next;

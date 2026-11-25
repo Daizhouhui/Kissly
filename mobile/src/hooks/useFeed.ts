@@ -48,6 +48,7 @@ function titleScopeOf(settings: {
   sourceLang: string;
   targetLang: string;
   deepseekModel: string;
+  deepseekThinking?: boolean;
   siliconflowModel: string;
   openrouterModel: string;
   openaiBaseUrl: string;
@@ -62,6 +63,7 @@ function titleScopeOf(settings: {
     settings.sourceLang,
     settings.targetLang,
     settings.deepseekModel,
+    settings.deepseekThinking ?? false,
     settings.siliconflowModel,
     settings.openrouterModel,
     settings.openaiBaseUrl,

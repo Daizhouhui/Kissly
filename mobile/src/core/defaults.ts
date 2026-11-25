@@ -21,7 +21,8 @@ export const DEFAULT_SETTINGS: Settings = {
   keepAwake: true,
   speechRate: 0.9,
   speechPitch: 1,
-  designVersion: 4,
+  speechAccent: 'en-US',
+  designVersion: 5,
   subtitle: {
     fontSize: 20,
     landscapeFontSize: 24,
@@ -52,7 +53,8 @@ export const DEFAULT_SETTINGS: Settings = {
     enabled: false,
     folder: WEBDAV_FOLDER,
   },
-  deepseekModel: 'deepseek-chat',
+  deepseekModel: 'deepseek-flash',
+  deepseekThinking: false,
   siliconflowModel: 'Qwen/Qwen3.5-9B',
   openrouterModel: 'openai/gpt-4o-mini',
   openaiProfiles: [
