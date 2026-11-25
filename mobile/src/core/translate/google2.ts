@@ -1,6 +1,7 @@
 import { googleTarget } from '../defaults';
 import { httpText } from '../http';
 import { mapLimit } from '../utils';
+import { withProviderGate } from './requestGate';
 
 // Google backup uses the translate-pa endpoint from the upstream Kiss Translator
 // preset. The key is a bundled public preset, not a personal Google account
@@ -38,16 +39,18 @@ async function translateBatch(
     [texts.map(encodeText), from === 'auto' ? 'auto' : from, googleTarget(to)],
     'wt_lib',
   ]);
-  const response = await httpText(GOOGLE2_URL, {
-    method: 'POST',
-    body,
-    timeoutMs,
-    headers: {
-      'Content-Type': 'application/json+protobuf',
-      'X-Goog-API-Key': GOOGLE2_KEY,
-      Accept: '*/*',
-    },
-  });
+  const response = await withProviderGate('google2', () =>
+    httpText(GOOGLE2_URL, {
+      method: 'POST',
+      body,
+      timeoutMs,
+      headers: {
+        'Content-Type': 'application/json+protobuf',
+        'X-Goog-API-Key': GOOGLE2_KEY,
+        Accept: '*/*',
+      },
+    })
+  );
   if (response.status < 200 || response.status >= 300) {
     throw new Error(`Google 备用 ${response.status}`);
   }

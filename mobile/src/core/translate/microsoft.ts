@@ -1,6 +1,7 @@
 import { httpText } from '../http';
 import { microsoftTarget } from '../defaults';
 import { chunk } from '../utils';
+import { withProviderGate } from './requestGate';
 
 const MAX_CHARS = 900;
 const MAX_ITEMS = 12;
@@ -42,19 +43,21 @@ export async function microsoftTranslate(
     let lastError: unknown = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const response = await httpText(url, {
-          method: 'POST',
-          timeoutMs,
-          body: JSON.stringify(batch),
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-            Origin: 'https://edge.microsoft.com',
-            Referer: 'https://edge.microsoft.com/',
-            'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0',
-          },
-        });
+        const response = await withProviderGate('microsoft', () =>
+          httpText(url, {
+            method: 'POST',
+            timeoutMs,
+            body: JSON.stringify(batch),
+            headers: {
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
+              Origin: 'https://edge.microsoft.com',
+              Referer: 'https://edge.microsoft.com/',
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0',
+            },
+          })
+        );
         if (response.status < 200 || response.status >= 300) {
           throw new Error(`Microsoft ${response.status}`);
         }

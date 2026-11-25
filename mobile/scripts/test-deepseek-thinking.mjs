@@ -49,6 +49,9 @@ vm.runInNewContext(compiled, {
   require: (id) => {
     if (id === '../http') return httpStub;
     if (id === '../utils') return utilsStub;
+    if (id === './requestGate') {
+      return { withProviderGate: async (_provider, fn) => fn() };
+    }
     throw new Error(`Unexpected import: ${id}`);
   },
 });

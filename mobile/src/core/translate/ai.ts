@@ -1,7 +1,11 @@
 import { httpText } from '../http';
+import type { ProviderId } from '../types';
+import { withProviderGate } from './requestGate';
 
 export type AiConfig = {
   id: string;
+  /** Gate identity for the per-engine throttle; `id` is a display name. */
+  provider?: ProviderId;
   url: string;
   key: string;
   model: string;
@@ -165,29 +169,31 @@ async function chat(
       throw timeoutError(config.id);
     }
     try {
-      const response = await httpText(config.url, {
-        method: 'POST',
-        timeoutMs: Math.max(1, Math.min(config.timeoutMs, remaining)),
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${config.key}`,
-          Accept: 'application/json',
-          ...(config.extraHeaders ?? {}),
-        },
-        body: {
-          model: config.model,
-          temperature: 0.2,
-          stream: false,
-          ...(config.thinking ? { thinking: { type: config.thinking } } : {}),
-          messages: [
-            { role: 'system', content: systemPrompt(to, contextTitle) },
-            {
-              role: 'user',
-              content: JSON.stringify(texts),
-            },
-          ],
-        },
-      });
+      const response = await withProviderGate(config.provider ?? 'deepseek', () =>
+        httpText(config.url, {
+          method: 'POST',
+          timeoutMs: Math.max(1, Math.min(config.timeoutMs, remaining)),
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${config.key}`,
+            Accept: 'application/json',
+            ...(config.extraHeaders ?? {}),
+          },
+          body: {
+            model: config.model,
+            temperature: 0.2,
+            stream: false,
+            ...(config.thinking ? { thinking: { type: config.thinking } } : {}),
+            messages: [
+              { role: 'system', content: systemPrompt(to, contextTitle) },
+              {
+                role: 'user',
+                content: JSON.stringify(texts),
+              },
+            ],
+          },
+        })
+      );
       if (response.status < 200 || response.status >= 300) {
         const error = new Error(
           `${config.id} ${response.status}: ${response.text.slice(0, 160)}`
@@ -333,6 +339,7 @@ export function deepseekConfig(
 ): AiConfig {
   return {
     id: 'DeepSeek',
+    provider: 'deepseek',
     url: 'https://api.deepseek.com/chat/completions',
     key,
     model: model || 'deepseek-flash',
@@ -350,6 +357,7 @@ export function siliconflowConfig(
 ): AiConfig {
   return {
     id: 'SiliconFlow',
+    provider: 'siliconflow',
     url: 'https://api.siliconflow.cn/v1/chat/completions',
     key,
     model: model || 'Qwen/Qwen3.5-9B',
@@ -369,6 +377,7 @@ export function openaiConfig(
   const base = normalized || 'https://api.openai.com/v1';
   return {
     id: 'OpenAI',
+    provider: 'openai',
     url: base.endsWith('/chat/completions')
       ? base
       : `${base}/chat/completions`,
@@ -385,6 +394,7 @@ export function openrouterConfig(
 ): AiConfig {
   return {
     id: 'OpenRouter',
+    provider: 'openrouter',
     url: 'https://openrouter.ai/api/v1/chat/completions',
     key,
     model: model || 'openai/gpt-4o-mini',

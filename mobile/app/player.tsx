@@ -37,6 +37,11 @@ import {
 } from '@/src/core/translate/ai';
 import { getActiveOpenAiKey } from '@/src/core/translate/credentials';
 import { providerDisplayName, translateCueList } from '@/src/core/translate';
+import { LAZY_TRANSLATION_ENABLED } from '@/src/core/translate/config';
+import {
+  createSubtitleSession,
+  type SubtitleTranslationSession,
+} from '@/src/core/translate/session';
 import { removeKeysByPrefix } from '@/src/core/storage';
 import { CaptionTrack, Cue, SubtitleMode } from '@/src/core/types';
 import { parseStartAt } from '@/src/core/watchProgress';
@@ -187,27 +192,35 @@ function CueTranslationSkeleton({
   text,
   color,
   height,
+  lineHeight,
   marginTop,
   opacity,
+  lines = 1,
 }: {
   text: string;
   color: string;
   height: number;
+  lineHeight: number;
   marginTop: number;
   opacity: number;
+  lines?: number;
 }) {
   const width = Math.max(70, Math.min(280, 30 + text.length * 3.4));
-  const widths = text.length > 45 ? [width, Math.round(width * 0.72)] : [width];
+  const ratios = [1, 0.72, 0.55];
   return (
-    <View style={{ marginTop, gap: 5, opacity }} pointerEvents="none">
-      {widths.map((barWidth, index) => (
+    <View
+      style={{ marginTop, height: lines * lineHeight, opacity }}
+      pointerEvents="none"
+    >
+      {Array.from({ length: lines }, (_value, index) => (
         <View
-          key={`${barWidth}-${index}`}
+          key={`bar-${index}`}
           style={{
-            width: barWidth,
+            width: Math.max(46, Math.round(width * ratios[index % ratios.length])),
             height,
             borderRadius: height / 2,
             backgroundColor: color,
+            marginTop: index === 0 ? 0 : lineHeight - height,
           }}
         />
       ))}
@@ -1473,6 +1486,19 @@ export default function PlayerScreen() {
     viewPosition: number;
     attempts: number;
   } | null>(null);
+  // FlatList cannot scroll to an index it has not measured, so a long seek
+  // lands via scrollToOffset first. These two refs make that estimate converge:
+  // content height gives the fraction of the list, the live offset + first
+  // visible row give the real height of the rows around the target.
+  const transcriptOffsetRef = useRef(0);
+  const transcriptContentHeightRef = useRef(0);
+  const transcriptViewportRef = useRef(0);
+  // Real height of every row the list has rendered so far; unrendered rows use
+  // the running average when estimating where a far seek should land.
+  const cueHeightsRef = useRef(new Map<number, number>());
+  const cueHeightStatsRef = useRef({ sum: 0, count: 0 });
+  const cueSourceLinesRef = useRef(new Map<number, number>());
+  const visibleVersionRef = useRef(0);
   const progressRef = useRef({
     current: Number.isFinite(initialStartAt) ? Math.max(0, initialStartAt) : 0,
     duration: 0,
@@ -1481,6 +1507,8 @@ export default function PlayerScreen() {
     ad: false,
     lastDuration: 0,
   });
+  /** Lazy translation session; replaced whenever subtitles/settings reload. */
+  const sessionRef = useRef<SubtitleTranslationSession | null>(null);
   const persistProgressRef = useRef<() => void>(() => {});
   const webReadyRef = useRef(false);
   const audioTracksAttemptRef = useRef(0);
@@ -1550,6 +1578,7 @@ export default function PlayerScreen() {
   );
   const videoLoadingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [appActive, setAppActive] = useState(AppState.currentState === 'active');
   const mirrorPlaying = (value: boolean) => {
     setPlaying(value);
   };
@@ -1747,6 +1776,7 @@ export default function PlayerScreen() {
         .filter((index) => index >= 0);
       const first = indices.length ? Math.min(...indices) : -1;
       const last = indices.length ? Math.max(...indices) : -1;
+      visibleVersionRef.current += 1;
       const currentRange = visibleCueRangeRef.current;
       if (currentRange.first === first && currentRange.last === last) return;
       visibleCueRangeRef.current = { first, last };
@@ -2001,43 +2031,91 @@ export default function PlayerScreen() {
       from: string,
       ignoreCache: boolean
     ) => {
-      setTranslationPending(true);
-      setStatus(`正在翻译字幕… 0/${cues.length}`);
-      try {
-        const translated = await translateCueList(
-          videoId,
-          cues,
-          key,
-          {
-            contextTitle,
-            from,
-            shouldStop: () => cancelled,
-            ignoreCache,
-            anchorTime: startAtRef.current,
-            getAnchorTime: () => progressRef.current.current,
-          },
-          (partial, provider) => {
-            if (cancelled) return;
-            setTranslatedCues(partial);
-            setProviderLabel(providerDisplayName(provider));
-            const done = partial.reduce(
-              (count, cue) => count + (cue.translation ? 1 : 0),
-              0
-            );
-            setStatus(`正在翻译字幕… ${done}/${cues.length}`);
+      // Replacing subtitles or changing engine/model: the old session must stop
+      // first so its in-flight batches cannot merge into the new cue list.
+      sessionRef.current?.stop();
+      sessionRef.current = null;
+
+      if (!LAZY_TRANSLATION_ENABLED) {
+        setTranslationPending(true);
+        setStatus(`正在翻译字幕… 0/${cues.length}`);
+        try {
+          const translated = await translateCueList(
+            videoId,
+            cues,
+            key,
+            {
+              contextTitle,
+              from,
+              shouldStop: () => cancelled,
+              ignoreCache,
+              anchorTime: startAtRef.current,
+              getAnchorTime: () => progressRef.current.current,
+            },
+            (partial, provider) => {
+              if (cancelled) return;
+              setTranslatedCues(partial);
+              setProviderLabel(providerDisplayName(provider));
+              const done = partial.reduce(
+                (count, cue) => count + (cue.translation ? 1 : 0),
+                0
+              );
+              setStatus(`正在翻译字幕… ${done}/${cues.length}`);
+            }
+          );
+          if (cancelled) return;
+          setTranslatedCues(translated.cues);
+          setProviderLabel(providerDisplayName(translated.provider));
+          setStatus('');
+        } catch (error) {
+          if (!cancelled) {
+            setStatus(`翻译失败：${error instanceof Error ? error.message : String(error)}`);
           }
-        );
-        if (cancelled) return;
-        setTranslatedCues(translated.cues);
-        setProviderLabel(providerDisplayName(translated.provider));
-        setStatus('');
-      } catch (error) {
-        if (!cancelled) {
-          setStatus(`翻译失败：${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+          if (!cancelled) setTranslationPending(false);
         }
-      } finally {
-        if (!cancelled) setTranslationPending(false);
+        return;
       }
+
+      setTranslationPending(true);
+      setStatus('正在翻译当前字幕…');
+      const session = createSubtitleSession({
+        videoId,
+        cues,
+        trackKey: key,
+        contextTitle,
+        from,
+        ignoreCache,
+        initialAnchorTime: progressRef.current.current || startAtRef.current,
+        durationSeconds: progressRef.current.duration || undefined,
+        onProgress: (progress) => {
+          if (cancelled) return;
+          setTranslatedCues(progress.cues);
+          setProviderLabel(providerDisplayName(progress.provider));
+          setTranslationPending(progress.pending);
+          if (progress.pending) {
+            setStatus('正在翻译当前字幕…');
+          } else if (progress.phase === 'auto-fill') {
+            setStatus(`正在补全全文字幕… ${progress.translated}/${progress.total}`);
+          } else if (progress.translated > 0 || progress.total === 0) {
+            setStatus('');
+          }
+        },
+        onError: (_error, scope) => {
+          if (cancelled) return;
+          if (scope === 'window') {
+            setStatus('部分字幕翻译失败，稍后会自动重试');
+          }
+        },
+      });
+      sessionRef.current = session;
+      session.setPlaybackState({
+        playing,
+        foreground: appActive,
+        ad: adShowing,
+        seeking,
+      });
+      session.start();
     };
 
     const load = async () => {
@@ -2187,6 +2265,8 @@ export default function PlayerScreen() {
     return () => {
       cancelled = true;
       clearWebCaptionRequest(new Error('字幕请求已取消'));
+      sessionRef.current?.stop();
+      sessionRef.current = null;
     };
   }, [
     videoId,
@@ -2278,32 +2358,98 @@ export default function PlayerScreen() {
     animated = true,
     viewPosition = 0.38
   ) => {
-    if (index < 0) return;
-    pendingScrollRef.current = { index, viewPosition, attempts: 0 };
+    if (index < 0 || index >= cues.length) return;
+    const current = pendingScrollRef.current;
+    if (current && current.index === index) return;
+    const pending = {
+      index,
+      viewPosition,
+      attempts: 0,
+      waits: 0,
+      version: visibleVersionRef.current,
+    };
+    pendingScrollRef.current = pending;
     scrollRef.current?.scrollToIndex({ index, animated, viewPosition });
+    setTimeout(() => verifyTranscriptTarget(pending), animated ? 300 : 180);
   };
 
-  const handleScrollToIndexFailed = (info: any) => {
-    const pending = pendingScrollRef.current;
-    if (!pending || pending.attempts >= 2) return;
+  /**
+   * FlatList needs a layout for rows that were never rendered, otherwise
+   * scrollToIndex throws. Heights come from the rows already laid out, so the
+   * estimate is local and keeps improving as the user watches.
+   */
+  const getTranscriptItemLayout = (_data: any, index: number) => {
+    const heights = cueHeightsRef.current;
+    const stats = cueHeightStatsRef.current;
+    const fallback = stats.count > 0 ? stats.sum / stats.count : 140;
+    let offset = 0;
+    for (let i = 0; i < index; i += 1) {
+      offset += heights.get(i) ?? fallback;
+    }
+    return {
+      length: heights.get(index) ?? fallback,
+      offset,
+      index,
+    };
+  };
+
+  /** Pull the target into view with corrections measured on the spot. */
+  const verifyTranscriptTarget = (pending: {
+    index: number;
+    viewPosition: number;
+    attempts: number;
+    waits: number;
+    version: number;
+  }) => {
+    if (pendingScrollRef.current !== pending) return;
+    if (!followingTranscriptRef.current) return;
+    const view = visibleCueRangeRef.current;
+    const visible =
+      view.first >= 0 &&
+      pending.index >= view.first &&
+      pending.index <= view.last;
+    if (visible) {
+      pendingScrollRef.current = null;
+      return;
+    }
+    // Viewability is reported a frame or two after the jump; an empty range
+    // means the rows are still being laid out, so wait instead of guessing.
+    if (
+      (view.first < 0 || visibleVersionRef.current === pending.version) &&
+      pending.waits < 3
+    ) {
+      pending.waits += 1;
+      setTimeout(() => verifyTranscriptTarget(pending), 200);
+      return;
+    }
     pending.attempts += 1;
-    requestAnimationFrame(() => {
-      scrollRef.current?.scrollToOffset({
-        offset: Math.max(0, Number(info.averageItemLength || 0) * pending.index),
-        animated: false,
-      });
-      setTimeout(() => {
-        scrollRef.current?.scrollToIndex({
-          index: pending.index,
-          animated: true,
-          viewPosition: pending.viewPosition,
-        });
-      }, 160);
-    });
+    if (pending.attempts > 6) {
+      pendingScrollRef.current = null;
+      return;
+    }
+    const offset = transcriptOffsetRef.current;
+    const first = view.first >= 0 ? view.first : 0;
+    const last = view.last >= 0 ? view.last : 0;
+    // The visible rows tell us the real offset-per-row at this spot; shift by
+    // exactly the rows in between instead of re-estimating the whole list.
+    const rowApprox =
+      first > 0 && offset > 0
+        ? offset / first
+        : last > 0
+          ? transcriptContentHeightRef.current / (last + 1)
+          : 140;
+    const deltaRows =
+      pending.index < first ? pending.index - first : pending.index - last;
+    const targetOffset = Math.max(0, offset + deltaRows * rowApprox);
+    scrollRef.current?.scrollToOffset({ offset: targetOffset, animated: false });
+    pending.version = visibleVersionRef.current;
+    pending.waits = 0;
+    setTimeout(() => verifyTranscriptTarget(pending), 240);
   };
 
   const scrollTranscriptToActive = (animated = true) => {
-    if (activeIndex < 0 || !followingTranscriptRef.current) return false;
+    if (activeIndex < 0 || activeIndex >= cues.length) return false;
+    if (!followingTranscriptRef.current) return false;
     const view = visibleCueRangeRef.current;
     const activeVisible =
       view.first >= 0 &&
@@ -2390,10 +2536,23 @@ export default function PlayerScreen() {
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
+      setAppActive(state === 'active');
       if (state === 'active') scheduleOrientationResume();
     });
     return () => sub.remove();
   }, []);
+
+  // Translation scheduling follows the real playback state: pause keeps the
+  // window finishing, backgrounding stops new requests, ads and seek drags
+  // pause the queue until the content position is known again.
+  useEffect(() => {
+    sessionRef.current?.setPlaybackState({
+      playing,
+      foreground: appActive,
+      ad: adShowing,
+      seeking,
+    });
+  }, [playing, adShowing, seeking, appActive]);
 
   const exitFullscreen = async () => {
     const wasPlaying = playing;
@@ -2922,6 +3081,7 @@ export default function PlayerScreen() {
         if (typeof message.current === 'number') {
           progressRef.current.current = message.current;
           setCurrent(message.current);
+          sessionRef.current?.setAnchor(message.current);
         }
         if (typeof message.duration === 'number' && message.duration > 0) {
           progressRef.current.duration = message.duration;
@@ -4189,13 +4349,46 @@ export default function PlayerScreen() {
     const past = index < activeIndex;
     const visible =
       index >= visibleCueRange.first && index <= visibleCueRange.last;
+    const translationFontSize = Math.max(12, fontSize - (showOriginal ? 3 : 0));
+    const chineseTarget = settings.targetLang.startsWith('zh');
+    // Chinese packs more meaning per line than the English source, so one
+    // translated line covers a one-line source and two lines cover longer ones.
+    // Reserving that space up front keeps the row height identical when the
+    // translation arrives, which is what stops the list from jumping.
+    const measuredSourceLines = cueSourceLinesRef.current.get(index);
+    const sourceLines =
+      measuredSourceLines ??
+      Math.min(3, Math.max(1, Math.ceil(cue.text.length / 36)));
+    const translationReserveLines = chineseTarget
+      ? sourceLines >= 2
+        ? 2
+        : 1
+      : 1;
     const saved = active
       ? sentenceFavorites.some(
           (fav) => fav.id === sentenceFavoriteId(videoId, cue.start)
         )
       : false;
     return (
-      <View style={styles.cue}>
+      <View
+        style={styles.cue}
+        onLayout={(event) => {
+          const height = event.nativeEvent.layout.height;
+          if (height <= 0) return;
+          const heights = cueHeightsRef.current;
+          const stats = cueHeightStatsRef.current;
+          const previous = heights.get(index);
+          if (previous === undefined) {
+            stats.count += 1;
+            stats.sum += height;
+          } else if (Math.abs(previous - height) > 0.5) {
+            stats.sum += height - previous;
+          } else {
+            return;
+          }
+          heights.set(index, height);
+        }}
+      >
         <View style={styles.cueHeader}>
           {active ? (
             <>
@@ -4232,6 +4425,12 @@ export default function PlayerScreen() {
           >
             {showOriginal ? (
               <Text
+                onTextLayout={(event) => {
+                  cueSourceLinesRef.current.set(
+                    index,
+                    Math.max(1, event.nativeEvent.lines.length)
+                  );
+                }}
                 style={[
                   styles.cueOriginal,
                   {
@@ -4246,41 +4445,47 @@ export default function PlayerScreen() {
                 {cue.text}
               </Text>
             ) : null}
-            {showTranslation && cue.translation ? (
-              <Text
-                style={[
-                  styles.cueTranslation,
-                  {
-                    color: theme.colors.textSecondary,
-                    fontSize: Math.max(12, fontSize - (showOriginal ? 3 : 0)),
-                    lineHeight: transcriptTranslationLineHeight,
-                    marginTop: showOriginal ? 10 : 0,
-                    fontFamily: translationFont,
-                    fontWeight: transcriptTranslationWeight,
-                  },
-                  active && {
-                    color: showOriginal
-                      ? theme.colors.text
-                      : theme.colors.primary,
-                  },
-                ]}
+            {showTranslation ? (
+              <View
+                style={{
+                  marginTop: showOriginal ? 10 : 0,
+                  minHeight: chineseTarget
+                    ? transcriptTranslationLineHeight * translationReserveLines
+                    : undefined,
+                }}
               >
-                {cue.translation}
-              </Text>
-            ) : null}
-            {showTranslation && !cue.translation && translationPending ? (
-              <CueTranslationSkeleton
-                text={cue.text}
-                color={theme.colors.border}
-                height={Math.max(
-                  9,
-                  Math.round(
-                    Math.max(12, fontSize - (showOriginal ? 3 : 0)) * 0.62
-                  )
+                {cue.translation ? (
+                  <Text
+                    style={[
+                      styles.cueTranslation,
+                      {
+                        color: theme.colors.textSecondary,
+                        fontSize: translationFontSize,
+                        lineHeight: transcriptTranslationLineHeight,
+                        fontFamily: translationFont,
+                        fontWeight: transcriptTranslationWeight,
+                      },
+                      active && {
+                        color: showOriginal
+                          ? theme.colors.text
+                          : theme.colors.primary,
+                      },
+                    ]}
+                  >
+                    {cue.translation}
+                  </Text>
+                ) : (
+                  <CueTranslationSkeleton
+                    text={cue.text}
+                    color={theme.colors.border}
+                    height={translationFontSize}
+                    lineHeight={transcriptTranslationLineHeight}
+                    lines={chineseTarget ? translationReserveLines : 1}
+                    marginTop={0}
+                    opacity={active ? 1 : past ? 0.85 : 0.7}
+                  />
                 )}
-                marginTop={showOriginal ? 10 : 0}
-                opacity={active ? 1 : past ? 0.85 : 0.7}
-              />
+              </View>
             ) : null}
           </CueFade>
         </Pressable>
@@ -4297,6 +4502,7 @@ export default function PlayerScreen() {
         keyExtractor={(cue, index) => `${cue.start}-${index}`}
         renderItem={({ item, index }) => renderTranscriptCue(item, index)}
         extraData={`${activeIndex}|${playing}|${visibleCueRange.first}|${visibleCueRange.last}`}
+        getItemLayout={getTranscriptItemLayout}
         initialNumToRender={12}
         maxToRenderPerBatch={10}
         updateCellsBatchingPeriod={40}
@@ -4310,6 +4516,10 @@ export default function PlayerScreen() {
         }}
         showsVerticalScrollIndicator={false}
         alwaysBounceVertical
+        onScroll={(event) => {
+          transcriptOffsetRef.current = event.nativeEvent.contentOffset.y;
+        }}
+        scrollEventThrottle={16}
         onScrollBeginDrag={() => {
           pendingScrollRef.current = null;
           followingTranscriptRef.current = false;
@@ -4318,17 +4528,18 @@ export default function PlayerScreen() {
         onMomentumScrollEnd={() => {
           maybeResumeTranscriptFollow();
         }}
-        onContentSizeChange={() => {
+        onContentSizeChange={(_, height) => {
+          transcriptContentHeightRef.current = height;
           if (!followingTranscriptRef.current || transcriptInitializedRef.current) return;
           requestAnimationFrame(() => scrollTranscriptToActive(false));
         }}
-        onLayout={() => {
+        onLayout={(event) => {
+          transcriptViewportRef.current = event.nativeEvent.layout.height;
           if (!followingTranscriptRef.current) return;
           requestAnimationFrame(() => scrollTranscriptToActive(false));
         }}
         onViewableItemsChanged={onTranscriptViewableItemsChanged}
         viewabilityConfig={transcriptViewabilityConfig}
-        onScrollToIndexFailed={handleScrollToIndexFailed}
         ListEmptyComponent={
           <View style={styles.emptyTranscript}>
             <Ionicons

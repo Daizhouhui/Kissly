@@ -23,6 +23,9 @@ function loadAi(httpText) {
     clearTimeout,
     require(id) {
       if (id === '../http') return { httpText };
+      if (id === './requestGate') {
+        return { withProviderGate: async (_provider, fn) => fn() };
+      }
       if (id === '../utils') {
         return {
           chunk(values, size) {

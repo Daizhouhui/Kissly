@@ -1,6 +1,7 @@
 import { googleTarget } from '../defaults';
 import { httpText } from '../http';
 import { mapLimit } from '../utils';
+import { withProviderGate } from './requestGate';
 
 async function translateOne(
   text: string,
@@ -17,13 +18,15 @@ async function translateOne(
   let lastError: unknown = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const response = await httpText(url, {
-        timeoutMs,
-        headers: {
-          Accept: '*/*',
-          Referer: 'https://translate.google.com/',
-        },
-      });
+      const response = await withProviderGate('google', () =>
+        httpText(url, {
+          timeoutMs,
+          headers: {
+            Accept: '*/*',
+            Referer: 'https://translate.google.com/',
+          },
+        })
+      );
       if (response.status < 200 || response.status >= 300) {
         throw new Error(`Google ${response.status}`);
       }
