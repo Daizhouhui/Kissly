@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
+import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { ReactNode, useState } from 'react';
 import {
@@ -25,6 +26,7 @@ const Pressable = AppPressable;
 
 function MeRow({
   icon,
+  leading,
   title,
   subtitle,
   value,
@@ -35,6 +37,7 @@ function MeRow({
   roomy,
 }: {
   icon: any;
+  leading?: ReactNode;
   title: string;
   subtitle?: string;
   value?: string;
@@ -60,7 +63,11 @@ function MeRow({
         disabled && { opacity: 0.45 },
       ]}
     >
-      <Ionicons name={icon} size={21} color={theme.colors.textSecondary} style={styles.rowIcon} />
+      {leading ? (
+        <View style={styles.rowAvatarBox}>{leading}</View>
+      ) : (
+        <Ionicons name={icon} size={21} color={theme.colors.textSecondary} style={styles.rowIcon} />
+      )}
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '600' }} numberOfLines={1}>
           {title}
@@ -142,6 +149,7 @@ export default function MeScreen() {
   const lastSyncAt = useAppStore((state) => state.lastSyncAt);
   const syncState = useAppStore((state) => state.syncState);
   const youtubeLoginStatus = useAppStore((state) => state.youtubeLoginStatus);
+  const youtubeAvatar = useAppStore((state) => state.youtubeAvatar);
   const patchSettings = useAppStore((state) => state.patchSettings);
   const [syncing, setSyncing] = useState(false);
   const [dialog, setDialog] = useState<'title' | 'tab' | null>(null);
@@ -202,6 +210,16 @@ export default function MeScreen() {
         <Group first>
           <MeRow
             icon="person-circle-outline"
+            leading={
+              youtubeLoginStatus === 'loggedIn' && youtubeAvatar ? (
+                <Image
+                  source={{ uri: youtubeAvatar }}
+                  style={styles.rowAvatar}
+                  contentFit="cover"
+                  transition={150}
+                />
+              ) : undefined
+            }
             title="账号"
             subtitle="YouTube 登录、头像与订阅同步"
             value={loginValue}
@@ -389,6 +407,8 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   rowIcon: { width: 28, marginRight: 9 },
+  rowAvatarBox: { width: 28, height: 28, marginRight: 9 },
+  rowAvatar: { width: 28, height: 28, borderRadius: 14 },
   syncButton: {
     marginTop: 14,
     height: 44,
