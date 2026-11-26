@@ -15,11 +15,12 @@ import Animated, {
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
+  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 
 import { CONTINUOUS_CORNER, RADIUS, RIPPLE, RadiusToken, radiusValue } from '../tokens';
-import { DURATION, EASE_OUT, pressTintColor } from './motion';
+import { DURATION, EASE_OUT, SPRING, pressTintColor } from './motion';
 import { useAppTheme } from './theme';
 
 type Feedback = 'ripple' | 'opacity' | 'none';
@@ -42,6 +43,8 @@ export type AppPressableProps = Omit<PressableProps, 'style' | 'children'> & {
   rippleSize?: number;
   /** Scale applied while held. Keep at 1 for full-width rows. */
   pressScale?: number;
+  /** Release with a short spring so the surface settles instead of stopping dead. */
+  releaseSpring?: boolean;
   /** Faint wash under the finger. The right feedback for full-width rows. */
   pressTint?: boolean;
   haptic?: HapticStrength;
@@ -87,8 +90,41 @@ function resolvedRadius(
     : undefined;
 }
 
-function hasCorner(style: PressableProps['style']) {
-  const base = typeof style === 'function' ? style({ pressed: false, hovered: false } as any) : style;
+/** Slots that decide where the pressable sits, so the scale wrapper takes them. */
+const LAYOUT_SLOTS = [
+  'flex',
+  'flexGrow',
+  'flexShrink',
+  'flexBasis',
+  'width',
+  'height',
+  'minWidth',
+  'maxWidth',
+  'minHeight',
+  'maxHeight',
+  'alignSelf',
+  'position',
+  'left',
+  'right',
+  'top',
+  'bottom',
+  'zIndex',
+] as const;
+
+function layoutSlots(style: PressableProps['style']): ViewStyle {
+  const base =
+    typeof style === 'function' ? style({ pressed: false, hovered: false } as any) : style;
+  const flattened = StyleSheet.flatten(base) as ViewStyle | undefined;
+  if (!flattened) return {};
+  const slots: Record<string, unknown> = {};
+  for (const key of LAYOUT_SLOTS) {
+    const value = (flattened as Record<string, unknown>)[key];
+    if (value !== undefined) slots[key] = value;
+  }
+  return slots as ViewStyle;
+}
+
+function hasCorner(style: PressableProps['style']) {  const base = typeof style === 'function' ? style({ pressed: false, hovered: false } as any) : style;
   const flattened = StyleSheet.flatten(base) as ViewStyle | undefined;
   if (!flattened) return false;
   return (
@@ -120,6 +156,7 @@ export function AppPressable({
   rippleSize,
   pressScale = 1,
   pressTint = false,
+  releaseSpring = false,
   haptic = false,
   pressableRef,
   collapsable,
@@ -215,8 +252,15 @@ export function AppPressable({
 
   const handlePressOut = (event: GestureResponderEvent) => {
     if (pressScale !== 1) {
+      // A spring on release carries the finger's momentum: chips and pills
+      // settle with a hint of overshoot instead of stopping dead.
       scale.set(
-        withTiming(1, { duration: DURATION.pressOut, easing: EASE_OUT })
+        releaseSpring && !reduced
+          ? withSpring(1, {
+              duration: SPRING.release.duration,
+              dampingRatio: SPRING.release.dampingRatio,
+            })
+          : withTiming(1, { duration: DURATION.pressOut, easing: EASE_OUT })
       );
     }
     if (tintEnabled) {
@@ -316,7 +360,14 @@ export function AppPressable({
 
   if (pressScale === 1) return surface;
 
-  return <Animated.View style={scaleStyle}>{surface}</Animated.View>;
+  // The scale wrapper becomes the flex item, so it has to carry the layout
+  // slots the caller put on the pressable — otherwise `flex: 1` pills collapse
+  // to their text width once they start scaling.
+  return (
+    <Animated.View style={[layoutSlots(style), scaleStyle]}>
+      {surface}
+    </Animated.View>
+  );
 }
 
 export const PRESSABLE_RADIUS = RADIUS;

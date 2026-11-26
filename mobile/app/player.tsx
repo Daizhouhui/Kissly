@@ -6094,6 +6094,7 @@ export default function PlayerScreen() {
                   粗细
                 </Text>
                 <WeightPicker
+                  animate={false}
                   value={settings.subtitle.originalWeight}
                   onChange={(weight) =>
                     patchSettings({
@@ -6136,6 +6137,7 @@ export default function PlayerScreen() {
                   粗细
                 </Text>
                 <WeightPicker
+                  animate={false}
                   value={settings.subtitle.translationWeight}
                   onChange={(weight) =>
                     patchSettings({

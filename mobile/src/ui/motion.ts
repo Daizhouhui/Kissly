@@ -18,6 +18,20 @@ export const DURATION = {
   smallState: 180,
   enter: 220,
   exit: 160,
+  /** Switch knob travel and track colour. */
+  toggle: 200,
+  /** Check mark pop in. */
+  check: 160,
+} as const;
+
+/**
+ * Springs are for anything a finger released. `duration` + `dampingRatio` is
+ * Reanimated's designer-facing pair; read it as "settle time" and "how tight".
+ */
+export const SPRING = {
+  release: { duration: 200, dampingRatio: 0.7 },
+  knob: { duration: 200, dampingRatio: 0.85 },
+  check: { duration: 160, dampingRatio: 0.8 },
 } as const;
 
 /**

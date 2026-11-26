@@ -15,10 +15,12 @@ import {
   ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import ReAnimated, { useAnimatedStyle } from 'react-native-reanimated';
 
 import { CONTINUOUS_CORNER, RADIUS } from '../tokens';
 import { AppPressable } from './app-pressable';
-import { PRESS_SCALE } from './motion';
+import { DURATION, PRESS_SCALE } from './motion';
+import { useProgressColor, useProgressOpacity, useStateProgress } from './state-anim';
 import { useAppTheme } from './theme';
 
 export function Screen({
@@ -389,23 +391,39 @@ export function Chip({
   onPress?: () => void;
 }) {
   const theme = useAppTheme();
+  const progress = useStateProgress(!!active);
+  const surfaceStyle = useProgressColor(
+    progress,
+    theme.colors.surfaceAlt,
+    theme.colors.text
+  );
+  const labelStyle = useProgressColor(
+    progress,
+    theme.colors.textSecondary,
+    theme.dark ? '#0F0D14' : '#FFFFFF',
+    'color'
+  );
   return (
     <AppPressable
       onPress={onPress}
       feedback="ripple"
       radius={RADIUS.control}
       pressScale={PRESS_SCALE.pill}
+      releaseSpring
       accessibilityRole="button"
-      style={[
-        styles.chip,
-        {
-          backgroundColor: active ? theme.colors.text : theme.colors.surfaceAlt,
-        },
-      ]}
+      style={[styles.chip, { backgroundColor: 'transparent' }]}
     >
-      <Text style={{ color: active ? (theme.dark ? '#0F0D14' : '#fff') : theme.colors.textSecondary, fontSize: 12, fontWeight: '600' }}>
+      <ReAnimated.View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFill,
+          { borderRadius: RADIUS.control },
+          surfaceStyle,
+        ]}
+      />
+      <ReAnimated.Text style={[{ fontSize: 12, fontWeight: '600' }, labelStyle]}>
         {label}
-      </Text>
+      </ReAnimated.Text>
     </AppPressable>
   );
 }
@@ -539,33 +557,50 @@ export function SettingSwitch({
   onValueChange: (value: boolean) => void;
 }) {
   const theme = useAppTheme();
+  // The knob is a spring, the track only changes colour: a spring on a flat
+  // colour reads as nothing, and timing on the knob would stop dead under the
+  // finger.
+  const progress = useStateProgress(value, DURATION.toggle, 'spring');
+  const trackStyle = useProgressColor(progress, theme.colors.border, theme.colors.primary);
+  const knobStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: progress.get() * 18 }],
+  }));
   return (
     <AppPressable
       onPress={() => onValueChange(!value)}
-      feedback="opacity"
+      feedback="none"
+      pressScale={0.96}
+      releaseSpring
       accessibilityRole="switch"
       accessibilityState={{ checked: value }}
       style={{
         width: 46,
         height: 28,
         borderRadius: RADIUS.pill,
-        backgroundColor: value ? theme.colors.primary : theme.colors.border,
-        justifyContent: 'center',
-        paddingHorizontal: 3,
+        backgroundColor: 'transparent',
       }}
     >
-      <View
-        style={{
-          width: 22,
-          height: 22,
-          borderRadius: RADIUS.pill,
-          backgroundColor: '#fff',
-          alignSelf: value ? 'flex-end' : 'flex-start',
-          shadowColor: '#000',
-          shadowOpacity: 0.18,
-          shadowRadius: 4,
-          shadowOffset: { width: 0, height: 2 },
-        }}
+      <ReAnimated.View
+        pointerEvents="none"
+        style={[StyleSheet.absoluteFill, { borderRadius: RADIUS.pill }, trackStyle]}
+      />
+      <ReAnimated.View
+        style={[
+          {
+            position: 'absolute',
+            left: 3,
+            top: 3,
+            width: 22,
+            height: 22,
+            borderRadius: RADIUS.pill,
+            backgroundColor: '#fff',
+            shadowColor: '#000',
+            shadowOpacity: 0.18,
+            shadowRadius: 4,
+            shadowOffset: { width: 0, height: 2 },
+          },
+          knobStyle,
+        ]}
       />
     </AppPressable>
   );
@@ -573,18 +608,33 @@ export function SettingSwitch({
 
 export function SelectionCircle({ selected }: { selected: boolean }) {
   const theme = useAppTheme();
+  const progress = useStateProgress(selected);
+  const check = useStateProgress(selected, DURATION.check);
+  const borderStyle = useProgressColor(
+    progress,
+    theme.colors.borderStrong,
+    theme.colors.primary,
+    'borderColor'
+  );
+  const fillStyle = useProgressOpacity(progress);
+  const checkStyle = useAnimatedStyle(() => ({
+    opacity: check.get(),
+    transform: [{ scale: 0.6 + check.get() * 0.4 }],
+  }));
   return (
-    <View
-      style={[
-        styles.selectionCircle,
-        {
-          borderColor: selected ? theme.colors.primary : theme.colors.borderStrong,
-          backgroundColor: selected ? theme.colors.primary : 'transparent',
-        },
-      ]}
-    >
-      {selected ? <Ionicons name="checkmark" size={14} color="#FFFFFF" /> : null}
-    </View>
+    <ReAnimated.View style={[styles.selectionCircle, borderStyle]}>
+      <ReAnimated.View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFill,
+          { borderRadius: RADIUS.pill, backgroundColor: theme.colors.primary },
+          fillStyle,
+        ]}
+      />
+      <ReAnimated.View style={checkStyle}>
+        <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+      </ReAnimated.View>
+    </ReAnimated.View>
   );
 }
 

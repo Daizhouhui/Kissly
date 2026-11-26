@@ -15,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import ReAnimated from 'react-native-reanimated';
 
 import { useAppStore } from '../../src/core/store';
 import { DiscoverLayout, VideoItem } from '../../src/core/types';
@@ -29,6 +30,7 @@ import { useFeed } from '../../src/hooks/useFeed';
 import { CONTINUOUS_CORNER, innerRadius, RADIUS } from '../../src/tokens';
 import { AppPressable } from '../../src/ui/app-pressable';
 import { PRESS_SCALE } from '../../src/ui/motion';
+import { useProgressColor, useProgressOpacity, useStateProgress } from '../../src/ui/state-anim';
 import { useAppTheme } from '../../src/ui/theme';
 import { VideoCard } from '../../src/ui/VideoCard';
 
@@ -44,6 +46,78 @@ const LAYOUTS: Array<{ id: DiscoverLayout; label: string }> = [
   { id: 'grid', label: '网格' },
   { id: 'large', label: '大图' },
 ];
+
+/** The feed filter pill: fill and border crossfade, the label never jumps. */
+function FilterPill({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  const theme = useAppTheme();
+  const progress = useStateProgress(active);
+  const fillStyle = useProgressOpacity(progress);
+  const borderStyle = useProgressColor(
+    progress,
+    theme.colors.borderStrong,
+    theme.colors.primary,
+    'borderColor'
+  );
+  const labelStyle = useProgressColor(
+    progress,
+    theme.colors.textSecondary,
+    '#FFFFFF',
+    'color'
+  );
+  return (
+    <AppPressable
+      onPress={onPress}
+      feedback="none"
+      radius={RADIUS.pill}
+      pressScale={PRESS_SCALE.pill}
+      releaseSpring
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      style={{
+        paddingHorizontal: 18,
+        height: 36,
+        borderRadius: RADIUS.pill,
+        ...CONTINUOUS_CORNER,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'transparent',
+      }}
+    >
+      <ReAnimated.View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFill,
+          { borderRadius: RADIUS.pill, backgroundColor: theme.colors.primary },
+          fillStyle,
+        ]}
+      />
+      <ReAnimated.View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFill,
+          { borderRadius: RADIUS.pill, borderWidth: StyleSheet.hairlineWidth },
+          borderStyle,
+        ]}
+      />
+      <ReAnimated.Text
+        style={[
+          { fontSize: 12.5, fontWeight: active ? '800' : '600' },
+          labelStyle,
+        ]}
+      >
+        {label}
+      </ReAnimated.Text>
+    </AppPressable>
+  );
+}
 
 function LayoutGlyph({
   id,
@@ -427,38 +501,13 @@ export default function HomeScreen() {
       <View style={styles.filterRow}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
           {FILTERS.map((item) => {
-            const active = filter === item.id;
             return (
-              <AppPressable
+              <FilterPill
                 key={item.id}
+                label={item.label}
+                active={filter === item.id}
                 onPress={() => setFilter(item.id)}
-                feedback="opacity"
-                radius={RADIUS.pill}
-                pressScale={PRESS_SCALE.pill}
-                accessibilityRole="button"
-                accessibilityState={{ selected: active }}
-                style={{
-                  paddingHorizontal: 18,
-                  height: 36,
-                  borderRadius: RADIUS.pill,
-                  ...CONTINUOUS_CORNER,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: active ? theme.colors.primary : 'transparent',
-                  borderWidth: active ? 0 : StyleSheet.hairlineWidth,
-                  borderColor: theme.colors.borderStrong,
-                }}
-              >
-                <Text
-                  style={{
-                    color: active ? '#FFFFFF' : theme.colors.textSecondary,
-                    fontSize: 12.5,
-                    fontWeight: active ? '800' : '600',
-                  }}
-                >
-                  {item.label}
-                </Text>
-              </AppPressable>
+              />
             );
           })}
         </ScrollView>
