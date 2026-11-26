@@ -13,7 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../../src/core/store';
 import { SubtitleFont, SubtitleMode, SubtitlePosition } from '../../src/core/types';
-import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
+import { CONTINUOUS_CORNER, CONTROL_HEIGHT, RADIUS } from '../../src/tokens';
 import { AppPressable } from '../../src/ui/app-pressable';
 import { Card, NavHeader, SectionTitle, SettingSwitch } from '../../src/ui/components';
 import {
@@ -397,7 +397,7 @@ export default function SubtitleSettingsScreen() {
                   onPress={() => setSubtitle({ position })}
                   style={{
                     flex: 1,
-                    height: 40,
+                    height: CONTROL_HEIGHT.sm,
                     borderRadius: RADIUS.control,
                     backgroundColor: active ? theme.colors.primarySoft : theme.colors.surfaceAlt,
                     alignItems: 'center',
@@ -437,7 +437,7 @@ export default function SubtitleSettingsScreen() {
                     onPress={() => setSubtitle({ backgroundOpacity: opacity })}
                     style={{
                       flex: 1,
-                      height: 34,
+                      height: CONTROL_HEIGHT.sm,
                       borderRadius: RADIUS.control,
                       backgroundColor: active ? theme.colors.primary : theme.colors.surfaceAlt,
                       alignItems: 'center',

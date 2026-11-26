@@ -15,11 +15,16 @@ import {
   ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import ReAnimated, { useAnimatedStyle } from 'react-native-reanimated';
+import ReAnimated, {
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated';
 
-import { CONTINUOUS_CORNER, RADIUS } from '../tokens';
+import { CONTINUOUS_CORNER, CONTROL_HEIGHT, ICON_BUTTON, RADIUS } from '../tokens';
 import { AppPressable } from './app-pressable';
-import { DURATION, PRESS_SCALE } from './motion';
+import { DURATION, PRESS_SCALE, SPRING } from './motion';
 import { useProgressColor, useProgressOpacity, useStateProgress } from './state-anim';
 import { useAppTheme } from './theme';
 
@@ -652,15 +657,36 @@ export function ManageBar({
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
   const disabled = selectedCount === 0;
+  const reducedMotion = useReducedMotion();
+  const enterProgress = useSharedValue(0);
+
+  useEffect(() => {
+    enterProgress.set(
+      reducedMotion
+        ? 1
+        : withSpring(1, {
+            duration: DURATION.enter,
+            dampingRatio: SPRING.release.dampingRatio,
+          })
+    );
+  }, [enterProgress, reducedMotion]);
+
+  const enterStyle = useAnimatedStyle(() => ({
+    opacity: enterProgress.get(),
+    transform: [{ translateY: reducedMotion ? 0 : (1 - enterProgress.get()) * 26 }],
+  }));
+
   return (
-    <View
+    <ReAnimated.View
       style={[
         styles.manageBar,
+        theme.shadow.floating,
         {
           backgroundColor: theme.colors.card,
           borderTopColor: theme.colors.border,
           paddingBottom: Math.max(12, insets.bottom + 6),
         },
+        enterStyle,
       ]}
     >
       <AppPressable
@@ -719,7 +745,7 @@ export function ManageBar({
           删除{selectedCount ? ` (${selectedCount})` : ''}
         </Text>
       </AppPressable>
-    </View>
+    </ReAnimated.View>
   );
 }
 
@@ -733,15 +759,15 @@ const styles = StyleSheet.create({
   },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
   navBack: {
-    width: 40,
-    height: 40,
+    width: ICON_BUTTON.standard,
+    height: ICON_BUTTON.standard,
     borderRadius: RADIUS.pill,
     alignItems: 'center',
     justifyContent: 'center',
   },
   iconButton: {
-    width: 42,
-    height: 42,
+    width: ICON_BUTTON.standard,
+    height: ICON_BUTTON.standard,
     borderRadius: RADIUS.pill,
     ...CONTINUOUS_CORNER,
     alignItems: 'center',
@@ -771,7 +797,7 @@ const styles = StyleSheet.create({
   },
   chip: {
     paddingHorizontal: 14,
-    height: 34,
+    height: CONTROL_HEIGHT.sm,
     borderRadius: RADIUS.control,
     ...CONTINUOUS_CORNER,
     alignItems: 'center',
@@ -806,7 +832,6 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     zIndex: 30,
-    elevation: 18,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,

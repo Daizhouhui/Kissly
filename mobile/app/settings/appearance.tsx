@@ -68,7 +68,7 @@ export default function AppearanceSettingsScreen() {
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
       <NavHeader title="外观与主题" subtitle="浅色、深色与主题色" />
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 40 }}
+        contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 36 }}
         showsVerticalScrollIndicator={false}
       >
         <SectionTitle title="显示模式" />

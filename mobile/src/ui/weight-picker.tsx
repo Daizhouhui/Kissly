@@ -2,7 +2,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import ReAnimated from 'react-native-reanimated';
 
 import type { SubtitleWeight } from '../core/types';
-import { RADIUS } from '../tokens';
+import { CONTROL_HEIGHT, RADIUS } from '../tokens';
 import { AppPressable } from './app-pressable';
 import { PRESS_SCALE } from './motion';
 import { useProgressColor, useStateProgress } from './state-anim';
@@ -140,7 +140,7 @@ const styles = StyleSheet.create({
   },
   item: {
     flex: 1,
-    height: 40,
+    height: CONTROL_HEIGHT.sm,
     borderRadius: RADIUS.pill,
     overflow: 'hidden',
     alignItems: 'center',

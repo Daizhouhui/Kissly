@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../src/core/store';
 import { parseStartAt } from '../src/core/watchProgress';
-import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
+import { CONTINUOUS_CORNER, ICON_BUTTON, RADIUS } from '../src/tokens';
 import { appAlert as Alert } from '../src/ui/app-alert';
 import { AppPressable } from '../src/ui/app-pressable';
 import { EmptyState, ManageBar, NavHeader, SelectionCircle } from '../src/ui/components';
@@ -418,8 +418,8 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   sentenceIcon: {
-    width: 34,
-    height: 34,
+    width: ICON_BUTTON.compact,
+    height: ICON_BUTTON.compact,
     borderRadius: RADIUS.control,
     ...CONTINUOUS_CORNER,
     alignItems: 'center',
@@ -430,8 +430,8 @@ const styles = StyleSheet.create({
   sentenceTranslation: { fontSize: 12, lineHeight: 18, marginTop: 4 },
   sentenceMeta: { fontSize: 10.5, marginTop: 7 },
   removeButton: {
-    width: 34,
-    height: 34,
+    width: ICON_BUTTON.compact,
+    height: ICON_BUTTON.compact,
     borderRadius: RADIUS.pill,
     ...CONTINUOUS_CORNER,
     alignItems: 'center',

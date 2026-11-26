@@ -21,7 +21,7 @@ import { useAppStore } from '../src/core/store';
 import { Subscription } from '../src/core/types';
 import { resolveChannelInput } from '../src/core/youtube/channel';
 import { ChannelSearchResult, searchChannels } from '../src/core/youtube/search';
-import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
+import { CONTINUOUS_CORNER, ICON_BUTTON, RADIUS } from '../src/tokens';
 import { toast } from '../src/ui/app-toast';
 import { AppPressable } from '../src/ui/app-pressable';
 import { GhostButton } from '../src/ui/components';
@@ -612,8 +612,8 @@ export default function SearchChannelsScreen() {
                     hitSlop={8}
                     pressScale={PRESS_SCALE.pill}
                     style={{
-                      width: 34,
-                      height: 34,
+                      width: ICON_BUTTON.compact,
+                      height: ICON_BUTTON.compact,
                       borderRadius: RADIUS.pill,
                       alignItems: 'center',
                       justifyContent: 'center',

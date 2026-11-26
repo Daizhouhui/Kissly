@@ -170,7 +170,7 @@ export default function ExportScreen() {
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
       <NavHeader title="导出" subtitle="导出为 CSV / JSON，再通过系统分享保存" />
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40 }}
+        contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 36 }}
         showsVerticalScrollIndicator={false}
       >
         <View style={{ gap: 10 }}>

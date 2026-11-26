@@ -37,7 +37,7 @@ export default function LanguageSettingsScreen() {
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
       <NavHeader title="语言" subtitle="学习语言、翻译语言与界面语言" />
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40 }}
+        contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 36 }}
         showsVerticalScrollIndicator={false}
       >
         <View

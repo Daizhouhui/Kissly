@@ -33,7 +33,7 @@ import {
   watchedFraction,
 } from '../../src/core/watchProgress';
 import { useFeed } from '../../src/hooks/useFeed';
-import { CONTINUOUS_CORNER, innerRadius, RADIUS } from '../../src/tokens';
+import { CONTINUOUS_CORNER, ICON_BUTTON, innerRadius, RADIUS } from '../../src/tokens';
 import { AppPressable } from '../../src/ui/app-pressable';
 import { DURATION, EASE_OUT, PRESS_SCALE } from '../../src/ui/motion';
 import { useProgressColor, useProgressOpacity, useStateProgress } from '../../src/ui/state-anim';
@@ -52,6 +52,34 @@ const LAYOUTS: Array<{ id: DiscoverLayout; label: string }> = [
   { id: 'grid', label: '网格' },
   { id: 'large', label: '大图' },
 ];
+
+/**
+ * Selection ring drawn as its own layer so the avatar inside never re-layouts
+ * or re-crops when the ring appears; only the ring fades.
+ */
+function ChannelRing({ active, color }: { active: boolean; color: string }) {
+  const reducedMotion = useReducedMotion();
+  const progress = useSharedValue(active ? 1 : 0);
+
+  useEffect(() => {
+    progress.set(
+      reducedMotion
+        ? active
+          ? 1
+          : 0
+        : withTiming(active ? 1 : 0, { duration: DURATION.smallState, easing: EASE_OUT })
+    );
+  }, [active, progress, reducedMotion]);
+
+  const opacityStyle = useAnimatedStyle(() => ({ opacity: progress.get() }));
+
+  return (
+    <ReAnimated.View
+      pointerEvents="none"
+      style={[styles.channelRing, { borderColor: color }, opacityStyle]}
+    />
+  );
+}
 
 /** The feed filter pill: fill and border crossfade, the label never jumps. */
 function FilterPill({
@@ -180,6 +208,10 @@ export default function HomeScreen() {
   const reducedMotion = useReducedMotion();
   const menuProgress = useSharedValue(0);
   const refreshProgress = useSharedValue(0);
+  const headerProgress = useSharedValue(0);
+  const listProgress = useSharedValue(0);
+  const layoutProgress = useSharedValue(1);
+  const resumeProgress = useSharedValue(0);
   const menuCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [refreshToast, setRefreshToast] = useState('');
   const refreshToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -203,6 +235,33 @@ export default function HomeScreen() {
       }, DURATION.exit);
     }, 2200);
   }, [refreshProgress]);
+
+  useEffect(() => {
+    // First paint only: the header lifts in once instead of popping in.
+    headerProgress.set(
+      reducedMotion ? 1 : withTiming(1, { duration: DURATION.enter, easing: EASE_OUT })
+    );
+  }, [headerProgress, reducedMotion]);
+
+  useEffect(() => {
+    if (loading) {
+      listProgress.set(0);
+      return;
+    }
+    listProgress.set(
+      reducedMotion ? 1 : withTiming(1, { duration: 200, easing: EASE_OUT })
+    );
+  }, [loading, listProgress, reducedMotion]);
+
+  useEffect(() => {
+    // Layout switch rebuilds the list; a short fade hides the swap.
+    if (reducedMotion) {
+      layoutProgress.set(1);
+      return;
+    }
+    layoutProgress.set(0.55);
+    layoutProgress.set(withTiming(1, { duration: 160, easing: EASE_OUT }));
+  }, [layout, layoutProgress, reducedMotion]);
 
   useEffect(() => {
     // Double-tapping the active video tab returns the feed to the top.
@@ -254,6 +313,19 @@ export default function HomeScreen() {
   const continueResume = continueItem ? resumeTarget(continueItem) : 0;
   const continueFraction = continueItem ? watchedFraction(continueItem) : 0;
   const continueRemaining = continueItem ? remainingSeconds(continueItem) : null;
+
+  const resumeFraction = Math.max(0.06, Math.min(1, continueFraction || 0.06));
+
+  useEffect(() => {
+    // One-shot growth the first time the resume card appears (or the video
+    // changes); it never re-animates on unrelated re-renders.
+    if (reducedMotion) {
+      resumeProgress.set(resumeFraction);
+      return;
+    }
+    resumeProgress.set(0.06);
+    resumeProgress.set(withTiming(resumeFraction, { duration: 300, easing: EASE_OUT }));
+  }, [continueItem?.videoId, resumeProgress, reducedMotion, resumeFraction]);
 
   const visible = useMemo(() => {
     return items.filter((item) => {
@@ -314,8 +386,30 @@ export default function HomeScreen() {
     ],
   }));
 
+  const headerStyle = useAnimatedStyle(() => ({
+    opacity: headerProgress.get(),
+    transform: [
+      { translateY: reducedMotion ? 0 : interpolate(headerProgress.get(), [0, 1], [10, 0]) },
+    ],
+  }));
+
+  const listStyle = useAnimatedStyle(() => ({
+    opacity: layoutProgress.get(),
+  }));
+
+  const emptyStyle = useAnimatedStyle(() => ({
+    opacity: listProgress.get(),
+    transform: [
+      { translateY: reducedMotion ? 0 : interpolate(listProgress.get(), [0, 1], [8, 0]) },
+    ],
+  }));
+
+  const resumeStyle = useAnimatedStyle(() => ({
+    transform: [{ scaleX: resumeProgress.get() }],
+  }));
+
   const header = (
-    <View>
+    <ReAnimated.View style={headerStyle}>
       <View style={styles.titleRow}>
         <View style={{ flex: 1 }}>
           <Text style={{ color: theme.colors.text, fontSize: 34, fontWeight: '300', letterSpacing: -1.1 }}>
@@ -377,20 +471,24 @@ export default function HomeScreen() {
           accessibilityLabel="全部频道"
           style={{ alignItems: 'center', width: 58 }}
         >
-          <View
-            style={[
-              styles.channelAvatar,
-              {
-                backgroundColor: channelFilter ? theme.colors.surfaceAlt : theme.colors.primarySoft,
-                borderColor: channelFilter ? 'transparent' : theme.colors.borderStrong,
-              },
-            ]}
-          >
-            <Ionicons
-              name="apps-outline"
-              size={22}
-              color={channelFilter ? theme.colors.textTertiary : theme.colors.primary}
-            />
+          <View style={styles.channelAvatar}>
+            <View
+              style={[
+                styles.channelAvatarInner,
+                {
+                  backgroundColor: channelFilter
+                    ? theme.colors.surfaceAlt
+                    : theme.colors.primarySoft,
+                },
+              ]}
+            >
+              <Ionicons
+                name="apps-outline"
+                size={22}
+                color={channelFilter ? theme.colors.textTertiary : theme.colors.primary}
+              />
+            </View>
+            <ChannelRing active={!channelFilter} color={theme.colors.primary} />
           </View>
           <Text
             style={{
@@ -414,27 +512,27 @@ export default function HomeScreen() {
               accessibilityLabel={sub.title}
               style={{ alignItems: 'center', width: 58 }}
             >
-              <View
-                style={[
-                  styles.channelAvatar,
-                  {
-                    borderColor: active ? theme.colors.primary : 'transparent',
-                    backgroundColor: theme.colors.surfaceAlt,
-                  },
-                ]}
-              >
-                {sub.avatar ? (
-                  <Image
-                    source={{ uri: sub.avatar }}
-                    style={{ width: 54, height: 54, borderRadius: RADIUS.pill }}
-                    contentFit="cover"
-                    transition={140}
-                  />
-                ) : (
-                  <Text style={{ color: theme.colors.primary, fontSize: 17, fontWeight: '900' }}>
-                    {(sub.title || '?').slice(0, 1).toUpperCase()}
-                  </Text>
-                )}
+              <View style={styles.channelAvatar}>
+                <View
+                  style={[
+                    styles.channelAvatarInner,
+                    { backgroundColor: theme.colors.surfaceAlt },
+                  ]}
+                >
+                  {sub.avatar ? (
+                    <Image
+                      source={{ uri: sub.avatar }}
+                      style={{ width: '100%', height: '100%', borderRadius: RADIUS.pill }}
+                      contentFit="cover"
+                      transition={140}
+                    />
+                  ) : (
+                    <Text style={{ color: theme.colors.primary, fontSize: 17, fontWeight: '900' }}>
+                      {(sub.title || '?').slice(0, 1).toUpperCase()}
+                    </Text>
+                  )}
+                </View>
+                <ChannelRing active={active} color={theme.colors.primary} />
               </View>
               <Text
                 style={{
@@ -455,6 +553,7 @@ export default function HomeScreen() {
               style={[
                 styles.channelAvatar,
                 {
+                  borderWidth: 2.5,
                   borderColor: theme.colors.borderStrong,
                   borderStyle: 'dashed',
                   backgroundColor: 'transparent',
@@ -525,14 +624,18 @@ export default function HomeScreen() {
               }}
             >
               <Ionicons name="play" size={11} color={theme.colors.textSecondary} />
-              <View style={{ width: 48, height: 3, borderRadius: RADIUS.pill, backgroundColor: theme.colors.borderStrong }}>
-                <View
-                  style={{
-                    width: `${Math.max(6, Math.round(continueFraction * 100))}%` as any,
-                    height: 3,
-                    borderRadius: RADIUS.pill,
-                    backgroundColor: theme.colors.primary,
-                  }}
+              <View style={{ width: 48, height: 3, borderRadius: RADIUS.pill, backgroundColor: theme.colors.borderStrong, overflow: 'hidden' }}>
+                <ReAnimated.View
+                  style={[
+                    {
+                      width: '100%',
+                      height: 3,
+                      borderRadius: RADIUS.pill,
+                      backgroundColor: theme.colors.primary,
+                      transformOrigin: 'left',
+                    },
+                    resumeStyle,
+                  ]}
                 />
               </View>
               <Text style={{ color: theme.colors.textSecondary, fontSize: 9.5 }}>
@@ -561,14 +664,14 @@ export default function HomeScreen() {
         <View ref={layoutButtonRef} collapsable={false}>
           <AppPressable
             onPress={openLayoutMenu}
-            hitSlop={6}
+            hitSlop={8}
             feedback="ripple"
             radius={RADIUS.pill}
             pressScale={PRESS_SCALE.pill}
             accessibilityLabel="切换视频布局"
             style={{
-              width: 36,
-              height: 36,
+              width: ICON_BUTTON.compact,
+              height: ICON_BUTTON.compact,
               borderRadius: RADIUS.pill,
               ...CONTINUOUS_CORNER,
               backgroundColor: theme.colors.surfaceAlt,
@@ -580,12 +683,13 @@ export default function HomeScreen() {
           </AppPressable>
         </View>
       </View>
-    </View>
+    </ReAnimated.View>
   );
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
-      <FlatList
+      <ReAnimated.View style={[{ flex: 1 }, listStyle]}>
+        <FlatList
         ref={listRef}
         key={layout}
         data={visible}
@@ -634,7 +738,12 @@ export default function HomeScreen() {
               <Text style={{ color: theme.colors.textTertiary, fontSize: 12 }}>正在拉取订阅视频…</Text>
             </View>
           ) : subscriptions.length === 0 ? (
-            <View style={{ alignItems: 'center', paddingTop: 52, paddingHorizontal: 26 }}>
+            <ReAnimated.View
+              style={[
+                { alignItems: 'center', paddingTop: 52, paddingHorizontal: 26 },
+                emptyStyle,
+              ]}
+            >
               <View
                 style={{
                   width: 76,
@@ -681,16 +790,18 @@ export default function HomeScreen() {
               >
                 <Text style={{ color: '#FFFFFF', fontSize: 13.5, fontWeight: '800' }}>搜索频道</Text>
               </AppPressable>
-            </View>
+            </ReAnimated.View>
           ) : (
-            <View style={{ alignItems: 'center', paddingTop: 46 }}>
+            <ReAnimated.View
+              style={[{ alignItems: 'center', paddingTop: 46 }, emptyStyle]}
+            >
               <Ionicons name="search-outline" size={32} color={theme.colors.textTertiary} />
               <Text style={{ color: theme.colors.textSecondary, fontSize: 13, marginTop: 12 }}>
                 {filter === 'watching'
                   ? '已加载的视频里还没有看到一半的内容'
                   : '没有找到匹配的视频'}
               </Text>
-            </View>
+            </ReAnimated.View>
           )
         }
         ListFooterComponent={
@@ -714,7 +825,8 @@ export default function HomeScreen() {
         }
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
-      />
+        />
+      </ReAnimated.View>
 
       {refreshToast ? (
         <View
@@ -826,8 +938,8 @@ const styles = StyleSheet.create({
     gap: 9,
   },
   allChannelsButton: {
-    width: 48,
-    height: 48,
+    width: ICON_BUTTON.standard,
+    height: ICON_BUTTON.standard,
     borderRadius: RADIUS.pill,
     ...CONTINUOUS_CORNER,
     borderWidth: StyleSheet.hairlineWidth,
@@ -838,10 +950,29 @@ const styles = StyleSheet.create({
     width: 58,
     height: 58,
     borderRadius: RADIUS.pill,
-    borderWidth: 2.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'visible',
+  },
+  channelAvatarInner: {
+    position: 'absolute',
+    top: 2.5,
+    left: 2.5,
+    right: 2.5,
+    bottom: 2.5,
+    borderRadius: RADIUS.pill,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
+  },
+  channelRing: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: RADIUS.pill,
+    borderWidth: 2.5,
   },
   continueCard: {
     flexDirection: 'row',

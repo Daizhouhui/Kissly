@@ -12,8 +12,9 @@ import { useAppTheme } from './theme';
 
 export type VideoCardVariant = 'list' | 'grid' | 'large';
 
-// Covers are deliberately flatter than the app's generic control radius.
-const VIDEO_THUMBNAIL_RADIUS = 8;
+// Thumbnails share the row-highlight radius so the two corners read as one
+// shape language instead of a flat cover sitting inside a rounder row.
+const VIDEO_THUMBNAIL_RADIUS = RADIUS.control;
 
 export function VideoCard({
   item,

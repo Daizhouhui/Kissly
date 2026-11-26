@@ -18,6 +18,24 @@ export const RADIUS = {
 export type RadiusToken = keyof typeof RADIUS;
 
 /**
+ * One size scale for controls.
+ *
+ * `sm` is the compact chip height used inside dense rows (filter bars, weight
+ * pickers, segmented rows). `md` is the standard control/button height and the
+ * diameter of round icon buttons, which also satisfies the 44pt touch target.
+ */
+export const CONTROL_HEIGHT = {
+  sm: 36,
+  md: 44,
+} as const;
+
+/** Round icon-button diameters, aligned with CONTROL_HEIGHT.md / .sm. */
+export const ICON_BUTTON = {
+  standard: CONTROL_HEIGHT.md,
+  compact: CONTROL_HEIGHT.sm,
+} as const;
+
+/**
  * iOS gets the native continuous-curvature corner. Android and web keep the
  * same numeric radius with the platform's circular rounding, which preserves
  * performance, clipping and shadows.
