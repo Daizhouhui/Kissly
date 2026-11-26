@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Modal,
@@ -10,10 +10,21 @@ import {
   View,
 } from 'react-native';
 import type { AlertButton, AlertOptions } from 'react-native';
+import Animated, {
+  cancelAnimation,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 
 import { AppPressable } from './app-pressable';
 import { RADIUS } from '../tokens';
+import { DURATION, EASE_OUT } from './motion';
 import { useAppTheme } from './theme';
+
+/** Dialog exit runs slightly faster than the entrance. */
+const DIALOG_EXIT = 140;
 
 type DialogConfig = {
   title: string;
@@ -56,14 +67,23 @@ export const appAlert = {
 export function AppAlertHost() {
   const theme = useAppTheme();
   const { width } = useWindowDimensions();
+  const reduced = useReducedMotion();
   const [config, setConfig] = useState<DialogConfig | null>(null);
+  const progress = useSharedValue(0);
+  const closing = useRef(false);
 
   useEffect(() => {
-    presenter = setConfig;
+    presenter = (next) => {
+      closing.current = false;
+      setConfig(next);
+      progress.set(0);
+      progress.set(withTiming(1, { duration: 180, easing: EASE_OUT }));
+    };
     return () => {
       presenter = null;
+      cancelAnimation(progress);
     };
-  }, []);
+  }, [progress]);
 
   const cancelButton = useMemo(
     () => config?.buttons.find((button) => button.style === 'cancel'),
@@ -71,11 +91,14 @@ export function AppAlertHost() {
   );
 
   const close = (button?: AlertButton) => {
-    setConfig(null);
-    if (button?.onPress) {
-      // Let the modal disappear before a navigation/confirmation side effect.
-      setTimeout(button.onPress, 0);
-    }
+    if (closing.current) return;
+    closing.current = true;
+    progress.set(withTiming(0, { duration: DIALOG_EXIT, easing: EASE_OUT }));
+    setTimeout(() => {
+      setConfig(null);
+      closing.current = false;
+      if (button?.onPress) button.onPress();
+    }, DIALOG_EXIT);
   };
 
   const dismiss = () => {
@@ -84,8 +107,14 @@ export function AppAlertHost() {
       close(cancelButton);
       return;
     }
-    setConfig(null);
+    close();
   };
+
+  const maskStyle = useAnimatedStyle(() => ({ opacity: progress.get() }));
+  const cardStyle = useAnimatedStyle(() => ({
+    opacity: progress.get(),
+    transform: [{ scale: reduced ? 1 : 0.94 + progress.get() * 0.06 }],
+  }));
 
   if (!config) return null;
 
@@ -97,13 +126,21 @@ export function AppAlertHost() {
     <Modal
       visible
       transparent
-      animationType="fade"
+      animationType="none"
       statusBarTranslucent
       onRequestClose={dismiss}
     >
-      <Pressable style={[styles.mask, { backgroundColor: theme.colors.overlay }]} onPress={dismiss}>
-        <Pressable
-          onPress={() => {}}
+      <View style={styles.root}>
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFill,
+            { backgroundColor: theme.colors.overlay },
+            maskStyle,
+          ]}
+        />
+        <Pressable style={StyleSheet.absoluteFill} onPress={dismiss} />
+        <Animated.View
           style={[
             styles.card,
             {
@@ -112,6 +149,7 @@ export function AppAlertHost() {
               borderColor: theme.colors.border,
             },
             theme.shadow.floating,
+            cardStyle,
           ]}
         >
           <View style={styles.copy}>
@@ -181,16 +219,15 @@ export function AppAlertHost() {
               此操作无法撤销
             </Text>
           ) : null}
-        </Pressable>
-      </Pressable>
+        </Animated.View>
+      </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  mask: {
+  root: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.54)',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 24,

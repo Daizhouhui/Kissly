@@ -15,7 +15,13 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import ReAnimated from 'react-native-reanimated';
+import ReAnimated, {
+  interpolate,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 
 import { useAppStore } from '../../src/core/store';
 import { DiscoverLayout, VideoItem } from '../../src/core/types';
@@ -29,7 +35,7 @@ import {
 import { useFeed } from '../../src/hooks/useFeed';
 import { CONTINUOUS_CORNER, innerRadius, RADIUS } from '../../src/tokens';
 import { AppPressable } from '../../src/ui/app-pressable';
-import { PRESS_SCALE } from '../../src/ui/motion';
+import { DURATION, EASE_OUT, PRESS_SCALE } from '../../src/ui/motion';
 import { useProgressColor, useProgressOpacity, useStateProgress } from '../../src/ui/state-anim';
 import { useAppTheme } from '../../src/ui/theme';
 import { VideoCard } from '../../src/ui/VideoCard';
@@ -171,6 +177,10 @@ export default function HomeScreen() {
   const [channelFilter, setChannelFilter] = useState('');
   const [layoutMenu, setLayoutMenu] = useState(false);
   const [layoutAnchor, setLayoutAnchor] = useState({ top: 0, right: 16 });
+  const reducedMotion = useReducedMotion();
+  const menuProgress = useSharedValue(0);
+  const refreshProgress = useSharedValue(0);
+  const menuCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [refreshToast, setRefreshToast] = useState('');
   const refreshToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listRef = useRef<FlatList<VideoItem>>(null);
@@ -182,11 +192,17 @@ export default function HomeScreen() {
   const showRefreshToast = useCallback((message: string) => {
     if (refreshToastTimer.current) clearTimeout(refreshToastTimer.current);
     setRefreshToast(message);
+    refreshProgress.set(withTiming(1, { duration: DURATION.enter, easing: EASE_OUT }));
     refreshToastTimer.current = setTimeout(() => {
-      setRefreshToast('');
-      refreshToastTimer.current = null;
+      // Fade out first, then drop the node: an instant unmount is the flicker
+      // this banner was showing before.
+      refreshProgress.set(withTiming(0, { duration: DURATION.exit, easing: EASE_OUT }));
+      refreshToastTimer.current = setTimeout(() => {
+        setRefreshToast('');
+        refreshToastTimer.current = null;
+      }, DURATION.exit);
     }, 2200);
-  }, []);
+  }, [refreshProgress]);
 
   useEffect(() => {
     // Double-tapping the active video tab returns the feed to the top.
@@ -252,9 +268,18 @@ export default function HomeScreen() {
   const openSearch = () => router.push('/add-subscription' as any);
 
   const openLayoutMenu = () => {
+    if (menuCloseTimer.current) {
+      clearTimeout(menuCloseTimer.current);
+      menuCloseTimer.current = null;
+    }
+    const reveal = () => {
+      setLayoutMenu(true);
+      menuProgress.set(0);
+      menuProgress.set(withTiming(1, { duration: 160, easing: EASE_OUT }));
+    };
     const button = layoutButtonRef.current;
     if (!button) {
-      setLayoutMenu(true);
+      reveal();
       return;
     }
     button.measureInWindow((x: number, y: number, width: number, height: number) => {
@@ -263,9 +288,31 @@ export default function HomeScreen() {
         top: y + height + 8,
         right: Math.max(12, screenWidth - x - width),
       });
-      setLayoutMenu(true);
+      reveal();
     });
   };
+
+  /** Fades the popover out before the modal unmounts; closing is faster than opening. */
+  const closeLayoutMenu = () => {
+    menuProgress.set(withTiming(0, { duration: 120, easing: EASE_OUT }));
+    if (menuCloseTimer.current) clearTimeout(menuCloseTimer.current);
+    menuCloseTimer.current = setTimeout(() => {
+      setLayoutMenu(false);
+      menuCloseTimer.current = null;
+    }, 120);
+  };
+
+  const menuStyle = useAnimatedStyle(() => ({
+    opacity: menuProgress.get(),
+    transform: [{ scale: reducedMotion ? 1 : 0.9 + menuProgress.get() * 0.1 }],
+  }));
+
+  const refreshStyle = useAnimatedStyle(() => ({
+    opacity: refreshProgress.get(),
+    transform: [
+      { translateY: reducedMotion ? 0 : interpolate(refreshProgress.get(), [0, 1], [8, 0]) },
+    ],
+  }));
 
   const header = (
     <View>
@@ -681,28 +728,31 @@ export default function HomeScreen() {
             zIndex: 30,
           }}
         >
-          <View
-            style={{
-              maxWidth: '92%',
-              paddingHorizontal: 16,
-              paddingVertical: 10,
-              borderRadius: RADIUS.pill,
-              backgroundColor: 'rgba(20,17,25,0.92)',
-              borderWidth: StyleSheet.hairlineWidth,
-              borderColor: 'rgba(255,255,255,0.14)',
-            }}
+          <ReAnimated.View
+            style={[
+              {
+                maxWidth: '92%',
+                paddingHorizontal: 16,
+                paddingVertical: 10,
+                borderRadius: RADIUS.pill,
+                backgroundColor: 'rgba(20,17,25,0.92)',
+                borderWidth: StyleSheet.hairlineWidth,
+                borderColor: 'rgba(255,255,255,0.14)',
+              },
+              refreshStyle,
+            ]}
           >
             <Text style={{ color: '#FFFFFF', fontSize: 12.5, fontWeight: '700' }}>
               {refreshToast}
             </Text>
-          </View>
+          </ReAnimated.View>
         </View>
       ) : null}
 
-      <Modal visible={layoutMenu} transparent animationType="fade" onRequestClose={() => setLayoutMenu(false)}>
+      <Modal visible={layoutMenu} transparent animationType="none" onRequestClose={closeLayoutMenu}>
         <View style={{ flex: 1 }}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setLayoutMenu(false)} />
-          <View
+          <Pressable style={StyleSheet.absoluteFill} onPress={closeLayoutMenu} />
+          <ReAnimated.View
             style={[
               styles.layoutPopover,
               {
@@ -710,7 +760,9 @@ export default function HomeScreen() {
                 right: layoutAnchor.right,
                 backgroundColor: theme.colors.card,
                 borderColor: theme.colors.border,
+                transformOrigin: 'top right',
               },
+              menuStyle,
             ]}
           >
             {LAYOUTS.map((option) => {
@@ -720,7 +772,7 @@ export default function HomeScreen() {
                   key={option.id}
                   onPress={() => {
                     patchSettings({ discoverLayout: option.id });
-                    setLayoutMenu(false);
+                    closeLayoutMenu();
                   }}
                   feedback="ripple"
                   radius={RADIUS.control}
@@ -759,7 +811,7 @@ export default function HomeScreen() {
                 </AppPressable>
               );
             })}
-          </View>
+          </ReAnimated.View>
         </View>
       </Modal>
     </View>

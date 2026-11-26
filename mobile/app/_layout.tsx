@@ -2,7 +2,7 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef } from 'react';
-import { AppState, View } from 'react-native';
+import { AppState, Platform, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -92,13 +92,15 @@ export default function RootLayout() {
               screenOptions={{
                 headerShown: false,
                 contentStyle: { backgroundColor: theme.colors.bg },
-                animation: 'slide_from_right',
+                // iOS keeps the platform push (it carries the swipe-back
+                // gesture); Android keeps the explicit slide it already had.
+                animation: Platform.OS === 'ios' ? 'default' : 'slide_from_right',
               }}
             >
               <Stack.Screen name="(tabs)" options={{ animation: 'none' }} />
               <Stack.Screen
                 name="player"
-                options={{ animation: 'fade', gestureEnabled: false }}
+                options={{ animation: 'fade_from_bottom', gestureEnabled: false }}
               />
               <Stack.Screen name="subscriptions" />
               <Stack.Screen name="favorites" />
