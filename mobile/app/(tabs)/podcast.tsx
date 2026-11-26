@@ -18,6 +18,7 @@ import { resumeTarget, watchedFraction } from '../../src/core/watchProgress';
 import { useFeed } from '../../src/hooks/useFeed';
 import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
 import { AppPressable } from '../../src/ui/app-pressable';
+import { PRESS_SCALE } from '../../src/ui/motion';
 import { useAppTheme } from '../../src/ui/theme';
 
 const Pressable = AppPressable;
@@ -152,6 +153,7 @@ export default function PodcastScreen() {
               } as any);
             }}
             radius={RADIUS.card}
+            pressScale={PRESS_SCALE.card}
             style={[
               styles.card,
               {

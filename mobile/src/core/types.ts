@@ -47,7 +47,7 @@ export type SentenceMode = 'smart' | 'whole';
 
 export type SubtitleFont = 'default' | 'rounded' | 'serif' | 'geometric' | 'kai';
 
-export type SubtitleWeight = 'regular' | 'medium' | 'bold';
+export type SubtitleWeight = 'regular' | 'normal' | 'medium' | 'bold' | 'heavy';
 
 export type OriginalTiming = 'always' | 'after';
 
@@ -58,6 +58,8 @@ export type ListeningTranslationMode = 'always' | 'together' | 'tap';
 export type SubtitlePrefs = {
   /** Portrait transcript font size. */
   fontSize: number;
+  /** Precision-listening card font size, independent from the transcript. */
+  listeningFontSize: number;
   /** Landscape / fullscreen overlay font size, independent from portrait. */
   landscapeFontSize: number;
   mode: SubtitleMode;

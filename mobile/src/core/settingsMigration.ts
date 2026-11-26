@@ -1,6 +1,19 @@
-import type { Settings } from './types';
+import type { Settings, SubtitleWeight } from './types';
 
-export const DESIGN_VERSION = 5;
+export const DESIGN_VERSION = 10;
+
+function upgradeWeight(
+  weight: SubtitleWeight,
+  line: 'original' | 'translation'
+): SubtitleWeight {
+  // The old four-step scale was 400/600/800/900. On the new
+  // 400/500/600/700/800 scale the old defaults move to the new defaults
+  // (original 700, translation 500), while custom 400/800 stay visually
+  // equivalent and the old 900 is capped at the new 800.
+  if (weight === 'medium') return line === 'original' ? 'bold' : 'normal';
+  if (weight === 'bold' || weight === 'heavy') return 'heavy';
+  return weight;
+}
 
 /**
  * One-time defaults and behavior migrations applied when a saved install
@@ -21,11 +34,41 @@ export function migrateSettingsForDesign(previousDesign: number, settings: Setti
   if (previousDesign < 4 && next.discoverLayout === 'grid') {
     next.discoverLayout = 'list';
   }
-  // Older installs could persist autoNext=false from the previous build even
-  // though the product default is on. Restore the default once; after this
-  // migration an explicit off choice is preserved.
-  if (previousDesign < 5 && !next.subtitle.autoNext) {
-    next.subtitle = { ...next.subtitle, autoNext: true };
+  // Design v10 turns precision-listening auto-advance off by default. Reset
+  // installs still carrying the old default on once; after this migration an
+  // explicit on choice is preserved.
+  if (previousDesign < 10 && next.subtitle.autoNext) {
+    next.subtitle = { ...next.subtitle, autoNext: false };
+  }
+  // The typography redesign introduced a separate precision-listening size.
+  // Existing installs start listening at 20.
+  if (previousDesign < 6) {
+    next.subtitle = {
+      ...next.subtitle,
+      listeningFontSize: 20,
+      translationWeight:
+        next.subtitle.translationWeight === 'regular'
+          ? 'medium'
+          : next.subtitle.translationWeight,
+    };
+  }
+  // Design v7 expands the shared weight scale to 400/500/600/700/800. The old
+  // 600 defaults become the new original 700 / translation 500 defaults, while
+  // explicit 400 choices stay thin and 800/900 both map to the new 800 cap.
+  if (previousDesign > 0 && previousDesign < 7) {
+    next.subtitle = {
+      ...next.subtitle,
+      originalWeight: upgradeWeight(next.subtitle.originalWeight, 'original'),
+      translationWeight: upgradeWeight(
+        next.subtitle.translationWeight,
+        'translation'
+      ),
+    };
+  }
+  // The title display default moves from bilingual to untranslated. Reset
+  // installs still carrying the old bilingual preference once.
+  if (previousDesign < 8 && next.titleTranslationMode === 'bilingual') {
+    next.titleTranslationMode = 'none';
   }
   next.designVersion = DESIGN_VERSION;
   return next;

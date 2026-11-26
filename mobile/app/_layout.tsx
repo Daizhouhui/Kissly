@@ -3,6 +3,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef } from 'react';
 import { AppState, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../src/core/store';
@@ -12,6 +13,7 @@ import {
   markProgressDirty,
   maybeAutoSync,
 } from '../src/core/sync';
+import { clearUpdateCache } from '../src/core/updateCache';
 import {
   CHANNEL_FIRST_CACHE_PREFIX,
   FEED_STORE_TTL,
@@ -29,6 +31,12 @@ export default function RootLayout() {
   const theme = useAppTheme();
   const hydrated = useAppStore((state) => state.hydrated);
   const bootstrapped = useRef(false);
+
+  useEffect(() => {
+    // Update APKs are kept through the installer handoff and then swept on the
+    // next cold start, so a canceled install cannot leave a stale package.
+    clearUpdateCache().catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -75,41 +83,43 @@ export default function RootLayout() {
   }, [hydrated]);
 
   return (
-    <SafeAreaProvider>
-      <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
-        <ErrorBoundary>
-          <StatusBar style={theme.dark ? 'light' : 'dark'} />
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: theme.colors.bg },
-              animation: 'slide_from_right',
-            }}
-          >
-            <Stack.Screen name="(tabs)" options={{ animation: 'none' }} />
-            <Stack.Screen
-              name="player"
-              options={{ animation: 'fade', gestureEnabled: false }}
-            />
-            <Stack.Screen name="subscriptions" />
-            <Stack.Screen name="favorites" />
-            <Stack.Screen name="add-subscription" options={{ animation: 'slide_from_bottom' }} />
-            <Stack.Screen name="channel" />
-            <Stack.Screen name="settings/translation" />
-            <Stack.Screen name="settings/language" />
-            <Stack.Screen name="settings/appearance" />
-            <Stack.Screen name="settings/webdav" />
-            <Stack.Screen name="settings/subtitle" />
-            <Stack.Screen name="settings/voice" />
-            <Stack.Screen name="settings/export" />
-            <Stack.Screen name="settings/more" />
-            <Stack.Screen name="settings/about" />
-          </Stack>
-          <YoutubeLoginProbe enabled={hydrated} />
-        </ErrorBoundary>
-        <AppAlertHost />
-        <AppToastHost />
-      </View>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
+          <ErrorBoundary>
+            <StatusBar style={theme.dark ? 'light' : 'dark'} />
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: theme.colors.bg },
+                animation: 'slide_from_right',
+              }}
+            >
+              <Stack.Screen name="(tabs)" options={{ animation: 'none' }} />
+              <Stack.Screen
+                name="player"
+                options={{ animation: 'fade', gestureEnabled: false }}
+              />
+              <Stack.Screen name="subscriptions" />
+              <Stack.Screen name="favorites" />
+              <Stack.Screen name="add-subscription" options={{ animation: 'slide_from_bottom' }} />
+              <Stack.Screen name="channel" />
+              <Stack.Screen name="settings/translation" />
+              <Stack.Screen name="settings/language" />
+              <Stack.Screen name="settings/appearance" />
+              <Stack.Screen name="settings/webdav" />
+              <Stack.Screen name="settings/subtitle" />
+              <Stack.Screen name="settings/voice" />
+              <Stack.Screen name="settings/export" />
+              <Stack.Screen name="settings/more" />
+              <Stack.Screen name="settings/about" />
+            </Stack>
+            <YoutubeLoginProbe enabled={hydrated} />
+          </ErrorBoundary>
+          <AppAlertHost />
+          <AppToastHost />
+        </View>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

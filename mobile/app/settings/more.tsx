@@ -15,6 +15,10 @@ import {
 
 import { clearGlobalCaches } from '../../src/core/appCache';
 import { useAppStore } from '../../src/core/store';
+import {
+  ensureUpdateCacheDirectory,
+  safeUpdateFileName,
+} from '../../src/core/updateCache';
 import { Card, NavHeader, Row, SectionTitle } from '../../src/ui/components';
 import { appAlert as Alert } from '../../src/ui/app-alert';
 import { toast } from '../../src/ui/app-toast';
@@ -217,13 +221,16 @@ export default function MoreSettingsScreen() {
   };
 
   const downloadAndInstall = async (release: AppRelease) => {
-    const cacheDirectory = FileSystem.cacheDirectory;
-    if (!cacheDirectory) {
+    const updateDirectory = await ensureUpdateCacheDirectory();
+    if (!updateDirectory) {
       toast.error('更新失败：没有可用的缓存目录');
       return;
     }
 
-    const target = `${cacheDirectory}${release.fileName || `kissly-${release.version}.apk`}`;
+    const target = `${updateDirectory}${safeUpdateFileName(
+      release.fileName || '',
+      release.version
+    )}`;
     setUpdatePhase('downloading');
     setDownloadProgress(0);
     try {

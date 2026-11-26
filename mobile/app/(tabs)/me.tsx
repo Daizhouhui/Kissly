@@ -20,6 +20,7 @@ import { relativeTime } from '../../src/core/utils';
 import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
 import { toast } from '../../src/ui/app-toast';
 import { AppPressable } from '../../src/ui/app-pressable';
+import { PRESS_SCALE } from '../../src/ui/motion';
 import { useAppTheme } from '../../src/ui/theme';
 
 const Pressable = AppPressable;
@@ -53,6 +54,7 @@ function MeRow({
       onPress={onPress}
       disabled={!onPress || disabled}
       radius={0}
+      pressTint
       style={[
         styles.row,
         roomy && styles.rowRoomy,
@@ -174,7 +176,7 @@ export default function MeScreen() {
   };
 
   const titleValue =
-    TITLE_OPTIONS.find((option) => option.id === settings.titleTranslationMode)?.label ?? '双语对照';
+    TITLE_OPTIONS.find((option) => option.id === settings.titleTranslationMode)?.label ?? '不翻译';
   const tabValue =
     TAB_OPTIONS.find((option) => option.id === settings.defaultTab)?.label ?? '视频';
   const speechLabel = `系统语音 · ${settings.speechRate.toFixed(2)}x`;
@@ -275,7 +277,7 @@ export default function MeScreen() {
             icon="document-text-outline"
             title="字幕样式"
             subtitle="字号、显示方式与位置"
-            value={`${settings.subtitle.fontSize}px`}
+            value={`${settings.subtitle.fontSize} / ${settings.subtitle.listeningFontSize} / ${settings.subtitle.landscapeFontSize}`}
             onPress={() => router.push('/settings/subtitle' as any)}
           />
           <MeRow
@@ -308,6 +310,7 @@ export default function MeScreen() {
           <Pressable
             onPress={runSync}
             disabled={syncing}
+            pressScale={PRESS_SCALE.control}
             style={styles.syncButton}
           >
             {syncing || syncState === 'syncing' ? (

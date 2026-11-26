@@ -39,6 +39,7 @@ const BASE = {
   designVersion: 3,
   subtitle: {
     fontSize: 20,
+    listeningFontSize: 20,
     landscapeFontSize: 24,
     mode: 'bilingual',
     position: 'bottom',

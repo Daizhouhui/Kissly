@@ -139,15 +139,22 @@ export function normalizeSettings(settings: Settings): Settings {
       ...subtitle,
       fontSize: numberInRange(
         subtitle?.fontSize,
-        12,
-        40,
+        16,
+        28,
         DEFAULT_SETTINGS.subtitle.fontSize,
+        true
+      ),
+      listeningFontSize: numberInRange(
+        subtitle?.listeningFontSize,
+        16,
+        28,
+        DEFAULT_SETTINGS.subtitle.listeningFontSize,
         true
       ),
       landscapeFontSize: numberInRange(
         subtitle?.landscapeFontSize,
-        12,
-        60,
+        14,
+        32,
         DEFAULT_SETTINGS.subtitle.landscapeFontSize,
         true
       ),
@@ -189,12 +196,12 @@ export function normalizeSettings(settings: Settings): Settings {
       ),
       originalWeight: oneOf(
         subtitle?.originalWeight,
-        ['regular', 'medium', 'bold'] as const,
+        ['regular', 'normal', 'medium', 'bold', 'heavy'] as const,
         DEFAULT_SETTINGS.subtitle.originalWeight
       ),
       translationWeight: oneOf(
         subtitle?.translationWeight,
-        ['regular', 'medium', 'bold'] as const,
+        ['regular', 'normal', 'medium', 'bold', 'heavy'] as const,
         DEFAULT_SETTINGS.subtitle.translationWeight
       ),
       originalTiming: oneOf(

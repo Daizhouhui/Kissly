@@ -2,7 +2,9 @@
 
 > 工程：
 > `C:\Users\KNNY\Desktop\Code\kiss-translator\mobile`
-> 技术栈：Expo SDK 58 / React Native 0.88 / TypeScript /iOS + Android
+> 技术栈：
+>
+> Expo SDK 58 / React Native 0.88 / TypeScript /iOS + Android
 > 文档日期：2026-11-26
 > 文档性质：
 > **设计稿 + 实施规格，尚未改代码**

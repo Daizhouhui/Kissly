@@ -1,7 +1,9 @@
 import { Platform } from 'react-native';
 
-import type { Cue, SubtitleFont, SubtitleWeight } from '../core/types';
+import type { Cue, SubtitleFont } from '../core/types';
 import { segmentSubtitleCues } from './sentenceSegmentation';
+
+export { fontWeightFor } from '../core/subtitleWeights';
 
 export function fontFamilyFor(font: SubtitleFont, language: 'source' | 'translation'): string | undefined {
   if (font === 'default') return undefined;
@@ -34,12 +36,6 @@ export function fontFamilyFor(font: SubtitleFont, language: 'source' | 'translat
           ? 'cursive'
           : 'sans-serif';
   return language === 'translation' ? chinese : english;
-}
-
-export function fontWeightFor(weight: SubtitleWeight): '400' | '600' | '800' {
-  if (weight === 'bold') return '800';
-  if (weight === 'medium') return '600';
-  return '400';
 }
 
 /**

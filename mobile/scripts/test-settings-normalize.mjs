@@ -59,6 +59,7 @@ const dirty = {
   subtitle: {
     ...DEFAULT_SETTINGS.subtitle,
     fontSize: 999,
+    listeningFontSize: 999,
     landscapeFontSize: 1,
     mode: 'broken',
     position: 'broken',
@@ -95,8 +96,9 @@ assert.equal(fixed.requestTimeoutMs, 5000);
 assert.equal(fixed.deepseekModel, DEFAULT_SETTINGS.deepseekModel);
 assert.equal(fixed.deepseekThinking, false);
 
-assert.equal(fixed.subtitle.fontSize, 40);
-assert.equal(fixed.subtitle.landscapeFontSize, 12);
+assert.equal(fixed.subtitle.fontSize, 28);
+assert.equal(fixed.subtitle.listeningFontSize, 28);
+assert.equal(fixed.subtitle.landscapeFontSize, 14);
 assert.equal(fixed.subtitle.mode, DEFAULT_SETTINGS.subtitle.mode);
 assert.equal(fixed.subtitle.position, DEFAULT_SETTINGS.subtitle.position);
 assert.equal(fixed.subtitle.backgroundOpacity, 1);

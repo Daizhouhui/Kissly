@@ -5,7 +5,7 @@ import * as Sharing from 'expo-sharing';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { StatusBar } from 'expo-status-bar';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ReactNode, forwardRef, useEffect, useMemo, useRef, useState } from 'react';
+import { ReactNode, forwardRef, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -13,11 +13,14 @@ import {
   BackHandler,
   Easing,
   FlatList,
+  Image,
+  PanResponder,
   Platform,
   ScrollView,
   Share,
   StyleSheet,
   Text,
+  type HostInstance,
   View,
   useWindowDimensions,
 } from 'react-native';
@@ -62,7 +65,10 @@ import {
   loadCachedVideoInfo,
   saveVideoInfo,
 } from '@/src/core/youtube/videoInfoCache';
-import { fontWeightFor, fontFamilyFor, sentenceCues } from '@/src/ui/subtitleStyle';
+import { fontFamilyFor, sentenceCues } from '@/src/ui/subtitleStyle';
+import { subtitleTextMetrics } from '@/src/ui/subtitleTypography';
+import { ORIGINAL_FONT_OPTIONS, TRANSLATION_FONT_OPTIONS } from '@/src/ui/subtitleOptions';
+import { WeightPicker } from '@/src/ui/weight-picker';
 import { appAlert as Alert } from '@/src/ui/app-alert';
 import { toast } from '@/src/ui/app-toast';
 import { AppPressable, AppPressableProps } from '@/src/ui/app-pressable';
@@ -85,6 +91,24 @@ const playerToast = {
   error: (message: string) => toast.error(message, PLAYER_TOAST_OFFSET),
 };
 
+type CaptionStatusToast = { tone: 'info' | 'error'; message: string };
+
+function captionStatusToast(status: string): CaptionStatusToast | null {
+  if (/没有可用/.test(status)) {
+    return { tone: 'info', message: '这个视频没有字幕' };
+  }
+  if (/^(字幕读取失败|重新加载失败)/.test(status)) {
+    return { tone: 'error', message: '字幕读取失败，请稍后重试' };
+  }
+  if (/^部分字幕翻译失败/.test(status)) {
+    return { tone: 'error', message: '部分字幕翻译失败，稍后会自动重试' };
+  }
+  if (/^翻译失败/.test(status)) {
+    return { tone: 'error', message: '字幕翻译失败，请稍后重试' };
+  }
+  return null;
+}
+
 const radiusStyle = (radius: number) => ({
   borderRadius: radius,
   ...CONTINUOUS_CORNER,
@@ -95,7 +119,8 @@ const radiusStyle = (radius: number) => ({
 const PLAYER_GUTTER = 20;
 // The player surface sits inside its own dark stage; 16 keeps the video
 // visibly rounded without making the picture feel like a small card.
-const PLAYER_VIDEO_RADIUS = 16;
+const PLAYER_VIDEO_RADIUS = 14;
+const TRANSCRIPT_CONTENT_PADDING_TOP = 0;
 const CONTROLS_HIDE_DELAY_MS = 3000;
 const SEEK_GRAB_RADIUS = 22;
 const SEEK_CONFIRM_TIMEOUT_MS = 900;
@@ -196,6 +221,7 @@ function CueTranslationSkeleton({
   marginTop,
   opacity,
   lines = 1,
+  pulse,
 }: {
   text: string;
   color: string;
@@ -204,6 +230,7 @@ function CueTranslationSkeleton({
   marginTop: number;
   opacity: number;
   lines?: number;
+  pulse?: Animated.Value;
 }) {
   const width = Math.max(70, Math.min(280, 30 + text.length * 3.4));
   const ratios = [1, 0.72, 0.55];
@@ -212,18 +239,74 @@ function CueTranslationSkeleton({
       style={{ marginTop, height: lines * lineHeight, opacity }}
       pointerEvents="none"
     >
-      {Array.from({ length: lines }, (_value, index) => (
-        <View
-          key={`bar-${index}`}
-          style={{
-            width: Math.max(46, Math.round(width * ratios[index % ratios.length])),
-            height,
-            borderRadius: height / 2,
-            backgroundColor: color,
-            marginTop: index === 0 ? 0 : lineHeight - height,
-          }}
-        />
-      ))}
+      <Animated.View style={{ opacity: pulse ?? 1 }}>
+        {Array.from({ length: lines }, (_value, index) => (
+          <View
+            key={`bar-${index}`}
+            style={{
+              width: Math.max(46, Math.round(width * ratios[index % ratios.length])),
+              height,
+              borderRadius: height / 2,
+              backgroundColor: color,
+              marginTop: index === 0 ? 0 : lineHeight - height,
+            }}
+          />
+        ))}
+      </Animated.View>
+    </View>
+  );
+}
+
+function TranscriptSkeleton({
+  originalHeight,
+  translationHeight,
+  color,
+  pulse,
+}: {
+  originalHeight: number;
+  translationHeight: number;
+  color: string;
+  pulse: Animated.Value;
+}) {
+  const translationGap = 8;
+  const pairGap = 22;
+  const rows = [
+    { width: '86%' as const, height: originalHeight, marginTop: 0, opacity: 1 },
+    {
+      width: '58%' as const,
+      height: translationHeight,
+      marginTop: translationGap,
+      opacity: 0.62,
+    },
+    { width: '72%' as const, height: originalHeight, marginTop: pairGap, opacity: 1 },
+    {
+      width: '44%' as const,
+      height: translationHeight,
+      marginTop: translationGap,
+      opacity: 0.62,
+    },
+  ];
+  return (
+    <View
+      style={styles.transcriptSkeleton}
+      pointerEvents="none"
+      accessibilityLabel="正在加载字幕"
+    >
+      <Animated.View style={{ opacity: pulse }}>
+        {rows.map((row, index) => (
+          <View
+            key={`transcript-skeleton-${index}`}
+            style={{
+              width: row.width,
+              height: Math.max(8, Math.round(row.height)),
+              marginTop: row.marginTop,
+              borderRadius: Math.max(8, Math.round(row.height)) / 2,
+              backgroundColor: color,
+              opacity: row.opacity,
+            }}
+          />
+        ))}
+      </Animated.View>
     </View>
   );
 }
@@ -1426,7 +1509,12 @@ function formatTime(value: number) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-const FONT_STEPS = [14, 16, 18, 20, 22, 24, 26, 30, 34];
+const FONT_SIZE_PROFILES = {
+  portrait: { min: 16, max: 28, presets: [18, 20, 22, 24, 26] },
+  listening: { min: 16, max: 28, presets: [18, 20, 22, 24, 26] },
+  landscape: { min: 14, max: 32, presets: [16, 20, 24, 26, 28] },
+} as const;
+type FontSizeTarget = keyof typeof FONT_SIZE_PROFILES;
 const RATE_PRESETS = [0.6, 0.7, 0.8, 0.9, 1, 1.2, 1.5];
 const RATE_MIN = 0.5;
 const RATE_MAX = 2;
@@ -1481,10 +1569,27 @@ export default function PlayerScreen() {
   const recordHistory = useAppStore((state) => state.recordHistory);
   const webRef = useRef<any>(null);
   const scrollRef = useRef<any>(null);
+  const transcriptBounceClampRef = useRef(false);
+  const tapScrollFrameRef = useRef<number | null>(null);
+  const activeCueRef = useRef<any>(null);
+  const cueRowRefsRef = useRef(new Map<number, any>());
+  const tapPinRef = useRef<{ index: number; at: number } | null>(null);
+  const activeCueIndexRef = useRef(-1);
+  const cueScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cueScrollAtRef = useRef(0);
+  const cueScrollRequestRef = useRef<{
+    index: number;
+    animated: boolean;
+    viewPosition: number;
+    mode: 'top' | 'page';
+  } | null>(null);
   const pendingScrollRef = useRef<{
     index: number;
     viewPosition: number;
+    mode: 'top' | 'page' | 'seek';
     attempts: number;
+    waits: number;
+    version: number;
   } | null>(null);
   // FlatList cannot scroll to an index it has not measured, so a long seek
   // lands via scrollToOffset first. These two refs make that estimate converge:
@@ -1524,6 +1629,7 @@ export default function PlayerScreen() {
   // 153, which was the root cause of the old "video unavailable" screen.
   const [ready, setReady] = useState(false);
   const [videoLoading, setVideoLoading] = useState(true);
+  const [posterFailed, setPosterFailed] = useState(false);
   const [videoBuffering, setVideoBuffering] = useState(false);
   const videoBufferingRef = useRef(false);
   const videoBufferingShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1606,7 +1712,6 @@ export default function PlayerScreen() {
     | 'analysis'
   >('main');
   const [sheetParent, setSheetParent] = useState<'main' | 'listening'>('main');
-  const [fontSizeTarget, setFontSizeTarget] = useState<'portrait' | 'landscape'>('portrait');
   const [controlsVisible, setControlsVisible] = useState(true);
   const [controlsActivity, setControlsActivity] = useState(0);
   const [videoStageSize, setVideoStageSize] = useState({ width: 0, height: 0 });
@@ -1619,6 +1724,7 @@ export default function PlayerScreen() {
   const [metaAuthor, setMetaAuthor] = useState(initialAuthor);
   const [metaChannelId, setMetaChannelId] = useState('');
   const [status, setStatus] = useState('正在读取字幕…');
+  const captionErrorToastRef = useRef('');
   const [progressWidth, setProgressWidth] = useState(0);
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
   const [seeking, setSeeking] = useState(false);
@@ -1666,6 +1772,7 @@ export default function PlayerScreen() {
   const [precisionCueIndex, setPrecisionCueIndex] = useState(-1);
   const precisionStartedAtRef = useRef<number | null>(null);
   const precisionContentOpacity = useRef(new Animated.Value(1)).current;
+  const skeletonPulse = useRef(new Animated.Value(0.35)).current;
   const precisionContentFadeRef = useRef<any>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisText, setAnalysisText] = useState('');
@@ -1691,7 +1798,6 @@ export default function PlayerScreen() {
   const [followingTranscript, setFollowingTranscript] = useState(true);
   const [visibleCueRange, setVisibleCueRange] = useState({ first: -1, last: -1 });
   const visibleCueRangeRef = useRef({ first: -1, last: -1 });
-  const fontTrackWidthRef = useRef(0);
   const rateTrackWidthRef = useRef(0);
   const orientationResumeTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
@@ -1700,11 +1806,20 @@ export default function PlayerScreen() {
   const showTranslation = subtitleMode !== 'original';
   const showOriginal = subtitleMode !== 'translation';
   const fontSize = settings.subtitle.fontSize ?? 20;
+  const listeningFontSize = settings.subtitle.listeningFontSize ?? 20;
   const landscapeFontSize = settings.subtitle.landscapeFontSize ?? 24;
-  const transcriptOriginalLineHeight = Math.round(Math.max(14, fontSize) * 1.4);
-  const transcriptTranslationLineHeight = Math.round(
-    Math.max(12, fontSize - (showOriginal ? 3 : 0)) * 1.48
-  );
+  const fontTarget: FontSizeTarget =
+    sheetParent === 'listening' ? 'listening' : landscape ? 'landscape' : 'portrait';
+  const fontSizeTargetValue = (target: FontSizeTarget) =>
+    target === 'landscape'
+      ? landscapeFontSize
+      : target === 'listening'
+        ? listeningFontSize
+        : fontSize;
+  const fontSizeTargetTitle = (target: FontSizeTarget) =>
+    target === 'landscape' ? '横屏全屏字幕' : target === 'listening' ? '精听' : '竖屏逐句稿';
+  const activeFontSize = fontSizeTargetValue(fontTarget);
+  const activeFontProfile = FONT_SIZE_PROFILES[fontTarget];
   const hideVideo = settings.subtitle.hideVideo;
   const hideTitle = settings.subtitle.hideTitle ?? true;
   const scrollMode = settings.subtitle.scrollMode;
@@ -1741,20 +1856,115 @@ export default function PlayerScreen() {
   );
   const originalFont = fontFamilyFor(settings.subtitle.originalFont, 'source');
   const translationFont = fontFamilyFor(settings.subtitle.translationFont, 'translation');
-  const originalWeight = fontWeightFor(settings.subtitle.originalWeight);
-  const translationWeight = fontWeightFor(settings.subtitle.translationWeight);
-  // The default medium original text reads a touch light in the transcript;
-  // bump it one notch while leaving explicit regular/bold choices untouched.
-  const transcriptOriginalWeight =
-    originalWeight === '600' ? '700' : originalWeight;
-  // Regular Chinese glyphs look a little too thin in the transcript; step the
-  // default up one notch without overriding an explicit medium/bold choice.
-  const transcriptTranslationWeight =
-    translationWeight === '400' ? '500' : translationWeight;
+  const transcriptOriginalStyle = subtitleTextMetrics({
+    surface: 'portrait',
+    line: 'original',
+    mode: subtitleMode,
+    baseSize: fontSize,
+    weight: settings.subtitle.originalWeight,
+  });
+  const transcriptTranslationStyle = subtitleTextMetrics({
+    surface: 'portrait',
+    line: 'translation',
+    mode: subtitleMode,
+    baseSize: fontSize,
+    weight: settings.subtitle.translationWeight,
+  });
+  const transcriptTranslationLineHeight =
+    transcriptTranslationStyle.lineHeight ??
+    Math.round(transcriptTranslationStyle.fontSize * 1.48);
+  const listeningOriginalStyle = subtitleTextMetrics({
+    surface: 'listening',
+    line: 'original',
+    mode: subtitleMode,
+    baseSize: listeningFontSize,
+    weight: settings.subtitle.originalWeight,
+  });
+  const listeningTranslationStyle = subtitleTextMetrics({
+    surface: 'listening',
+    line: 'translation',
+    mode: subtitleMode,
+    baseSize: listeningFontSize,
+    weight: settings.subtitle.translationWeight,
+  });
+  const landscapeOriginalStyle = subtitleTextMetrics({
+    surface: 'landscape',
+    line: 'original',
+    mode: subtitleMode,
+    baseSize: landscapeFontSize,
+    weight: settings.subtitle.originalWeight,
+  });
+  const landscapeTranslationStyle = subtitleTextMetrics({
+    surface: 'landscape',
+    line: 'translation',
+    mode: subtitleMode,
+    baseSize: landscapeFontSize,
+    weight: settings.subtitle.translationWeight,
+  });
   const cues = useMemo(
     () => sentenceCues(translatedCues ?? sourceCues, settings.subtitle.sentenceMode),
     [settings.subtitle.sentenceMode, sourceCues, translatedCues]
   );
+
+  const captionLoading = cues.length === 0 && /^正在/.test(status);
+  const skeletonColor = theme.dark
+    ? 'rgba(255,255,255,0.18)'
+    : 'rgba(0,0,0,0.10)';
+  const captionErrorLabel =
+    /没有可用/.test(status)
+      ? '无字幕'
+      : /^(翻译失败|字幕读取失败|重新加载失败|部分字幕翻译失败)/.test(status)
+        ? '翻译失败'
+        : '';
+  const skeletonActive =
+    captionLoading ||
+    (showTranslation &&
+      cues.length > 0 &&
+      (translationPending || /^正在/.test(status)));
+
+  useEffect(() => {
+    let loop: Animated.CompositeAnimation | null = null;
+    if (skeletonActive) {
+      skeletonPulse.setValue(0.35);
+      loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(skeletonPulse, {
+            toValue: 0.85,
+            duration: 900,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+            isInteraction: false,
+          }),
+          Animated.timing(skeletonPulse, {
+            toValue: 0.35,
+            duration: 900,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+            isInteraction: false,
+          }),
+        ])
+      );
+      loop.start();
+    } else {
+      skeletonPulse.stopAnimation();
+      skeletonPulse.setValue(0.35);
+    }
+    return () => loop?.stop();
+  }, [skeletonActive, skeletonPulse]);
+
+  useEffect(() => {
+    setPosterFailed(false);
+    captionErrorToastRef.current = '';
+  }, [videoId]);
+
+  useEffect(() => {
+    const feedback = captionStatusToast(status);
+    if (!feedback) return;
+    if (captionErrorToastRef.current === feedback.message) return;
+    captionErrorToastRef.current = feedback.message;
+    if (feedback.tone === 'error') playerToast.error(feedback.message);
+    else playerToast.info(feedback.message);
+  }, [status]);
 
   const activeIndex = useMemo(() => {
     const found = findCueIndexAt(cues, current, 0.12);
@@ -1767,7 +1977,9 @@ export default function PlayerScreen() {
   }, [cues, current]);
   const transcriptViewabilityConfig = useRef({
     minimumViewTime: 80,
-    itemVisiblePercentThreshold: 20,
+    // Even a thin sliver counts: a previous line peeking in above the pinned
+    // row must be treated as visible so the pin correction can remove it.
+    itemVisiblePercentThreshold: 1,
   }).current;
   const onTranscriptViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: Array<{ index?: number | null }> }) => {
@@ -2351,26 +2563,217 @@ export default function PlayerScreen() {
     followingTranscriptRef.current = true;
     setFollowingTranscript(true);
     transcriptInitializedRef.current = false;
+    cueScrollRequestRef.current = null;
+    if (cueScrollTimerRef.current) {
+      clearTimeout(cueScrollTimerRef.current);
+      cueScrollTimerRef.current = null;
+    }
   }, [videoId, trackKey]);
 
-  const scrollToCueIndex = (
+  const measureCueTopOffset = (
     index: number,
-    animated = true,
-    viewPosition = 0.38
+    callback: (offset: number | null) => void
+  ) => {
+    const row = activeCueRef.current;
+    const scroll = scrollRef.current?.getNativeScrollRef?.();
+    if (!row || activeCueIndexRef.current !== index || !scroll) {
+      callback(null);
+      return;
+    }
+    let done = false;
+    const finish = (value: number | null) => {
+      if (done) return;
+      done = true;
+      callback(value);
+    };
+    const timer = setTimeout(() => finish(null), 250);
+    row.measureInWindow(
+      (_x: number, rowY: number) => {
+        scroll.measureInWindow(
+          (_sx: number, scrollY: number) => {
+            clearTimeout(timer);
+            finish(Math.max(0, rowY - scrollY + transcriptOffsetRef.current));
+          },
+          () => {
+            clearTimeout(timer);
+            finish(null);
+          }
+        );
+      },
+      () => {
+        clearTimeout(timer);
+        finish(null);
+      }
+    );
+  };
+
+  const cancelTapScrollAnimation = () => {
+    if (tapScrollFrameRef.current != null) {
+      cancelAnimationFrame(tapScrollFrameRef.current);
+      tapScrollFrameRef.current = null;
+    }
+  };
+
+  const animateTranscriptTo = (targetOffset: number, duration = 300) => {
+    cancelTapScrollAnimation();
+    const from = transcriptOffsetRef.current;
+    const to = Math.max(0, targetOffset);
+    if (Math.abs(to - from) < 1) {
+      scrollRef.current?.scrollToOffset({ offset: to, animated: false });
+      return;
+    }
+    let startedAt: number | null = null;
+    const step = (now: number) => {
+      if (startedAt == null) startedAt = now;
+      const progress = Math.min(1, (now - startedAt) / duration);
+      // Ease-out keeps the first half responsive and lets the row settle softly
+      // at the top instead of stopping abruptly.
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const offset = from + (to - from) * eased;
+      scrollRef.current?.scrollToOffset({ offset, animated: false });
+      if (progress < 1) {
+        tapScrollFrameRef.current = requestAnimationFrame(step);
+      } else {
+        tapScrollFrameRef.current = null;
+        scrollRef.current?.scrollToOffset({ offset: to, animated: false });
+      }
+    };
+    tapScrollFrameRef.current = requestAnimationFrame(step);
+  };
+
+  const pinCueAtTop = (index: number) => {
+    const fallback = () => {
+      animateTranscriptTo(
+        Math.max(
+          0,
+          getTranscriptItemLayout(cues, index).offset +
+            TRANSCRIPT_CONTENT_PADDING_TOP
+        )
+      );
+    };
+    const row = cueRowRefsRef.current.get(index);
+    const scroll = scrollRef.current?.getNativeScrollRef?.();
+    if (!row || !scroll) {
+      fallback();
+      return;
+    }
+    let done = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const finish = (rowOffset: number | null) => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      const offset =
+        rowOffset ??
+        getTranscriptItemLayout(cues, index).offset +
+          TRANSCRIPT_CONTENT_PADDING_TOP;
+      animateTranscriptTo(Math.max(0, offset));
+    };
+    timer = setTimeout(() => finish(null), 200);
+    row.measureInWindow(
+      (_x: number, rowY: number) => {
+        scroll.measureInWindow(
+          (_sx: number, scrollY: number) => {
+            finish(rowY - scrollY + transcriptOffsetRef.current);
+          },
+          () => finish(null)
+        );
+      },
+      () => finish(null)
+    );
+  };
+
+  const runCueScroll = (
+    index: number,
+    animated: boolean,
+    viewPosition: number,
+    mode: 'top' | 'page' | 'seek'
   ) => {
     if (index < 0 || index >= cues.length) return;
+    if (!followingTranscriptRef.current) return;
+    cueScrollAtRef.current = Date.now();
     const current = pendingScrollRef.current;
-    if (current && current.index === index) return;
+    if (current && current.index === index && current.mode === mode) return;
     const pending = {
       index,
       viewPosition,
+      mode,
       attempts: 0,
       waits: 0,
       version: visibleVersionRef.current,
     };
     pendingScrollRef.current = pending;
-    scrollRef.current?.scrollToIndex({ index, animated, viewPosition });
-    setTimeout(() => verifyTranscriptTarget(pending), animated ? 300 : 180);
+
+    const fallback = () => {
+      if (mode === 'top') {
+        // scrollToIndex only guarantees the row is visible; when the row is
+        // already on screen it can stop with the previous cue still clipped
+        // above. Pin by its measured offset instead.
+        scrollRef.current?.scrollToOffset({
+          offset: getTranscriptItemLayout(cues, index).offset,
+          // A far jump after dragging the progress bar should snap once
+          // instead of animating past the target and being pulled back.
+          animated: false,
+        });
+      } else if (mode === 'page') {
+        scrollRef.current?.scrollToIndex({ index, animated: false, viewPosition });
+      } else {
+        scrollRef.current?.scrollToIndex({ index, animated, viewPosition });
+      }
+      setTimeout(() => verifyTranscriptTarget(pending), animated ? 420 : 150);
+    };
+
+    if (mode === 'top' || mode === 'page') {
+      measureCueTopOffset(index, (rowOffset) => {
+        if (rowOffset == null) {
+          fallback();
+          return;
+        }
+        const viewportHeight = transcriptViewportRef.current;
+        const offset =
+          mode === 'top'
+            ? rowOffset
+            : Math.max(0, rowOffset - viewportHeight * 0.08);
+        scrollRef.current?.scrollToOffset({ offset, animated });
+        setTimeout(() => verifyTranscriptTarget(pending), animated ? 420 : 160);
+      });
+      return;
+    }
+    fallback();
+  };
+
+  const scrollToCueIndex = (
+    index: number,
+    animated = true,
+    viewPosition = 0.38,
+    mode: 'top' | 'page' | 'seek' = 'seek'
+  ) => {
+    if (index < 0 || index >= cues.length) return;
+    if (mode === 'seek') {
+      runCueScroll(index, animated, viewPosition, mode);
+      return;
+    }
+
+    // While the progress bar is being dragged the active cue changes many
+    // times in a row. Starting an animated jump each time makes the list rush
+    // past the row and then get corrected back. Keep only the latest request
+    // and wait until the previous jump has settled before measuring.
+    cueScrollRequestRef.current = { index, animated, viewPosition, mode };
+    pendingScrollRef.current = null;
+    if (cueScrollTimerRef.current) clearTimeout(cueScrollTimerRef.current);
+    const wait = Math.max(70, 360 - (Date.now() - cueScrollAtRef.current));
+    cueScrollTimerRef.current = setTimeout(() => {
+      cueScrollTimerRef.current = null;
+      const request = cueScrollRequestRef.current;
+      if (!request || !followingTranscriptRef.current) return;
+      cueScrollRequestRef.current = null;
+      runCueScroll(
+        request.index,
+        request.animated,
+        request.viewPosition,
+        request.mode
+      );
+    }, wait);
   };
 
   /**
@@ -2394,21 +2797,117 @@ export default function PlayerScreen() {
   };
 
   /** Pull the target into view with corrections measured on the spot. */
-  const verifyTranscriptTarget = (pending: {
-    index: number;
-    viewPosition: number;
-    attempts: number;
-    waits: number;
-    version: number;
-  }) => {
+  const verifyTranscriptTarget = (
+    pending: {
+      index: number;
+      viewPosition: number;
+      mode: 'top' | 'page' | 'seek';
+      attempts: number;
+      waits: number;
+      version: number;
+    },
+    skipMeasure = false
+  ) => {
     if (pendingScrollRef.current !== pending) return;
     if (!followingTranscriptRef.current) return;
     const view = visibleCueRangeRef.current;
+    const offset = transcriptOffsetRef.current;
+
+    if (
+      !skipMeasure &&
+      (pending.mode === 'top' || pending.mode === 'page') &&
+      activeCueIndexRef.current === pending.index
+    ) {
+      measureCueTopOffset(pending.index, (rowOffset) => {
+        if (pendingScrollRef.current !== pending) return;
+        if (rowOffset == null) {
+          verifyTranscriptTarget(pending, true);
+          return;
+        }
+        const desired =
+          pending.mode === 'top'
+            ? rowOffset
+            : Math.max(
+                0,
+                rowOffset - transcriptViewportRef.current * 0.08
+              );
+        if (Math.abs(transcriptOffsetRef.current - desired) <= 4) {
+          pendingScrollRef.current = null;
+          return;
+        }
+        pending.attempts += 1;
+        if (pending.attempts <= 4) {
+          scrollRef.current?.scrollToOffset({ offset: desired, animated: false });
+          setTimeout(() => verifyTranscriptTarget(pending), 220);
+        } else {
+          pendingScrollRef.current = null;
+        }
+      });
+      return;
+    }
+
+    if (pending.mode === 'top' && view.first >= 0) {
+      // In pin mode "visible" is not enough: the active row has to be the
+      // first visible row. If a previous line is still peeking in, shift by
+      // the rows we are off instead of accepting the position.
+      if (view.first === pending.index) {
+        pendingScrollRef.current = null;
+        return;
+      }
+      const fromFirst = pending.index - view.first;
+      let shift = 0;
+      if (fromFirst > 0) {
+        for (let i = view.first; i < pending.index; i += 1) {
+          shift += cueHeightsRef.current.get(i) ?? 140;
+        }
+      } else if (fromFirst < 0) {
+        for (let i = pending.index; i < view.first; i += 1) {
+          shift -= cueHeightsRef.current.get(i) ?? 140;
+        }
+      }
+      scrollRef.current?.scrollToOffset({
+        offset: Math.max(0, offset + shift),
+        animated: false,
+      });
+      pending.version = visibleVersionRef.current;
+      pending.waits = 0;
+      pending.attempts += 1;
+      if (pending.attempts <= 4) {
+        setTimeout(() => verifyTranscriptTarget(pending), 200);
+      } else {
+        pendingScrollRef.current = null;
+      }
+      return;
+    }
+
     const visible =
       view.first >= 0 &&
       pending.index >= view.first &&
       pending.index <= view.last;
     if (visible) {
+      const rows = view.last - view.first;
+      const fromTop = pending.index - view.first;
+      if (pending.mode === 'page' && rows >= 2 && fromTop > 1) {
+        // The page jump landed but left the active row near the bottom.
+        // Move it up to the page's top zone instead of accepting "visible".
+        let shift = 0;
+        for (let i = view.first; i < pending.index - 1; i += 1) {
+          shift += cueHeightsRef.current.get(i) ?? 140;
+        }
+        if (shift > 0) {
+          scrollRef.current?.scrollToOffset({
+            offset: Math.max(0, offset + shift),
+            animated: false,
+          });
+          pending.version = visibleVersionRef.current;
+          pending.waits = 0;
+          pending.attempts += 1;
+          if (pending.attempts <= 4) {
+            setTimeout(() => verifyTranscriptTarget(pending), 200);
+            return;
+          }
+        }
+      }
       pendingScrollRef.current = null;
       return;
     }
@@ -2427,7 +2926,6 @@ export default function PlayerScreen() {
       pendingScrollRef.current = null;
       return;
     }
-    const offset = transcriptOffsetRef.current;
     const first = view.first >= 0 ? view.first : 0;
     const last = view.last >= 0 ? view.last : 0;
     // The visible rows tell us the real offset-per-row at this spot; shift by
@@ -2456,13 +2954,21 @@ export default function PlayerScreen() {
       activeIndex >= view.first &&
       activeIndex <= view.last;
     if (scrollMode === 'page' && activeVisible) {
-      transcriptInitializedRef.current = true;
-      return false;
+      // Page only when the current line is already in the bottom page-turn
+      // zone. Waiting until it leaves the viewport made a half-covered line
+      // stay put and only jump after it was fully hidden.
+      const rows = view.last - view.first;
+      const pageBoundary = view.last - (rows >= 2 ? 1 : 0);
+      if (activeIndex < pageBoundary) {
+        transcriptInitializedRef.current = true;
+        return false;
+      }
     }
     scrollToCueIndex(
       activeIndex,
       animated,
-      scrollMode === 'page' ? 0.08 : 0
+      scrollMode === 'page' ? 0.08 : 0,
+      scrollMode === 'page' ? 'page' : 'top'
     );
     return true;
   };
@@ -2492,6 +2998,14 @@ export default function PlayerScreen() {
 
   useEffect(() => {
     if (activeIndex < 0 || !followingTranscriptRef.current) return;
+    const tapPin = tapPinRef.current;
+    if (tapPin && tapPin.index === activeIndex) {
+      // The tap path already measured and pinned this exact row; let it land
+      // instead of scheduling another top correction on top of it.
+      tapPinRef.current = null;
+      transcriptInitializedRef.current = true;
+      return;
+    }
     const first = !transcriptInitializedRef.current;
     const delays = first ? [0, 120, 320] : [80];
     const timers = delays.map((delay) =>
@@ -2507,6 +3021,7 @@ export default function PlayerScreen() {
 
   useEffect(() => {
     return () => {
+      cancelTapScrollAnimation();
       orientationResumeTimers.current.forEach((timer) => clearTimeout(timer));
       orientationResumeTimers.current = [];
       ScreenOrientation.unlockAsync().catch(() => {});
@@ -2733,6 +3248,25 @@ export default function PlayerScreen() {
     followingTranscriptRef.current = true;
     setFollowingTranscript(true);
     transcriptInitializedRef.current = true;
+    cancelTapScrollAnimation();
+    if (scrollMode === 'top') {
+      // Tap is a one-shot pinned scroll. Measure the tapped row once and
+      // animate straight to its final top offset; the active-cue effect skips
+      // the same index so it cannot start a second correction on top.
+      tapPinRef.current = { index, at: Date.now() };
+      cueScrollRequestRef.current = null;
+      pendingScrollRef.current = null;
+      if (cueScrollTimerRef.current) {
+        clearTimeout(cueScrollTimerRef.current);
+        cueScrollTimerRef.current = null;
+      }
+      seekTo(cue.start);
+      setTimeout(() => pinCueAtTop(index), 80);
+      setTimeout(() => {
+        if (tapPinRef.current?.index === index) tapPinRef.current = null;
+      }, 900);
+      return;
+    }
     seekTo(cue.start);
     setTimeout(() => scrollToCueIndex(index, true, 0.22), 80);
   };
@@ -3493,19 +4027,6 @@ export default function PlayerScreen() {
     }
   };
 
-  const changeFontSize = (direction: 1 | -1, target: 'portrait' | 'landscape') => {
-    const value = target === 'portrait' ? fontSize : landscapeFontSize;
-    const index = FONT_STEPS.findIndex((size) => size >= value);
-    const currentIndex = index < 0 ? FONT_STEPS.length - 1 : index;
-    const next = FONT_STEPS[Math.max(0, Math.min(FONT_STEPS.length - 1, currentIndex + direction))];
-    patchSettings({
-      subtitle: {
-        ...settings.subtitle,
-        ...(target === 'portrait' ? { fontSize: next } : { landscapeFontSize: next }),
-      },
-    });
-  };
-
   const toggleTranslation = () => {
     patchSettings({
       subtitle: {
@@ -3517,13 +4038,12 @@ export default function PlayerScreen() {
 
   const displayTitle = metaTitle || initialTitle || 'YouTube';
   const displayAuthor = metaAuthor || initialAuthor;
-  const translationHeaderLabel = translationPending
-    ? '加载中'
-    : /^(翻译失败|字幕读取失败)/.test(status)
-      ? '翻译失败'
-      : /没有可用/.test(status)
-        ? '无字幕'
-        : providerLabel || (translatedCues ? '机器翻译' : '加载中');
+  const translationHeaderLabel =
+    captionErrorLabel ||
+    providerLabel ||
+    (translationPending ? '加载中' : translatedCues ? '机器翻译' : '加载中');
+  const showTranslationHeader =
+    showTranslation && translationHeaderLabel !== '加载中';
   const rateLabel = Number.isInteger(rate) ? `${rate}x` : `${rate.toFixed(1)}x`;
   const defaultRate = Math.abs(rate - 1) < 0.001;
   const nativeVideo = Platform.OS !== 'web';
@@ -3673,10 +4193,19 @@ export default function PlayerScreen() {
       ) : null}
       {videoLoading && !hideVideo && nativeVideo ? (
         <View style={styles.videoLoading} pointerEvents="none">
+          {!posterFailed ? (
+            <View style={styles.videoLoadingPoster}>
+              <Image
+                source={{ uri: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` }}
+                style={styles.videoLoadingPosterImage}
+                resizeMode="cover"
+                fadeDuration={160}
+                onError={() => setPosterFailed(true)}
+              />
+            </View>
+          ) : null}
+          <View style={styles.videoLoadingScrim} />
           <ActivityIndicator color={theme.colors.primary} />
-          <Text style={styles.videoLoadingText}>
-            {'正在连接 YouTube…'}
-          </Text>
         </View>
       ) : null}
       {!landscape && videoTappable && (controlsVisible || showVideoBuffering) ? (
@@ -4278,9 +4807,9 @@ export default function PlayerScreen() {
                 style={[
                   styles.landSubOriginal,
                   {
-                    fontSize: landscapeFontSize,
+                    fontSize: landscapeOriginalStyle.fontSize,
                     fontFamily: originalFont,
-                    fontWeight: originalWeight,
+                    fontWeight: landscapeOriginalStyle.fontWeight,
                   },
                 ]}
                 numberOfLines={3}
@@ -4293,9 +4822,9 @@ export default function PlayerScreen() {
                 style={[
                   styles.landSubTranslation,
                   {
-                    fontSize: Math.max(13, landscapeFontSize - 5),
+                    fontSize: landscapeTranslationStyle.fontSize,
                     fontFamily: translationFont,
-                    fontWeight: translationWeight,
+                    fontWeight: landscapeTranslationStyle.fontWeight,
                   },
                 ]}
                 numberOfLines={3}
@@ -4347,9 +4876,10 @@ export default function PlayerScreen() {
   const renderTranscriptCue = (cue: Cue, index: number) => {
     const active = index === activeIndex;
     const past = index < activeIndex;
+    if (active) activeCueIndexRef.current = index;
     const visible =
       index >= visibleCueRange.first && index <= visibleCueRange.last;
-    const translationFontSize = Math.max(12, fontSize - (showOriginal ? 3 : 0));
+    const translationFontSize = transcriptTranslationStyle.fontSize;
     const chineseTarget = settings.targetLang.startsWith('zh');
     // Chinese packs more meaning per line than the English source, so one
     // translated line covers a one-line source and two lines cover longer ones.
@@ -4371,6 +4901,15 @@ export default function PlayerScreen() {
       : false;
     return (
       <View
+        ref={(node: any) => {
+          if (active) activeCueRef.current = node;
+          if (node) {
+            cueRowRefsRef.current.set(index, node);
+          } else {
+            cueRowRefsRef.current.delete(index);
+            if (active) activeCueRef.current = null;
+          }
+        }}
         style={styles.cue}
         onLayout={(event) => {
           const height = event.nativeEvent.layout.height;
@@ -4435,10 +4974,10 @@ export default function PlayerScreen() {
                   styles.cueOriginal,
                   {
                     color: active ? theme.colors.primary : theme.colors.text,
-                    fontSize: Math.max(14, fontSize),
-                    lineHeight: transcriptOriginalLineHeight,
+                    fontSize: transcriptOriginalStyle.fontSize,
+                    lineHeight: transcriptOriginalStyle.lineHeight,
                     fontFamily: originalFont,
-                    fontWeight: transcriptOriginalWeight,
+                    fontWeight: transcriptOriginalStyle.fontWeight,
                   },
                 ]}
               >
@@ -4461,9 +5000,9 @@ export default function PlayerScreen() {
                       {
                         color: theme.colors.textSecondary,
                         fontSize: translationFontSize,
-                        lineHeight: transcriptTranslationLineHeight,
+                        lineHeight: transcriptTranslationStyle.lineHeight,
                         fontFamily: translationFont,
-                        fontWeight: transcriptTranslationWeight,
+                        fontWeight: transcriptTranslationStyle.fontWeight,
                       },
                       active && {
                         color: showOriginal
@@ -4477,12 +5016,13 @@ export default function PlayerScreen() {
                 ) : (
                   <CueTranslationSkeleton
                     text={cue.text}
-                    color={theme.colors.border}
+                    color={skeletonColor}
                     height={translationFontSize}
                     lineHeight={transcriptTranslationLineHeight}
                     lines={chineseTarget ? translationReserveLines : 1}
                     marginTop={0}
                     opacity={active ? 1 : past ? 0.85 : 0.7}
+                    pulse={skeletonActive ? skeletonPulse : undefined}
                   />
                 )}
               </View>
@@ -4510,17 +5050,28 @@ export default function PlayerScreen() {
         removeClippedSubviews={false}
         contentContainerStyle={{
           paddingHorizontal: PLAYER_GUTTER - 8,
-          paddingTop: 10,
+          paddingTop: TRANSCRIPT_CONTENT_PADDING_TOP,
           paddingBottom: 240,
           flexGrow: cues.length === 0 ? 1 : 0,
         }}
         showsVerticalScrollIndicator={false}
-        alwaysBounceVertical
+        alwaysBounceVertical={false}
+        bounces={false}
+        overScrollMode="never"
         onScroll={(event) => {
-          transcriptOffsetRef.current = event.nativeEvent.contentOffset.y;
+          const contentOffset = event.nativeEvent.contentOffset.y;
+          transcriptOffsetRef.current = Math.max(0, contentOffset);
+          if (contentOffset < -0.5 && !transcriptBounceClampRef.current) {
+            transcriptBounceClampRef.current = true;
+            scrollRef.current?.scrollToOffset({ offset: 0, animated: false });
+            setTimeout(() => {
+              transcriptBounceClampRef.current = false;
+            }, 120);
+          }
         }}
         scrollEventThrottle={16}
         onScrollBeginDrag={() => {
+          cancelTapScrollAnimation();
           pendingScrollRef.current = null;
           followingTranscriptRef.current = false;
           setFollowingTranscript(false);
@@ -4541,21 +5092,14 @@ export default function PlayerScreen() {
         onViewableItemsChanged={onTranscriptViewableItemsChanged}
         viewabilityConfig={transcriptViewabilityConfig}
         ListEmptyComponent={
-          <View style={styles.emptyTranscript}>
-            <Ionicons
-              name="document-text-outline"
-              size={34}
-              color={theme.colors.textTertiary}
+          captionLoading ? (
+            <TranscriptSkeleton
+              originalHeight={transcriptOriginalStyle.fontSize}
+              translationHeight={transcriptTranslationStyle.fontSize}
+              color={skeletonColor}
+              pulse={skeletonPulse}
             />
-            <Text
-              style={[
-                styles.emptyTranscriptText,
-                { color: theme.colors.textSecondary },
-              ]}
-            >
-              {status || '这个视频还没有可用字幕'}
-            </Text>
-          </View>
+          ) : undefined
         }
       />
       {!followingTranscript && activeCue ? (
@@ -4591,12 +5135,13 @@ export default function PlayerScreen() {
       : listeningTranslationMode === 'together'
         ? '和原文一起'
         : '轻点显示';
-  const listeningFontLabel = fontSize >= 26 ? '超大' : fontSize >= 20 ? '大' : '标准';
+  const listeningFontLabel = `${listeningFontSize}px`;
   const precisionWords = precisionCue
     ? precisionCue.text.split(/\s+/).filter(Boolean)
     : [];
-  const precisionTextSize = Math.max(20, Math.min(30, fontSize + 4));
-  const precisionTextLineHeight = Math.max(29, Math.min(43, fontSize + 13));
+  const precisionTextSize = listeningOriginalStyle.fontSize;
+  const precisionTextLineHeight =
+    listeningOriginalStyle.lineHeight ?? Math.round(precisionTextSize * 1.4);
   const precisionMaskHeight = precisionTextSize;
   const precisionMaskRadius = 8;
   const precisionMaskColumnGap = Math.max(5, Math.round(precisionTextSize * 0.28));
@@ -4647,10 +5192,10 @@ export default function PlayerScreen() {
               <Text
                 style={{
                   color: theme.colors.text,
-                  fontSize: precisionTextSize,
-                  lineHeight: precisionTextLineHeight,
+                  fontSize: listeningOriginalStyle.fontSize,
+                  lineHeight: listeningOriginalStyle.lineHeight,
                   fontFamily: originalFont,
-                  fontWeight: originalWeight,
+                  fontWeight: listeningOriginalStyle.fontWeight,
                 }}
               >
                 {precisionCue.text}
@@ -4682,10 +5227,10 @@ export default function PlayerScreen() {
                       numberOfLines={1}
                       style={{
                         opacity: 0,
-                        fontSize: precisionTextSize,
-                        lineHeight: precisionTextLineHeight,
+                        fontSize: listeningOriginalStyle.fontSize,
+                        lineHeight: listeningOriginalStyle.lineHeight,
                         fontFamily: originalFont,
-                        fontWeight: originalWeight,
+                        fontWeight: listeningOriginalStyle.fontWeight,
                       }}
                     >
                       {word}
@@ -4699,11 +5244,11 @@ export default function PlayerScreen() {
               <Text
                 style={{
                   color: theme.colors.textSecondary,
-                  fontSize: Math.max(15, fontSize - 3),
-                  lineHeight: Math.max(23, fontSize + 4),
+                  fontSize: listeningTranslationStyle.fontSize,
+                  lineHeight: listeningTranslationStyle.lineHeight,
                   marginTop: blindReveal ? 14 : 24,
                   fontFamily: translationFont,
-                  fontWeight: translationWeight,
+                  fontWeight: listeningTranslationStyle.fontWeight,
                 }}
               >
                 {precisionCue.translation}
@@ -4923,7 +5468,7 @@ export default function PlayerScreen() {
                   >
                     {displayTitle}
                   </Text>
-                  {displayAuthor || showTranslation ? (
+                  {displayAuthor || showTranslationHeader ? (
                     <View
                       style={{
                         flexDirection: 'row',
@@ -4943,7 +5488,7 @@ export default function PlayerScreen() {
                           {displayAuthor}
                         </Text>
                       ) : null}
-                      {showTranslation ? (
+                      {showTranslationHeader ? (
                         <Text
                           numberOfLines={1}
                           style={[
@@ -4958,7 +5503,7 @@ export default function PlayerScreen() {
                     </View>
                   ) : null}
                 </>
-              ) : showTranslation ? (
+              ) : showTranslationHeader ? (
                 <Text
                   numberOfLines={1}
                   style={[styles.headerProvider, { color: theme.colors.textTertiary }]}
@@ -5011,20 +5556,6 @@ export default function PlayerScreen() {
             blindCard
           ) : (
             <>
-              {status ? (
-                <View style={styles.transcriptHeader}>
-                  <View style={{ flex: 1 }} />
-                  <View style={styles.statusRow}>
-                    <ActivityIndicator size="small" color={theme.colors.primary} />
-                    <Text
-                      style={[styles.statusText, { color: theme.colors.textTertiary }]}
-                      numberOfLines={1}
-                    >
-                      {status}
-                    </Text>
-                  </View>
-                </View>
-              ) : null}
               {transcriptVisible ? transcript : null}
             </>
           )}
@@ -5232,11 +5763,9 @@ export default function PlayerScreen() {
                   <SheetRow
                     icon="text-outline"
                     title="字体大小"
-                    value={`${fontSize} / ${landscapeFontSize}`}
-                    onPress={() => {
-                      setFontSizeTarget(landscape ? 'landscape' : 'portrait');
-                      openSheetPanel('fontSize', 'main');
-                    }}
+                    subtitle="仅竖屏逐句稿"
+                    value={`${fontSize}px`}
+                    onPress={() => openSheetPanel('fontSize', 'main')}
                   />
                   <SheetRow
                     icon="brush-outline"
@@ -5386,11 +5915,9 @@ export default function PlayerScreen() {
                   <SheetRow
                     icon="text-outline"
                     title="字体大小"
+                    subtitle="仅横屏全屏字幕"
                     value={`${landscapeFontSize}px`}
-                    onPress={() => {
-                      setFontSizeTarget('landscape');
-                      openSheetPanel('fontSize', 'main');
-                    }}
+                    onPress={() => openSheetPanel('fontSize', 'main')}
                   />
                 </View>
 
@@ -5536,21 +6063,14 @@ export default function PlayerScreen() {
                 <Text style={[styles.panelSectionLabel, { color: theme.colors.textSecondary }]}>
                   原文 · {learningLang.toUpperCase()}
                 </Text>
-                {(
-                  [
-                    ['default', '默认', '系统字体'],
-                    ['rounded', '圆角体', '系统圆角'],
-                    ['serif', '衬线', 'Serif'],
-                    ['geometric', '几何', '轻几何'],
-                  ] as const
-                ).map(([id, label, desc]) => {
-                  const active = settings.subtitle.originalFont === id;
+                {ORIGINAL_FONT_OPTIONS.map((option) => {
+                  const active = settings.subtitle.originalFont === option.id;
                   return (
                     <Pressable
-                      key={`source-${id}`}
+                      key={`source-${option.id}`}
                       onPress={() =>
                         patchSettings({
-                          subtitle: { ...settings.subtitle, originalFont: id },
+                          subtitle: { ...settings.subtitle, originalFont: option.id },
                         })
                       }
                       style={[
@@ -5560,10 +6080,10 @@ export default function PlayerScreen() {
                     >
                       <View style={{ flex: 1 }}>
                         <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '700' }}>
-                          {label}
+                          {option.label}
                         </Text>
                         <Text style={{ color: theme.colors.textTertiary, fontSize: 11, marginTop: 2 }}>
-                          {desc}
+                          {option.description}
                         </Text>
                       </View>
                       {active ? <Ionicons name="checkmark" size={20} color={theme.colors.primary} /> : null}
@@ -5585,20 +6105,14 @@ export default function PlayerScreen() {
                 <Text style={[styles.panelSectionLabel, { color: theme.colors.textSecondary, marginTop: 24 }]}>
                   翻译 · 中文
                 </Text>
-                {(
-                  [
-                    ['default', '默认', '系统字体'],
-                    ['serif', '宋体', 'Serif'],
-                    ['kai', '楷体', 'Kai'],
-                  ] as const
-                ).map(([id, label, desc]) => {
-                  const active = settings.subtitle.translationFont === id;
+                {TRANSLATION_FONT_OPTIONS.map((option) => {
+                  const active = settings.subtitle.translationFont === option.id;
                   return (
                     <Pressable
-                      key={`translation-${id}`}
+                      key={`translation-${option.id}`}
                       onPress={() =>
                         patchSettings({
-                          subtitle: { ...settings.subtitle, translationFont: id },
+                          subtitle: { ...settings.subtitle, translationFont: option.id },
                         })
                       }
                       style={[
@@ -5608,10 +6122,10 @@ export default function PlayerScreen() {
                     >
                       <View style={{ flex: 1 }}>
                         <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '700' }}>
-                          {label}
+                          {option.label}
                         </Text>
                         <Text style={{ color: theme.colors.textTertiary, fontSize: 11, marginTop: 2 }}>
-                          {desc}
+                          {option.description}
                         </Text>
                       </View>
                       {active ? <Ionicons name="checkmark" size={20} color={theme.colors.primary} /> : null}
@@ -5634,113 +6148,74 @@ export default function PlayerScreen() {
 
             {sheetPanel === 'fontSize' ? (
               <View>
-                {sheetParent !== 'listening' ? (
-                  <>
-                    <Text style={[styles.panelSectionLabel, { color: theme.colors.textSecondary }]}>
-                      调整范围
-                    </Text>
-                    <View style={{ flexDirection: 'row', gap: 8, marginBottom: 22 }}>
-                      {[
-                        { id: 'portrait' as const, label: '竖屏字幕', value: fontSize },
-                        { id: 'landscape' as const, label: '全屏字幕', value: landscapeFontSize },
-                      ].map((target) => {
-                        const active = fontSizeTarget === target.id;
-                        return (
-                          <Pressable
-                            key={target.id}
-                            onPress={() => setFontSizeTarget(target.id)}
-                            style={{
-                              flex: 1,
-                              height: 42,
-                              ...radiusStyle(RADIUS.control),
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              backgroundColor: active ? theme.colors.primarySoft : theme.colors.surfaceAlt,
-                              borderWidth: active ? 1 : 0,
-                              borderColor: theme.colors.primary,
-                            }}
-                          >
-                            <Text
-                              style={{
-                                color: active ? theme.colors.primary : theme.colors.textSecondary,
-                                fontSize: 12.5,
-                                fontWeight: active ? '800' : '600',
-                              }}
-                            >
-                              {target.label} · {target.value}px
-                            </Text>
-                          </Pressable>
-                        );
-                      })}
-                    </View>
-                  </>
-                ) : null}
-
-                <View style={{ alignItems: 'center', marginBottom: 10 }}>
-                  <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '800' }}>
-                    {sheetParent === 'listening'
-                      ? '标准'
-                      : fontSizeTarget === 'portrait'
-                        ? '标准'
-                        : '全屏'}
+                <View style={{ alignItems: 'center', marginBottom: 14 }}>
+                  <Text style={{ color: theme.colors.text, fontSize: 17, fontWeight: '800' }}>
+                    {fontSizeTargetTitle(fontTarget)}
                   </Text>
-                  {sheetParent !== 'listening' ? (
-                    <Text style={{ color: theme.colors.textTertiary, fontSize: 11, marginTop: 3 }}>
-                      {fontSizeTarget === 'portrait' ? fontSize : landscapeFontSize}px
-                    </Text>
-                  ) : null}
-                </View>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                  <Text style={{ color: theme.colors.textTertiary, fontSize: 15, fontWeight: '700' }}>A</Text>
-                  <View
-                    style={styles.fontTrackWrap}
-                    onLayout={(event) => {
-                      fontTrackWidthRef.current = event.nativeEvent.layout.width;
+                  <Text
+                    style={{
+                      color: theme.colors.text,
+                      fontSize: 26,
+                      fontWeight: '800',
+                      marginTop: 3,
                     }}
-                    onStartShouldSetResponder={() => true}
-                    onMoveShouldSetResponder={() => true}
-                    onResponderGrant={(event) =>
-                      applyFontFromX(event.nativeEvent.locationX, fontSizeTarget)
-                    }
-                    onResponderMove={(event) =>
-                      applyFontFromX(event.nativeEvent.locationX, fontSizeTarget)
-                    }
                   >
-                    <View style={[styles.fontTrack, { backgroundColor: theme.colors.surfaceAlt }]}>
-                      <View
-                        style={[
-                          styles.fontTrackFill,
-                          {
-                            backgroundColor: theme.colors.primary,
-                            width: `${fontStepPercent(fontSizeTarget === 'portrait' ? fontSize : landscapeFontSize)}%` as any,
-                          },
-                        ]}
-                      />
-                    </View>
-                    {FONT_STEPS.map((size) => (
-                      <View
-                        key={size}
-                        style={[
-                          styles.fontDot,
-                          {
-                            left: `${((FONT_STEPS.indexOf(size) / (FONT_STEPS.length - 1)) * 100)}%` as any,
-                            backgroundColor: size <= (fontSizeTarget === 'portrait' ? fontSize : landscapeFontSize)
-                              ? theme.colors.primary
-                              : theme.colors.borderStrong,
-                          },
-                        ]}
-                      />
-                    ))}
-                  </View>
-                  <Text style={{ color: theme.colors.text, fontSize: 23, fontWeight: '800' }}>A</Text>
+                    {activeFontSize}
+                    <Text style={{ color: theme.colors.textTertiary, fontSize: 12 }}> px</Text>
+                  </Text>
                 </View>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 26, marginTop: 10 }}>
-                  {[14, 20, 26, 34].map((size) => (
-                    <Text key={size} style={{ color: theme.colors.textTertiary, fontSize: 10 }}>
+
+                <Text style={[styles.panelSectionLabel, { color: theme.colors.textSecondary }]}>
+                  快速选择
+                </Text>
+                <View style={styles.fontSizePresetRow}>
+                  {activeFontProfile.presets.map((size) => {
+                    const active = activeFontSize === size;
+                    return (
+                      <Pressable
+                        key={size}
+                        onPress={() => setFontSizeForTarget(fontTarget, size)}
+                        style={[
+                          styles.fontSizePreset,
+                          {
+                            backgroundColor: active
+                              ? theme.colors.primary
+                              : theme.colors.surfaceAlt,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.fontSizePresetText,
+                            {
+                              color: active ? '#FFFFFF' : theme.colors.textSecondary,
+                              fontWeight: active ? '800' : '600',
+                            },
+                          ]}
+                        >
+                          {size}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                <FontSizeSlider
+                  value={activeFontSize}
+                  min={activeFontProfile.min}
+                  max={activeFontProfile.max}
+                  onChange={(next) => setFontSizeForTarget(fontTarget, next)}
+                />
+                <View style={styles.fontSizeRangeRow}>
+                  {[activeFontProfile.min, 20, 24, activeFontProfile.max].map((size) => (
+                    <Text key={size} style={[styles.fontSizeRangeText, { color: theme.colors.textTertiary }]}>
                       {size}
                     </Text>
                   ))}
                 </View>
+                <Text style={[styles.panelHint, { color: theme.colors.textTertiary, marginTop: 10 }]}>
+                  点击或拖动滑块可逐 px 调节；仅影响{fontSizeTargetTitle(fontTarget)}。三项字号统一调整请到「我的 → 字幕样式」。
+                </Text>
               </View>
             ) : null}
 
@@ -5796,11 +6271,9 @@ export default function PlayerScreen() {
                   <SheetRow
                     icon="text-outline"
                     title="字体大小"
+                    subtitle="仅精听画面"
                     value={listeningFontLabel}
-                    onPress={() => {
-                      setFontSizeTarget('portrait');
-                      openSheetPanel('fontSize', 'listening');
-                    }}
+                    onPress={() => openSheetPanel('fontSize', 'listening')}
                   />
                 </View>
                 <View style={[styles.sheetGroup, { backgroundColor: theme.colors.surfaceAlt }]}>
@@ -6103,52 +6576,6 @@ export default function PlayerScreen() {
     );
   }
 
-  function WeightPicker({
-    value,
-    onChange,
-  }: {
-    value: 'regular' | 'medium' | 'bold';
-    onChange: (value: 'regular' | 'medium' | 'bold') => void;
-  }) {
-    return (
-      <View style={{ flexDirection: 'row', gap: 8 }}>
-        {(
-          [
-            ['regular', '常规', '400'],
-            ['medium', '中等', '600'],
-            ['bold', '粗', '800'],
-          ] as const
-        ).map(([id, label, weight]) => {
-          const active = value === id;
-          return (
-            <Pressable
-              key={id}
-              onPress={() => onChange(id)}
-              style={{
-                flex: 1,
-                height: 40,
-                ...radiusStyle(RADIUS.pill),
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: active ? theme.colors.primary : theme.colors.surfaceAlt,
-              }}
-            >
-              <Text
-                style={{
-                  color: active ? '#FFFFFF' : theme.colors.textSecondary,
-                  fontSize: 12.5,
-                  fontWeight: weight as any,
-                }}
-              >
-                {label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-    );
-  }
-
   function Stepper({
     value,
     min,
@@ -6186,25 +6613,17 @@ export default function PlayerScreen() {
     );
   }
 
-  function fontStepPercent(value: number) {
-    const nearest = FONT_STEPS.reduce(
-      (best, size, index) =>
-        Math.abs(size - value) < Math.abs(FONT_STEPS[best] - value) ? index : best,
-      0
-    );
-    return (nearest / (FONT_STEPS.length - 1)) * 100;
-  }
-
-  function applyFontFromX(x: number, target: 'portrait' | 'landscape') {
-    const width = fontTrackWidthRef.current;
-    if (!width) return;
-    const ratio = Math.max(0, Math.min(1, x / width));
-    const index = Math.round(ratio * (FONT_STEPS.length - 1));
-    const next = FONT_STEPS[index] ?? FONT_STEPS[0];
+  function setFontSizeForTarget(target: FontSizeTarget, next: number) {
+    const profile = FONT_SIZE_PROFILES[target];
+    const size = Math.min(profile.max, Math.max(profile.min, Math.round(next)));
     patchSettings({
       subtitle: {
         ...settings.subtitle,
-        ...(target === 'portrait' ? { fontSize: next } : { landscapeFontSize: next }),
+        ...(target === 'landscape'
+          ? { landscapeFontSize: size }
+          : target === 'listening'
+            ? { listeningFontSize: size }
+            : { fontSize: size }),
       },
     });
   }
@@ -6231,6 +6650,140 @@ export default function PlayerScreen() {
       setStatus(`重新加载失败：${error instanceof Error ? error.message : String(error)}`);
     }
   }
+}
+
+function FontSizeSlider({
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  onChange: (value: number) => void;
+}) {
+  const theme = useAppTheme();
+  const [active, setActive] = useState(false);
+  const trackAreaRef = useRef<HostInstance | null>(null);
+  const trackRectRef = useRef({ x: 0, width: 0 });
+  const grow = useRef(new Animated.Value(0)).current;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
+  const measureTrack = useCallback(() => {
+    trackAreaRef.current?.measureInWindow((x, _y, width) => {
+      trackRectRef.current = { x, width };
+    });
+  }, []);
+
+  useEffect(() => {
+    const animation = Animated.timing(grow, {
+      toValue: active ? 1 : 0,
+      duration: active ? 180 : 150,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [active, grow]);
+
+  const applyFromPageX = useCallback(
+    (pageX: number) => {
+      const { x, width } = trackRectRef.current;
+      if (!width) return;
+      const ratio = Math.max(0, Math.min(1, (pageX - x) / width));
+      const next = Math.round(min + ratio * (max - min));
+      onChangeRef.current(Math.min(max, Math.max(min, next)));
+    },
+    [max, min]
+  );
+
+  // Claim the whole expanded hit box on touch-down. Once claimed, the parent
+  // sheet's ScrollView is not allowed to steal the gesture, so dragging keeps
+  // working even after the finger leaves the visual track.
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderGrant: (event) => {
+          setActive(true);
+          measureTrack();
+          applyFromPageX(event.nativeEvent.pageX);
+        },
+        onPanResponderMove: (event, gestureState) => {
+          // Use screen coordinates, not locationX. locationX is relative to the
+          // child that receives the touch and can reset while the finger crosses
+          // the track/thumb, which made the value jump to unrelated sizes.
+          const pageX = gestureState.moveX || event.nativeEvent.pageX;
+          applyFromPageX(pageX);
+        },
+        onPanResponderRelease: () => setActive(false),
+        onPanResponderTerminate: () => setActive(false),
+        onPanResponderTerminationRequest: () => false,
+        onShouldBlockNativeResponder: () => true,
+      }),
+    [applyFromPageX, measureTrack]
+  );
+
+  const ratio =
+    max > min ? Math.max(0, Math.min(1, (value - min) / (max - min))) : 0;
+  const percent = ratio * 100;
+  const trackHeight = grow.interpolate({
+    inputRange: [0, 1],
+    outputRange: [10, 14],
+  });
+  const thumbScale = grow.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.25],
+  });
+
+  return (
+    <View style={styles.fontSizeSliderHit} {...panResponder.panHandlers}>
+      <View
+        ref={trackAreaRef}
+        collapsable={false}
+        pointerEvents="none"
+        style={styles.fontSizeSliderTrackArea}
+        onLayout={() => measureTrack()}
+      >
+        <Animated.View
+          style={[
+            styles.fontSizeSliderTrack,
+            { height: trackHeight, backgroundColor: theme.colors.surfaceAlt },
+          ]}
+        >
+          <Animated.View
+            style={[
+              styles.fontSizeSliderFill,
+              {
+                height: trackHeight,
+                width: `${percent}%` as any,
+                backgroundColor: theme.colors.primary,
+              },
+            ]}
+          />
+        </Animated.View>
+        <Animated.View
+          style={[
+            styles.fontSizeSliderThumb,
+            {
+              width: 24,
+              height: 24,
+              borderRadius: 12,
+              left: `${percent}%` as any,
+              marginLeft: -12,
+              top: 4,
+              backgroundColor: theme.colors.primary,
+              borderColor: theme.colors.surface,
+              transform: [{ scale: thumbScale }],
+            },
+          ]}
+        />
+      </View>
+    </View>
+  );
 }
 
 function SheetRow({
@@ -6362,7 +6915,16 @@ const styles = StyleSheet.create({
   },
   webVideoFallbackTitle: { color: '#EEE9FA', fontSize: 13, fontWeight: '800' },
   webVideoFallbackText: { color: '#8D849D', fontSize: 11, marginTop: 4 },
-  landscapeVideo: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000000' },
+  landscapeVideo: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    overflow: 'hidden',
+    backgroundColor: '#000000',
+    ...radiusStyle(PLAYER_VIDEO_RADIUS),
+  },
   webview: { flex: 1, backgroundColor: '#000000' },
   videoLoading: {
     position: 'absolute',
@@ -6373,9 +6935,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#050309',
-    gap: 8,
   },
-  videoLoadingText: { color: '#B9AFCC', fontSize: 12 },
+  videoLoadingPoster: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  videoLoadingPosterImage: { flex: 1 },
+  videoLoadingScrim: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(5,3,9,0.38)',
+  },
   centerPlay: {
     position: 'absolute',
     alignSelf: 'center',
@@ -6439,23 +7015,19 @@ const styles = StyleSheet.create({
   problemButtonGhost: { backgroundColor: 'rgba(255,255,255,0.1)' },
   problemButtonText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
   activeTranslation: { color: '#E7E1F5', fontSize: 16, lineHeight: 23, marginTop: 5 },
-  transcriptHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    marginTop: 14,
-    paddingBottom: 2,
-  },
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 5, maxWidth: '70%' },
-  statusText: { color: '#8D849D', fontSize: 11, flexShrink: 1 },
   cue: {
-    paddingVertical: 4,
+    paddingTop: 2,
+    paddingBottom: 4,
     paddingHorizontal: 8,
     marginBottom: 1,
     borderRadius: 0,
   },
   transcriptWrap: { flex: 1 },
+  transcriptSkeleton: {
+    width: '100%',
+    paddingTop: 18,
+    paddingHorizontal: 12,
+  },
   videoBottomGap: { height: 15 },
   precisionVideoGap: { height: 6.5 },
   followCurrentButton: {
@@ -6480,8 +7052,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    minHeight: 32,
-    marginBottom: 4,
+    minHeight: 28,
+    marginTop: -2,
+    marginBottom: 2,
   },
   cueTime: {
     fontSize: 12.5,
@@ -6491,15 +7064,13 @@ const styles = StyleSheet.create({
   },
   cueHeart: {
     width: 32,
-    height: 32,
+    height: 28,
     ...radiusStyle(RADIUS.pill),
     alignItems: 'center',
     justifyContent: 'center',
   },
   cueOriginal: { color: '#A79EB9', lineHeight: 30, fontWeight: '600' },
   cueTranslation: { color: '#746B85', lineHeight: 24, marginTop: 0 },
-  emptyTranscript: { alignItems: 'center', paddingTop: 36, gap: 10 },
-  emptyTranscriptText: { color: '#8D849D', fontSize: 12, textAlign: 'center', lineHeight: 18, paddingHorizontal: 20 },
   controls: { backgroundColor: '#120E1B', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#241C33', paddingHorizontal: PLAYER_GUTTER, paddingTop: 13 },
   progressTouch: { height: 22, justifyContent: 'center' },
   progressRail: { height: 4, ...radiusStyle(RADIUS.pill), backgroundColor: '#2B2340', overflow: 'hidden' },
@@ -6747,19 +7318,18 @@ const styles = StyleSheet.create({
     maxWidth: '88%',
     paddingHorizontal: 18,
     paddingVertical: 10,
-    borderRadius: 0,
+    ...radiusStyle(RADIUS.control),
+    overflow: 'hidden',
   },
   landSubOriginal: {
     color: '#FFFFFF',
     fontWeight: '800',
-    lineHeight: 30,
     textAlign: 'center',
     textShadowColor: '#000',
     textShadowRadius: 6,
   },
   landSubTranslation: {
     color: '#FFFFFF',
-    lineHeight: 24,
     textAlign: 'center',
     marginTop: 2,
     textShadowColor: '#000',
@@ -6961,19 +7531,55 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  fontTrackWrap: {
+  fontSizePresetRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 18,
+  },
+  fontSizePreset: {
     flex: 1,
-    height: 34,
+    height: 38,
+    ...radiusStyle(RADIUS.control),
+    overflow: 'hidden',
+    alignItems: 'center',
     justifyContent: 'center',
   },
-  fontTrack: { height: 7, ...radiusStyle(RADIUS.pill), overflow: 'hidden' },
-  fontTrackFill: { height: 7, ...radiusStyle(RADIUS.pill) },
-  fontDot: {
-    position: 'absolute',
-    width: 5,
-    height: 5,
+  fontSizePresetText: {
+    fontSize: 13,
+    letterSpacing: 0.2,
+  },
+  fontSizeSliderHit: {
+    height: 48,
+    paddingHorizontal: 16,
+    justifyContent: 'center',
+  },
+  fontSizeSliderTrackArea: {
+    height: 32,
+    justifyContent: 'center',
+  },
+  fontSizeSliderTrack: {
+    width: '100%',
     ...radiusStyle(RADIUS.pill),
-    marginLeft: -2,
+    overflow: 'hidden',
+  },
+  fontSizeSliderFill: {
+    ...radiusStyle(RADIUS.pill),
+  },
+  fontSizeSliderThumb: {
+    position: 'absolute',
+    borderWidth: 3,
+    zIndex: 2,
+    elevation: 2,
+  },
+  fontSizeRangeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 2,
+    paddingHorizontal: 16,
+  },
+  fontSizeRangeText: {
+    fontSize: 10.5,
+    fontWeight: '600',
   },
   panelHint: { fontSize: 11, lineHeight: 18, marginTop: 2, paddingHorizontal: 4 },
   sheetHandle: { alignSelf: 'center', width: 42, height: 4, ...radiusStyle(RADIUS.pill), backgroundColor: '#4A4058', marginBottom: 12 },
