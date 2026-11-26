@@ -52,7 +52,7 @@ export type AppPressableProps = Omit<PressableProps, 'style' | 'children'> & {
   collapsable?: boolean;
 };
 
-function triggerHaptic(strength: Exclude<HapticStrength, false>) {
+export function triggerHaptic(strength: Exclude<HapticStrength, false>) {
   if (Platform.OS === 'web') return;
   if (strength === 'tiny') {
     if (Platform.OS === 'android') {

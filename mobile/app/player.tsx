@@ -71,10 +71,19 @@ import { ORIGINAL_FONT_OPTIONS, TRANSLATION_FONT_OPTIONS } from '@/src/ui/subtit
 import { WeightPicker } from '@/src/ui/weight-picker';
 import { appAlert as Alert } from '@/src/ui/app-alert';
 import { toast } from '@/src/ui/app-toast';
-import { AppPressable, AppPressableProps } from '@/src/ui/app-pressable';
+import { AppPressable, AppPressableProps, triggerHaptic } from '@/src/ui/app-pressable';
 import { RipplePressable } from '@/src/ui/ripple-pressable';
 import { CollapseIcon, LoopIcon, SpeedIcon } from '@/src/ui/player-icons';
 import { CONTINUOUS_CORNER, RADIUS } from '@/src/tokens';
+import ReAnimated, {
+  FadeIn,
+  FadeOut,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withTiming,
+} from 'react-native-reanimated';
+import { EASE_OUT } from '@/src/ui/motion';
 import { useAppTheme } from '@/src/ui/theme';
 
 const PlayerPressable = forwardRef<any, AppPressableProps>((props, ref) => (
@@ -1739,15 +1748,12 @@ export default function PlayerScreen() {
   } | null>(null);
   const pendingSeekRef = useRef<number | null>(null);
   const pendingSeekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const seekGrow = useRef(new Animated.Value(0)).current;
+  const seekGrow = useSharedValue(0);
 
   useEffect(() => {
-    Animated.timing(seekGrow, {
-      toValue: seeking ? 1 : 0,
-      duration: 180,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
+    // Height never animates: the rail keeps its expanded height and scales
+    // down, so the seek affordance costs no layout pass.
+    seekGrow.set(withTiming(seeking ? 1 : 0, { duration: 180, easing: EASE_OUT }));
   }, [seeking, seekGrow]);
 
   useEffect(
@@ -1771,6 +1777,9 @@ export default function PlayerScreen() {
   const [precisionElapsed, setPrecisionElapsed] = useState(0);
   const [precisionCueIndex, setPrecisionCueIndex] = useState(-1);
   const precisionStartedAtRef = useRef<number | null>(null);
+  const cueEnter = useSharedValue(1);
+  const translationEnter = useSharedValue(1);
+  const cueEnterKeyRef = useRef('');
   const precisionContentOpacity = useRef(new Animated.Value(1)).current;
   const skeletonPulse = useRef(new Animated.Value(0.35)).current;
   const precisionContentFadeRef = useRef<any>(null);
@@ -2011,6 +2020,33 @@ export default function PlayerScreen() {
   const precisionCueSaved = precisionCue
     ? sentenceFavorites.some((fav) => fav.id === sentenceFavoriteId(videoId, precisionCue.start))
     : false;
+
+  useEffect(() => {
+    // Sentence swap: the new original floats up (220ms), the translation
+    // follows 70ms later. Only transform/opacity move, so an interrupted jump
+    // just retargets the same layer instead of stacking two sentences.
+    const key = precisionCue ? String(precisionCue.start) : '';
+    if (key === cueEnterKeyRef.current) return;
+    cueEnterKeyRef.current = key;
+    if (!precisionCue) return;
+    cueEnter.set(0);
+    cueEnter.set(withTiming(1, { duration: 220, easing: EASE_OUT }));
+    translationEnter.set(0);
+    translationEnter.set(
+      withDelay(70, withTiming(1, { duration: 180, easing: EASE_OUT }))
+    );
+  }, [precisionCue, cueEnter, translationEnter]);
+
+  const precisionCueStyle = useAnimatedStyle(() => ({
+    opacity: cueEnter.get(),
+    transform: [
+      { translateY: 8 * (1 - cueEnter.get()) },
+      { scale: 0.985 + 0.015 * cueEnter.get() },
+    ],
+  }));
+  const precisionTranslationStyle = useAnimatedStyle(() => ({
+    opacity: translationEnter.get(),
+  }));
   const listeningRepeatCount = Math.max(
     1,
     Math.min(3, Math.round(settings.subtitle.repeatCount || 2))
@@ -4273,18 +4309,16 @@ export default function PlayerScreen() {
     : 0;
   const bufferLeft = bufferStartRatio * progressWidth;
   const bufferWidth = Math.max(0, (bufferEndRatio - bufferStartRatio) * progressWidth);
-  const progressRailHeight = seekGrow.interpolate({
-    inputRange: [0, 1],
-    outputRange: [3, 7],
-  });
-  const progressThumbScale = seekGrow.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 1.7],
-  });
-  const landProgressRailHeight = seekGrow.interpolate({
-    inputRange: [0, 1],
-    outputRange: [4, 8],
-  });
+  // 7 → 3 and 8 → 4 are expressed as scaleY so the rail's own height stays fixed.
+  const protestRailStyle = useAnimatedStyle(() => ({
+    transform: [{ scaleY: 0.4286 + 0.5714 * seekGrow.get() }],
+  }));
+  const landRailStyle = useAnimatedStyle(() => ({
+    transform: [{ scaleY: 0.5 + 0.5 * seekGrow.get() }],
+  }));
+  const thumbGrowStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: 1 + 0.7 * seekGrow.get() }],
+  }));
 
   const progress = (
     <View
@@ -4314,11 +4348,12 @@ export default function PlayerScreen() {
       }}
       onResponderTerminationRequest={() => false}
     >
-      <Animated.View
+      <ReAnimated.View
         pointerEvents="none"
         style={[
           styles.progressRail,
-          { backgroundColor: theme.colors.borderStrong, height: progressRailHeight },
+          { backgroundColor: theme.colors.borderStrong, height: 7 },
+          protestRailStyle,
         ]}
       >
         <View
@@ -4347,15 +4382,14 @@ export default function PlayerScreen() {
             },
           ]}
         />
-      </Animated.View>
+      </ReAnimated.View>
       {seeking ? (
-        <Animated.View
+        <ReAnimated.View
           pointerEvents="none"
           style={[
             styles.progressThumb,
             {
               backgroundColor: theme.colors.primary,
-              transform: [{ scale: progressThumbScale }],
               left: duration
                 ? Math.max(
                     0,
@@ -4366,6 +4400,7 @@ export default function PlayerScreen() {
                   )
                 : 0,
             },
+            thumbGrowStyle,
           ]}
         />
       ) : null}
@@ -4460,7 +4495,9 @@ export default function PlayerScreen() {
   );
 
   const controls = !landscape ? (
-    <View
+    <ReAnimated.View
+      entering={FadeIn.duration(160)}
+      exiting={FadeOut.duration(120)}
       style={[
         styles.controls,
         {
@@ -4569,7 +4606,7 @@ export default function PlayerScreen() {
           </Pressable>
         </View>
       )}
-    </View>
+    </ReAnimated.View>
   ) : null;
 
   const landscapeOverlay = landscape ? (
@@ -4630,12 +4667,9 @@ export default function PlayerScreen() {
                 }}
                 onResponderTerminationRequest={() => false}
               >
-                <Animated.View
+                <ReAnimated.View
                   pointerEvents="none"
-                  style={[
-                    styles.landProgressRail,
-                    { height: landProgressRailHeight },
-                  ]}
+                  style={[styles.landProgressRail, { height: 8 }, landRailStyle]}
                 >
                   <View
                     style={[
@@ -4662,15 +4696,14 @@ export default function PlayerScreen() {
                       },
                     ]}
                   />
-                </Animated.View>
+                </ReAnimated.View>
                 {seeking ? (
-                  <Animated.View
+                  <ReAnimated.View
                     pointerEvents="none"
                     style={[
                       styles.landProgressThumb,
                       {
                         backgroundColor: theme.colors.primary,
-                        transform: [{ scale: progressThumbScale }],
                         left: duration
                           ? Math.max(
                               0,
@@ -4681,6 +4714,7 @@ export default function PlayerScreen() {
                             )
                           : 0,
                       },
+                      thumbGrowStyle,
                     ]}
                   />
                 ) : null}
@@ -5188,6 +5222,7 @@ export default function PlayerScreen() {
         {precisionCue ? (
           <View style={{ flex: 1, marginTop: 22 }}>
             <Animated.View style={{ flex: 1, opacity: precisionContentOpacity }}>
+            <ReAnimated.View style={precisionCueStyle}>
             {blindReveal ? (
               <Text
                 style={{
@@ -5239,20 +5274,23 @@ export default function PlayerScreen() {
                 ))}
               </View>
             )}
+            </ReAnimated.View>
 
             {precisionTranslationVisible && precisionCue.translation ? (
-              <Text
-                style={{
-                  color: theme.colors.textSecondary,
-                  fontSize: listeningTranslationStyle.fontSize,
-                  lineHeight: listeningTranslationStyle.lineHeight,
-                  marginTop: blindReveal ? 14 : 24,
-                  fontFamily: translationFont,
-                  fontWeight: listeningTranslationStyle.fontWeight,
-                }}
-              >
-                {precisionCue.translation}
-              </Text>
+              <ReAnimated.View style={precisionTranslationStyle}>
+                <Text
+                  style={{
+                    color: theme.colors.textSecondary,
+                    fontSize: listeningTranslationStyle.fontSize,
+                    lineHeight: listeningTranslationStyle.lineHeight,
+                    marginTop: blindReveal ? 14 : 24,
+                    fontFamily: translationFont,
+                    fontWeight: listeningTranslationStyle.fontWeight,
+                  }}
+                >
+                  {precisionCue.translation}
+                </Text>
+              </ReAnimated.View>
             ) : null}
 
             {!blindReveal || !precisionTranslationVisible ? (
@@ -6670,6 +6708,7 @@ function FontSizeSlider({
   const trackAreaRef = useRef<HostInstance | null>(null);
   const trackRectRef = useRef({ x: 0, width: 0 });
   const grow = useRef(new Animated.Value(0)).current;
+  const lastTickRef = useRef<number | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
@@ -6696,7 +6735,14 @@ function FontSizeSlider({
       if (!width) return;
       const ratio = Math.max(0, Math.min(1, (pageX - x) / width));
       const next = Math.round(min + ratio * (max - min));
-      onChangeRef.current(Math.min(max, Math.max(min, next)));
+      const clamped = Math.min(max, Math.max(min, next));
+      // One tick per step change: dragging inside the same step stays silent,
+      // so a fast swipe doesn't buzz continuously.
+      if (clamped !== lastTickRef.current) {
+        lastTickRef.current = clamped;
+        triggerHaptic('tiny');
+      }
+      onChangeRef.current(clamped);
     },
     [max, min]
   );
