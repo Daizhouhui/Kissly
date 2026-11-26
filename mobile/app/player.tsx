@@ -79,6 +79,7 @@ import ReAnimated, {
   FadeIn,
   FadeOut,
   useAnimatedStyle,
+  useReducedMotion,
   useSharedValue,
   withDelay,
   withTiming,
@@ -1749,12 +1750,19 @@ export default function PlayerScreen() {
   const pendingSeekRef = useRef<number | null>(null);
   const pendingSeekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seekGrow = useSharedValue(0);
+  const seekReduced = useReducedMotion();
 
   useEffect(() => {
     // Height never animates: the rail keeps its expanded height and scales
     // down, so the seek affordance costs no layout pass.
-    seekGrow.set(withTiming(seeking ? 1 : 0, { duration: 180, easing: EASE_OUT }));
-  }, [seeking, seekGrow]);
+    seekGrow.set(
+      seekReduced
+        ? seeking
+          ? 1
+          : 0
+        : withTiming(seeking ? 1 : 0, { duration: 180, easing: EASE_OUT })
+    );
+  }, [seeking, seekGrow, seekReduced]);
 
   useEffect(
     () => () => {
@@ -1780,6 +1788,7 @@ export default function PlayerScreen() {
   const cueEnter = useSharedValue(1);
   const translationEnter = useSharedValue(1);
   const cueEnterKeyRef = useRef('');
+  const playerReducedMotion = useReducedMotion();
   const precisionContentOpacity = useRef(new Animated.Value(1)).current;
   const skeletonPulse = useRef(new Animated.Value(0.35)).current;
   const precisionContentFadeRef = useRef<any>(null);
@@ -2029,13 +2038,18 @@ export default function PlayerScreen() {
     if (key === cueEnterKeyRef.current) return;
     cueEnterKeyRef.current = key;
     if (!precisionCue) return;
+    if (playerReducedMotion) {
+      cueEnter.set(1);
+      translationEnter.set(1);
+      return;
+    }
     cueEnter.set(0);
     cueEnter.set(withTiming(1, { duration: 220, easing: EASE_OUT }));
     translationEnter.set(0);
     translationEnter.set(
       withDelay(70, withTiming(1, { duration: 180, easing: EASE_OUT }))
     );
-  }, [precisionCue, cueEnter, translationEnter]);
+  }, [precisionCue, cueEnter, translationEnter, playerReducedMotion]);
 
   const precisionCueStyle = useAnimatedStyle(() => ({
     opacity: cueEnter.get(),
@@ -4496,8 +4510,8 @@ export default function PlayerScreen() {
 
   const controls = !landscape ? (
     <ReAnimated.View
-      entering={FadeIn.duration(160)}
-      exiting={FadeOut.duration(120)}
+      entering={playerReducedMotion ? undefined : FadeIn.duration(160)}
+      exiting={playerReducedMotion ? undefined : FadeOut.duration(120)}
       style={[
         styles.controls,
         {
