@@ -18,20 +18,6 @@ export const DURATION = {
   smallState: 180,
   enter: 220,
   exit: 160,
-  /** Switch knob travel and track colour. */
-  toggle: 200,
-  /** Check mark pop in. */
-  check: 160,
-} as const;
-
-/**
- * Springs are for anything a finger released. `duration` + `dampingRatio` is
- * Reanimated's designer-facing pair; read it as "settle time" and "how tight".
- */
-export const SPRING = {
-  release: { duration: 200, dampingRatio: 0.7 },
-  knob: { duration: 200, dampingRatio: 0.85 },
-  check: { duration: 160, dampingRatio: 0.8 },
 } as const;
 
 /**
@@ -50,8 +36,8 @@ export const PRESS_SCALE = {
 
 /** A wash that is visible in both themes without competing with the ripple. */
 export const PRESS_TINT = {
-  light: 'rgba(0,0,0,0.045)',
-  dark: 'rgba(255,255,255,0.065)',
+  light: 'rgba(0,0,0,0.09)',
+  dark: 'rgba(255,255,255,0.11)',
 } as const;
 
 export function pressTintColor(dark: boolean) {

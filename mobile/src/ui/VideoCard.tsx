@@ -12,9 +12,8 @@ import { useAppTheme } from './theme';
 
 export type VideoCardVariant = 'list' | 'grid' | 'large';
 
-// Thumbnails share the row-highlight radius so the two corners read as one
-// shape language instead of a flat cover sitting inside a rounder row.
-const VIDEO_THUMBNAIL_RADIUS = RADIUS.control;
+// Covers are deliberately flatter than the app's generic control radius.
+const VIDEO_THUMBNAIL_RADIUS = 8;
 
 export function VideoCard({
   item,
@@ -75,7 +74,6 @@ export function VideoCard({
         onPress={onPress}
         feedback="ripple"
         radius={large ? RADIUS.card : RADIUS.control}
-        pressScale={PRESS_SCALE.card}
         accessibilityLabel={primaryTitle}
         style={{
           paddingVertical: large ? 10 : 6,
@@ -149,7 +147,6 @@ export function VideoCard({
       onPress={onPress}
       feedback="ripple"
       radius={RADIUS.control}
-      pressTint
       accessibilityLabel={primaryTitle}
       style={{
         flexDirection: 'row',

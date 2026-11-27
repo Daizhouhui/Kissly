@@ -2,18 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, {
-  cancelAnimation,
-  interpolate,
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withSpring,
-  withTiming,
-} from 'react-native-reanimated';
 
 import { RADIUS } from '../tokens';
-import { DURATION, EASE_OUT, SPRING } from './motion';
 import { useAppTheme } from './theme';
 
 export type ToastKind = 'success' | 'info' | 'error';
@@ -81,34 +71,15 @@ export const toast = {
 export function AppToastHost() {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
-  const reduced = useReducedMotion();
   const [payload, setPayload] = useState<ToastPayload | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const exitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const progress = useSharedValue(0);
 
   useEffect(() => {
     const show = (next: ToastPayload) => {
       if (timer.current) clearTimeout(timer.current);
-      if (exitTimer.current) clearTimeout(exitTimer.current);
       setPayload(next);
-      // Enter: a short lift plus fade, so the pill reads as arriving rather
-      // than blinking on. Spring matches every other transient surface.
-      progress.set(0);
-      progress.set(
-        reduced
-          ? withTiming(1, { duration: 120 })
-          : withSpring(1, {
-              duration: 300,
-              dampingRatio: SPRING.release.dampingRatio,
-            })
-      );
       timer.current = setTimeout(() => {
-        progress.set(withTiming(0, { duration: DURATION.exit, easing: EASE_OUT }));
-        exitTimer.current = setTimeout(() => {
-          setPayload(null);
-          exitTimer.current = null;
-        }, DURATION.exit);
+        setPayload(null);
         timer.current = null;
       }, next.duration);
     };
@@ -122,21 +93,12 @@ export function AppToastHost() {
     return () => {
       presenter = null;
       if (timer.current) clearTimeout(timer.current);
-      if (exitTimer.current) clearTimeout(exitTimer.current);
-      cancelAnimation(progress);
     };
-  }, [progress, reduced]);
+  }, []);
 
   useEffect(() => {
     if (payload) AccessibilityInfo.announceForAccessibility(payload.message);
   }, [payload]);
-
-  const cardStyle = useAnimatedStyle(() => ({
-    opacity: progress.get(),
-    transform: [
-      { translateY: reduced ? 0 : interpolate(progress.get(), [0, 1], [12, 0]) },
-    ],
-  }));
 
   if (!payload) return null;
 
@@ -180,7 +142,7 @@ export function AppToastHost() {
         elevation: 12,
       }}
     >
-      <Animated.View
+      <View
         style={[
           {
             flexDirection: 'row',
@@ -195,7 +157,6 @@ export function AppToastHost() {
             borderColor: palette.border,
           },
           theme.shadow.floating,
-          cardStyle,
         ]}
       >
         <Ionicons name={palette.icon} size={17} color={palette.accent} />
@@ -210,7 +171,7 @@ export function AppToastHost() {
         >
           {payload.message}
         </Text>
-      </Animated.View>
+      </View>
     </View>
   );
 }

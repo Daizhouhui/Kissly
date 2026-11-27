@@ -15,17 +15,10 @@ import {
   ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import ReAnimated, {
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withSpring,
-} from 'react-native-reanimated';
 
-import { CONTINUOUS_CORNER, CONTROL_HEIGHT, ICON_BUTTON, RADIUS } from '../tokens';
+import { CONTINUOUS_CORNER, RADIUS } from '../tokens';
 import { AppPressable } from './app-pressable';
-import { DURATION, PRESS_SCALE, SPRING } from './motion';
-import { useProgressColor, useProgressOpacity, useStateProgress } from './state-anim';
+import { PRESS_SCALE } from './motion';
 import { useAppTheme } from './theme';
 
 export function Screen({
@@ -114,7 +107,6 @@ export function NavHeader({
         hitSlop={8}
         feedback="ripple"
         radius={RADIUS.pill}
-        pressScale={PRESS_SCALE.pill}
         accessibilityLabel="返回"
         style={styles.navBack}
       >
@@ -157,7 +149,6 @@ export function IconButton({
       hitSlop={8}
       feedback="ripple"
       radius={RADIUS.pill}
-      pressScale={PRESS_SCALE.pill}
       style={[
         styles.iconButton,
         {
@@ -224,7 +215,6 @@ export function Card({
         onPress={onPress}
         feedback="ripple"
         radius={RADIUS.card}
-        pressScale={PRESS_SCALE.card}
         accessibilityRole="button"
       >
         {surface}
@@ -299,7 +289,6 @@ export function Row({
       onPress={onPress}
       feedback="ripple"
       radius={0}
-      pressTint
       accessibilityRole="button"
     >
       {inner}
@@ -330,7 +319,6 @@ export function PrimaryButton({
       feedback="ripple"
       tone="onColor"
       radius={RADIUS.control}
-      pressScale={PRESS_SCALE.control}
       accessibilityRole="button"
       style={[
         styles.primaryButton,
@@ -373,7 +361,6 @@ export function GhostButton({
       onPress={onPress}
       feedback="ripple"
       radius={RADIUS.control}
-      pressScale={PRESS_SCALE.control}
       accessibilityRole="button"
       style={[
         styles.ghostButton,
@@ -396,39 +383,22 @@ export function Chip({
   onPress?: () => void;
 }) {
   const theme = useAppTheme();
-  const progress = useStateProgress(!!active);
-  const surfaceStyle = useProgressColor(
-    progress,
-    theme.colors.surfaceAlt,
-    theme.colors.text
-  );
-  const labelStyle = useProgressColor(
-    progress,
-    theme.colors.textSecondary,
-    theme.dark ? '#0F0D14' : '#FFFFFF',
-    'color'
-  );
   return (
     <AppPressable
       onPress={onPress}
       feedback="ripple"
       radius={RADIUS.control}
-      pressScale={PRESS_SCALE.pill}
-      releaseSpring
       accessibilityRole="button"
-      style={[styles.chip, { backgroundColor: 'transparent' }]}
+      style={[
+        styles.chip,
+        {
+          backgroundColor: active ? theme.colors.text : theme.colors.surfaceAlt,
+        },
+      ]}
     >
-      <ReAnimated.View
-        pointerEvents="none"
-        style={[
-          StyleSheet.absoluteFill,
-          { borderRadius: RADIUS.control },
-          surfaceStyle,
-        ]}
-      />
-      <ReAnimated.Text style={[{ fontSize: 12, fontWeight: '600' }, labelStyle]}>
+      <Text style={{ color: active ? (theme.dark ? '#0F0D14' : '#fff') : theme.colors.textSecondary, fontSize: 12, fontWeight: '600' }}>
         {label}
-      </ReAnimated.Text>
+      </Text>
     </AppPressable>
   );
 }
@@ -562,50 +532,33 @@ export function SettingSwitch({
   onValueChange: (value: boolean) => void;
 }) {
   const theme = useAppTheme();
-  // The knob is a spring, the track only changes colour: a spring on a flat
-  // colour reads as nothing, and timing on the knob would stop dead under the
-  // finger.
-  const progress = useStateProgress(value, DURATION.toggle, 'spring');
-  const trackStyle = useProgressColor(progress, theme.colors.border, theme.colors.primary);
-  const knobStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: progress.get() * 18 }],
-  }));
   return (
     <AppPressable
       onPress={() => onValueChange(!value)}
-      feedback="none"
-      pressScale={0.96}
-      releaseSpring
+      feedback="opacity"
       accessibilityRole="switch"
       accessibilityState={{ checked: value }}
       style={{
         width: 46,
         height: 28,
         borderRadius: RADIUS.pill,
-        backgroundColor: 'transparent',
+        backgroundColor: value ? theme.colors.primary : theme.colors.border,
+        justifyContent: 'center',
+        paddingHorizontal: 3,
       }}
     >
-      <ReAnimated.View
-        pointerEvents="none"
-        style={[StyleSheet.absoluteFill, { borderRadius: RADIUS.pill }, trackStyle]}
-      />
-      <ReAnimated.View
-        style={[
-          {
-            position: 'absolute',
-            left: 3,
-            top: 3,
-            width: 22,
-            height: 22,
-            borderRadius: RADIUS.pill,
-            backgroundColor: '#fff',
-            shadowColor: '#000',
-            shadowOpacity: 0.18,
-            shadowRadius: 4,
-            shadowOffset: { width: 0, height: 2 },
-          },
-          knobStyle,
-        ]}
+      <View
+        style={{
+          width: 22,
+          height: 22,
+          borderRadius: RADIUS.pill,
+          backgroundColor: '#fff',
+          alignSelf: value ? 'flex-end' : 'flex-start',
+          shadowColor: '#000',
+          shadowOpacity: 0.18,
+          shadowRadius: 4,
+          shadowOffset: { width: 0, height: 2 },
+        }}
       />
     </AppPressable>
   );
@@ -613,33 +566,18 @@ export function SettingSwitch({
 
 export function SelectionCircle({ selected }: { selected: boolean }) {
   const theme = useAppTheme();
-  const progress = useStateProgress(selected);
-  const check = useStateProgress(selected, DURATION.check);
-  const borderStyle = useProgressColor(
-    progress,
-    theme.colors.borderStrong,
-    theme.colors.primary,
-    'borderColor'
-  );
-  const fillStyle = useProgressOpacity(progress);
-  const checkStyle = useAnimatedStyle(() => ({
-    opacity: check.get(),
-    transform: [{ scale: 0.6 + check.get() * 0.4 }],
-  }));
   return (
-    <ReAnimated.View style={[styles.selectionCircle, borderStyle]}>
-      <ReAnimated.View
-        pointerEvents="none"
-        style={[
-          StyleSheet.absoluteFill,
-          { borderRadius: RADIUS.pill, backgroundColor: theme.colors.primary },
-          fillStyle,
-        ]}
-      />
-      <ReAnimated.View style={checkStyle}>
-        <Ionicons name="checkmark" size={14} color="#FFFFFF" />
-      </ReAnimated.View>
-    </ReAnimated.View>
+    <View
+      style={[
+        styles.selectionCircle,
+        {
+          borderColor: selected ? theme.colors.primary : theme.colors.borderStrong,
+          backgroundColor: selected ? theme.colors.primary : 'transparent',
+        },
+      ]}
+    >
+      {selected ? <Ionicons name="checkmark" size={14} color="#FFFFFF" /> : null}
+    </View>
   );
 }
 
@@ -657,36 +595,15 @@ export function ManageBar({
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
   const disabled = selectedCount === 0;
-  const reducedMotion = useReducedMotion();
-  const enterProgress = useSharedValue(0);
-
-  useEffect(() => {
-    enterProgress.set(
-      reducedMotion
-        ? 1
-        : withSpring(1, {
-            duration: DURATION.enter,
-            dampingRatio: SPRING.release.dampingRatio,
-          })
-    );
-  }, [enterProgress, reducedMotion]);
-
-  const enterStyle = useAnimatedStyle(() => ({
-    opacity: enterProgress.get(),
-    transform: [{ translateY: reducedMotion ? 0 : (1 - enterProgress.get()) * 26 }],
-  }));
-
   return (
-    <ReAnimated.View
+    <View
       style={[
         styles.manageBar,
-        theme.shadow.floating,
         {
           backgroundColor: theme.colors.card,
           borderTopColor: theme.colors.border,
           paddingBottom: Math.max(12, insets.bottom + 6),
         },
-        enterStyle,
       ]}
     >
       <AppPressable
@@ -722,7 +639,6 @@ export function ManageBar({
         feedback="ripple"
         tone="onColor"
         radius={RADIUS.control}
-        pressScale={PRESS_SCALE.control}
         accessibilityRole="button"
         accessibilityLabel={`删除已选 ${selectedCount} 项`}
         style={[
@@ -745,7 +661,7 @@ export function ManageBar({
           删除{selectedCount ? ` (${selectedCount})` : ''}
         </Text>
       </AppPressable>
-    </ReAnimated.View>
+    </View>
   );
 }
 
@@ -759,15 +675,15 @@ const styles = StyleSheet.create({
   },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
   navBack: {
-    width: ICON_BUTTON.standard,
-    height: ICON_BUTTON.standard,
+    width: 40,
+    height: 40,
     borderRadius: RADIUS.pill,
     alignItems: 'center',
     justifyContent: 'center',
   },
   iconButton: {
-    width: ICON_BUTTON.standard,
-    height: ICON_BUTTON.standard,
+    width: 42,
+    height: 42,
     borderRadius: RADIUS.pill,
     ...CONTINUOUS_CORNER,
     alignItems: 'center',
@@ -797,7 +713,7 @@ const styles = StyleSheet.create({
   },
   chip: {
     paddingHorizontal: 14,
-    height: CONTROL_HEIGHT.sm,
+    height: 34,
     borderRadius: RADIUS.control,
     ...CONTINUOUS_CORNER,
     alignItems: 'center',
@@ -832,6 +748,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     zIndex: 30,
+    elevation: 18,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,

@@ -15,13 +15,6 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import ReAnimated, {
-  interpolate,
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withTiming,
-} from 'react-native-reanimated';
 
 import { useAppStore } from '../../src/core/store';
 import { DiscoverLayout, VideoItem } from '../../src/core/types';
@@ -33,10 +26,9 @@ import {
   watchedFraction,
 } from '../../src/core/watchProgress';
 import { useFeed } from '../../src/hooks/useFeed';
-import { CONTINUOUS_CORNER, ICON_BUTTON, innerRadius, RADIUS } from '../../src/tokens';
+import { CONTINUOUS_CORNER, innerRadius, RADIUS } from '../../src/tokens';
 import { AppPressable } from '../../src/ui/app-pressable';
-import { DURATION, EASE_OUT, PRESS_SCALE } from '../../src/ui/motion';
-import { useProgressColor, useProgressOpacity, useStateProgress } from '../../src/ui/state-anim';
+import { PRESS_SCALE } from '../../src/ui/motion';
 import { useAppTheme } from '../../src/ui/theme';
 import { VideoCard } from '../../src/ui/VideoCard';
 
@@ -52,106 +44,6 @@ const LAYOUTS: Array<{ id: DiscoverLayout; label: string }> = [
   { id: 'grid', label: '网格' },
   { id: 'large', label: '大图' },
 ];
-
-/**
- * Selection ring drawn as its own layer so the avatar inside never re-layouts
- * or re-crops when the ring appears; only the ring fades.
- */
-function ChannelRing({ active, color }: { active: boolean; color: string }) {
-  const reducedMotion = useReducedMotion();
-  const progress = useSharedValue(active ? 1 : 0);
-
-  useEffect(() => {
-    progress.set(
-      reducedMotion
-        ? active
-          ? 1
-          : 0
-        : withTiming(active ? 1 : 0, { duration: DURATION.smallState, easing: EASE_OUT })
-    );
-  }, [active, progress, reducedMotion]);
-
-  const opacityStyle = useAnimatedStyle(() => ({ opacity: progress.get() }));
-
-  return (
-    <ReAnimated.View
-      pointerEvents="none"
-      style={[styles.channelRing, { borderColor: color }, opacityStyle]}
-    />
-  );
-}
-
-/** The feed filter pill: fill and border crossfade, the label never jumps. */
-function FilterPill({
-  label,
-  active,
-  onPress,
-}: {
-  label: string;
-  active: boolean;
-  onPress: () => void;
-}) {
-  const theme = useAppTheme();
-  const progress = useStateProgress(active);
-  const fillStyle = useProgressOpacity(progress);
-  const borderStyle = useProgressColor(
-    progress,
-    theme.colors.borderStrong,
-    theme.colors.primary,
-    'borderColor'
-  );
-  const labelStyle = useProgressColor(
-    progress,
-    theme.colors.textSecondary,
-    '#FFFFFF',
-    'color'
-  );
-  return (
-    <AppPressable
-      onPress={onPress}
-      feedback="none"
-      radius={RADIUS.pill}
-      pressScale={PRESS_SCALE.pill}
-      releaseSpring
-      accessibilityRole="button"
-      accessibilityState={{ selected: active }}
-      style={{
-        paddingHorizontal: 18,
-        height: 36,
-        borderRadius: RADIUS.pill,
-        ...CONTINUOUS_CORNER,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'transparent',
-      }}
-    >
-      <ReAnimated.View
-        pointerEvents="none"
-        style={[
-          StyleSheet.absoluteFill,
-          { borderRadius: RADIUS.pill, backgroundColor: theme.colors.primary },
-          fillStyle,
-        ]}
-      />
-      <ReAnimated.View
-        pointerEvents="none"
-        style={[
-          StyleSheet.absoluteFill,
-          { borderRadius: RADIUS.pill, borderWidth: StyleSheet.hairlineWidth },
-          borderStyle,
-        ]}
-      />
-      <ReAnimated.Text
-        style={[
-          { fontSize: 12.5, fontWeight: active ? '800' : '600' },
-          labelStyle,
-        ]}
-      >
-        {label}
-      </ReAnimated.Text>
-    </AppPressable>
-  );
-}
 
 function LayoutGlyph({
   id,
@@ -205,14 +97,6 @@ export default function HomeScreen() {
   const [channelFilter, setChannelFilter] = useState('');
   const [layoutMenu, setLayoutMenu] = useState(false);
   const [layoutAnchor, setLayoutAnchor] = useState({ top: 0, right: 16 });
-  const reducedMotion = useReducedMotion();
-  const menuProgress = useSharedValue(0);
-  const refreshProgress = useSharedValue(0);
-  const headerProgress = useSharedValue(0);
-  const listProgress = useSharedValue(0);
-  const layoutProgress = useSharedValue(1);
-  const resumeProgress = useSharedValue(0);
-  const menuCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [refreshToast, setRefreshToast] = useState('');
   const refreshToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listRef = useRef<FlatList<VideoItem>>(null);
@@ -224,44 +108,11 @@ export default function HomeScreen() {
   const showRefreshToast = useCallback((message: string) => {
     if (refreshToastTimer.current) clearTimeout(refreshToastTimer.current);
     setRefreshToast(message);
-    refreshProgress.set(withTiming(1, { duration: DURATION.enter, easing: EASE_OUT }));
     refreshToastTimer.current = setTimeout(() => {
-      // Fade out first, then drop the node: an instant unmount is the flicker
-      // this banner was showing before.
-      refreshProgress.set(withTiming(0, { duration: DURATION.exit, easing: EASE_OUT }));
-      refreshToastTimer.current = setTimeout(() => {
-        setRefreshToast('');
-        refreshToastTimer.current = null;
-      }, DURATION.exit);
+      setRefreshToast('');
+      refreshToastTimer.current = null;
     }, 2200);
-  }, [refreshProgress]);
-
-  useEffect(() => {
-    // First paint only: the header lifts in once instead of popping in.
-    headerProgress.set(
-      reducedMotion ? 1 : withTiming(1, { duration: DURATION.enter, easing: EASE_OUT })
-    );
-  }, [headerProgress, reducedMotion]);
-
-  useEffect(() => {
-    if (loading) {
-      listProgress.set(0);
-      return;
-    }
-    listProgress.set(
-      reducedMotion ? 1 : withTiming(1, { duration: 200, easing: EASE_OUT })
-    );
-  }, [loading, listProgress, reducedMotion]);
-
-  useEffect(() => {
-    // Layout switch rebuilds the list; a short fade hides the swap.
-    if (reducedMotion) {
-      layoutProgress.set(1);
-      return;
-    }
-    layoutProgress.set(0.55);
-    layoutProgress.set(withTiming(1, { duration: 160, easing: EASE_OUT }));
-  }, [layout, layoutProgress, reducedMotion]);
+  }, []);
 
   useEffect(() => {
     // Double-tapping the active video tab returns the feed to the top.
@@ -314,19 +165,6 @@ export default function HomeScreen() {
   const continueFraction = continueItem ? watchedFraction(continueItem) : 0;
   const continueRemaining = continueItem ? remainingSeconds(continueItem) : null;
 
-  const resumeFraction = Math.max(0.06, Math.min(1, continueFraction || 0.06));
-
-  useEffect(() => {
-    // One-shot growth the first time the resume card appears (or the video
-    // changes); it never re-animates on unrelated re-renders.
-    if (reducedMotion) {
-      resumeProgress.set(resumeFraction);
-      return;
-    }
-    resumeProgress.set(0.06);
-    resumeProgress.set(withTiming(resumeFraction, { duration: 300, easing: EASE_OUT }));
-  }, [continueItem?.videoId, resumeProgress, reducedMotion, resumeFraction]);
-
   const visible = useMemo(() => {
     return items.filter((item) => {
       if (filter === 'watching') {
@@ -340,18 +178,9 @@ export default function HomeScreen() {
   const openSearch = () => router.push('/add-subscription' as any);
 
   const openLayoutMenu = () => {
-    if (menuCloseTimer.current) {
-      clearTimeout(menuCloseTimer.current);
-      menuCloseTimer.current = null;
-    }
-    const reveal = () => {
-      setLayoutMenu(true);
-      menuProgress.set(0);
-      menuProgress.set(withTiming(1, { duration: 160, easing: EASE_OUT }));
-    };
     const button = layoutButtonRef.current;
     if (!button) {
-      reveal();
+      setLayoutMenu(true);
       return;
     }
     button.measureInWindow((x: number, y: number, width: number, height: number) => {
@@ -360,56 +189,12 @@ export default function HomeScreen() {
         top: y + height + 8,
         right: Math.max(12, screenWidth - x - width),
       });
-      reveal();
+      setLayoutMenu(true);
     });
   };
 
-  /** Fades the popover out before the modal unmounts; closing is faster than opening. */
-  const closeLayoutMenu = () => {
-    menuProgress.set(withTiming(0, { duration: 120, easing: EASE_OUT }));
-    if (menuCloseTimer.current) clearTimeout(menuCloseTimer.current);
-    menuCloseTimer.current = setTimeout(() => {
-      setLayoutMenu(false);
-      menuCloseTimer.current = null;
-    }, 120);
-  };
-
-  const menuStyle = useAnimatedStyle(() => ({
-    opacity: menuProgress.get(),
-    transform: [{ scale: reducedMotion ? 1 : 0.9 + menuProgress.get() * 0.1 }],
-  }));
-
-  const refreshStyle = useAnimatedStyle(() => ({
-    opacity: refreshProgress.get(),
-    transform: [
-      { translateY: reducedMotion ? 0 : interpolate(refreshProgress.get(), [0, 1], [8, 0]) },
-    ],
-  }));
-
-  const headerStyle = useAnimatedStyle(() => ({
-    opacity: headerProgress.get(),
-    transform: [
-      { translateY: reducedMotion ? 0 : interpolate(headerProgress.get(), [0, 1], [10, 0]) },
-    ],
-  }));
-
-  const listStyle = useAnimatedStyle(() => ({
-    opacity: layoutProgress.get(),
-  }));
-
-  const emptyStyle = useAnimatedStyle(() => ({
-    opacity: listProgress.get(),
-    transform: [
-      { translateY: reducedMotion ? 0 : interpolate(listProgress.get(), [0, 1], [8, 0]) },
-    ],
-  }));
-
-  const resumeStyle = useAnimatedStyle(() => ({
-    transform: [{ scaleX: resumeProgress.get() }],
-  }));
-
   const header = (
-    <ReAnimated.View style={headerStyle}>
+    <View>
       <View style={styles.titleRow}>
         <View style={{ flex: 1 }}>
           <Text style={{ color: theme.colors.text, fontSize: 34, fontWeight: '300', letterSpacing: -1.1 }}>
@@ -421,7 +206,6 @@ export default function HomeScreen() {
           hitSlop={8}
           feedback="ripple"
           radius={RADIUS.pill}
-          pressScale={PRESS_SCALE.pill}
           accessibilityLabel="管理全部频道"
           style={[
             styles.allChannelsButton,
@@ -439,7 +223,6 @@ export default function HomeScreen() {
         onPress={openSearch}
         feedback="ripple"
         radius={RADIUS.pill}
-        pressScale={PRESS_SCALE.card}
         accessibilityLabel="搜索 YouTube"
         style={{
           flexDirection: 'row',
@@ -467,28 +250,23 @@ export default function HomeScreen() {
         <AppPressable
           onPress={() => setChannelFilter('')}
           feedback="opacity"
-          pressScale={PRESS_SCALE.avatar}
           accessibilityLabel="全部频道"
           style={{ alignItems: 'center', width: 58 }}
         >
-          <View style={styles.channelAvatar}>
-            <View
-              style={[
-                styles.channelAvatarInner,
-                {
-                  backgroundColor: channelFilter
-                    ? theme.colors.surfaceAlt
-                    : theme.colors.primarySoft,
-                },
-              ]}
-            >
-              <Ionicons
-                name="apps-outline"
-                size={22}
-                color={channelFilter ? theme.colors.textTertiary : theme.colors.primary}
-              />
-            </View>
-            <ChannelRing active={!channelFilter} color={theme.colors.primary} />
+          <View
+            style={[
+              styles.channelAvatar,
+              {
+                backgroundColor: channelFilter ? theme.colors.surfaceAlt : theme.colors.primarySoft,
+                borderColor: channelFilter ? 'transparent' : theme.colors.borderStrong,
+              },
+            ]}
+          >
+            <Ionicons
+              name="apps-outline"
+              size={22}
+              color={channelFilter ? theme.colors.textTertiary : theme.colors.primary}
+            />
           </View>
           <Text
             style={{
@@ -508,31 +286,30 @@ export default function HomeScreen() {
               key={sub.channelId}
               onPress={() => setChannelFilter(active ? '' : sub.channelId)}
               feedback="opacity"
-              pressScale={PRESS_SCALE.avatar}
               accessibilityLabel={sub.title}
               style={{ alignItems: 'center', width: 58 }}
             >
-              <View style={styles.channelAvatar}>
-                <View
-                  style={[
-                    styles.channelAvatarInner,
-                    { backgroundColor: theme.colors.surfaceAlt },
-                  ]}
-                >
-                  {sub.avatar ? (
-                    <Image
-                      source={{ uri: sub.avatar }}
-                      style={{ width: '100%', height: '100%', borderRadius: RADIUS.pill }}
-                      contentFit="cover"
-                      transition={140}
-                    />
-                  ) : (
-                    <Text style={{ color: theme.colors.primary, fontSize: 17, fontWeight: '900' }}>
-                      {(sub.title || '?').slice(0, 1).toUpperCase()}
-                    </Text>
-                  )}
-                </View>
-                <ChannelRing active={active} color={theme.colors.primary} />
+              <View
+                style={[
+                  styles.channelAvatar,
+                  {
+                    borderColor: active ? theme.colors.primary : 'transparent',
+                    backgroundColor: theme.colors.surfaceAlt,
+                  },
+                ]}
+              >
+                {sub.avatar ? (
+                  <Image
+                    source={{ uri: sub.avatar }}
+                    style={{ width: 54, height: 54, borderRadius: RADIUS.pill }}
+                    contentFit="cover"
+                    transition={140}
+                  />
+                ) : (
+                  <Text style={{ color: theme.colors.primary, fontSize: 17, fontWeight: '900' }}>
+                    {(sub.title || '?').slice(0, 1).toUpperCase()}
+                  </Text>
+                )}
               </View>
               <Text
                 style={{
@@ -548,12 +325,11 @@ export default function HomeScreen() {
           );
         })}
         <Link href="/add-subscription" asChild>
-          <AppPressable feedback="opacity" pressScale={PRESS_SCALE.avatar} accessibilityLabel="添加频道" style={{ alignItems: 'center', width: 58 }}>
+          <AppPressable feedback="opacity" accessibilityLabel="添加频道" style={{ alignItems: 'center', width: 58 }}>
             <View
               style={[
                 styles.channelAvatar,
                 {
-                  borderWidth: 2.5,
                   borderColor: theme.colors.borderStrong,
                   borderStyle: 'dashed',
                   backgroundColor: 'transparent',
@@ -590,7 +366,6 @@ export default function HomeScreen() {
           }
           feedback="ripple"
           radius={RADIUS.card}
-          pressScale={PRESS_SCALE.card}
           accessibilityLabel={`继续观看 ${continueItem.title}`}
           style={[
             styles.continueCard,
@@ -624,18 +399,14 @@ export default function HomeScreen() {
               }}
             >
               <Ionicons name="play" size={11} color={theme.colors.textSecondary} />
-              <View style={{ width: 48, height: 3, borderRadius: RADIUS.pill, backgroundColor: theme.colors.borderStrong, overflow: 'hidden' }}>
-                <ReAnimated.View
-                  style={[
-                    {
-                      width: '100%',
-                      height: 3,
-                      borderRadius: RADIUS.pill,
-                      backgroundColor: theme.colors.primary,
-                      transformOrigin: 'left',
-                    },
-                    resumeStyle,
-                  ]}
+              <View style={{ width: 48, height: 3, borderRadius: RADIUS.pill, backgroundColor: theme.colors.borderStrong }}>
+                <View
+                  style={{
+                    width: `${Math.max(6, Math.round(continueFraction * 100))}%` as any,
+                    height: 3,
+                    borderRadius: RADIUS.pill,
+                    backgroundColor: theme.colors.primary,
+                  }}
                 />
               </View>
               <Text style={{ color: theme.colors.textSecondary, fontSize: 9.5 }}>
@@ -651,27 +422,50 @@ export default function HomeScreen() {
       <View style={styles.filterRow}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
           {FILTERS.map((item) => {
+            const active = filter === item.id;
             return (
-              <FilterPill
+              <AppPressable
                 key={item.id}
-                label={item.label}
-                active={filter === item.id}
                 onPress={() => setFilter(item.id)}
-              />
+                feedback="opacity"
+                radius={RADIUS.pill}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                style={{
+                  paddingHorizontal: 18,
+                  height: 36,
+                  borderRadius: RADIUS.pill,
+                  ...CONTINUOUS_CORNER,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: active ? theme.colors.primary : 'transparent',
+                  borderWidth: active ? 0 : StyleSheet.hairlineWidth,
+                  borderColor: theme.colors.borderStrong,
+                }}
+              >
+                <Text
+                  style={{
+                    color: active ? '#FFFFFF' : theme.colors.textSecondary,
+                    fontSize: 12.5,
+                    fontWeight: active ? '800' : '600',
+                  }}
+                >
+                  {item.label}
+                </Text>
+              </AppPressable>
             );
           })}
         </ScrollView>
         <View ref={layoutButtonRef} collapsable={false}>
           <AppPressable
             onPress={openLayoutMenu}
-            hitSlop={8}
+            hitSlop={6}
             feedback="ripple"
             radius={RADIUS.pill}
-            pressScale={PRESS_SCALE.pill}
             accessibilityLabel="切换视频布局"
             style={{
-              width: ICON_BUTTON.compact,
-              height: ICON_BUTTON.compact,
+              width: 36,
+              height: 36,
               borderRadius: RADIUS.pill,
               ...CONTINUOUS_CORNER,
               backgroundColor: theme.colors.surfaceAlt,
@@ -683,13 +477,12 @@ export default function HomeScreen() {
           </AppPressable>
         </View>
       </View>
-    </ReAnimated.View>
+    </View>
   );
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
-      <ReAnimated.View style={[{ flex: 1 }, listStyle]}>
-        <FlatList
+      <FlatList
         ref={listRef}
         key={layout}
         data={visible}
@@ -738,12 +531,7 @@ export default function HomeScreen() {
               <Text style={{ color: theme.colors.textTertiary, fontSize: 12 }}>正在拉取订阅视频…</Text>
             </View>
           ) : subscriptions.length === 0 ? (
-            <ReAnimated.View
-              style={[
-                { alignItems: 'center', paddingTop: 52, paddingHorizontal: 26 },
-                emptyStyle,
-              ]}
-            >
+            <View style={{ alignItems: 'center', paddingTop: 52, paddingHorizontal: 26 }}>
               <View
                 style={{
                   width: 76,
@@ -776,7 +564,6 @@ export default function HomeScreen() {
                 feedback="ripple"
                 tone="onColor"
                 radius={RADIUS.control}
-                pressScale={PRESS_SCALE.control}
                 accessibilityRole="button"
                 style={{
                   height: 44,
@@ -790,18 +577,16 @@ export default function HomeScreen() {
               >
                 <Text style={{ color: '#FFFFFF', fontSize: 13.5, fontWeight: '800' }}>搜索频道</Text>
               </AppPressable>
-            </ReAnimated.View>
+            </View>
           ) : (
-            <ReAnimated.View
-              style={[{ alignItems: 'center', paddingTop: 46 }, emptyStyle]}
-            >
+            <View style={{ alignItems: 'center', paddingTop: 46 }}>
               <Ionicons name="search-outline" size={32} color={theme.colors.textTertiary} />
               <Text style={{ color: theme.colors.textSecondary, fontSize: 13, marginTop: 12 }}>
                 {filter === 'watching'
                   ? '已加载的视频里还没有看到一半的内容'
                   : '没有找到匹配的视频'}
               </Text>
-            </ReAnimated.View>
+            </View>
           )
         }
         ListFooterComponent={
@@ -825,8 +610,7 @@ export default function HomeScreen() {
         }
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
-        />
-      </ReAnimated.View>
+      />
 
       {refreshToast ? (
         <View
@@ -840,31 +624,28 @@ export default function HomeScreen() {
             zIndex: 30,
           }}
         >
-          <ReAnimated.View
-            style={[
-              {
-                maxWidth: '92%',
-                paddingHorizontal: 16,
-                paddingVertical: 10,
-                borderRadius: RADIUS.pill,
-                backgroundColor: 'rgba(20,17,25,0.92)',
-                borderWidth: StyleSheet.hairlineWidth,
-                borderColor: 'rgba(255,255,255,0.14)',
-              },
-              refreshStyle,
-            ]}
+          <View
+            style={{
+              maxWidth: '92%',
+              paddingHorizontal: 16,
+              paddingVertical: 10,
+              borderRadius: RADIUS.pill,
+              backgroundColor: 'rgba(20,17,25,0.92)',
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: 'rgba(255,255,255,0.14)',
+            }}
           >
             <Text style={{ color: '#FFFFFF', fontSize: 12.5, fontWeight: '700' }}>
               {refreshToast}
             </Text>
-          </ReAnimated.View>
+          </View>
         </View>
       ) : null}
 
-      <Modal visible={layoutMenu} transparent animationType="none" onRequestClose={closeLayoutMenu}>
+      <Modal visible={layoutMenu} transparent animationType="fade" onRequestClose={() => setLayoutMenu(false)}>
         <View style={{ flex: 1 }}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={closeLayoutMenu} />
-          <ReAnimated.View
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setLayoutMenu(false)} />
+          <View
             style={[
               styles.layoutPopover,
               {
@@ -872,9 +653,7 @@ export default function HomeScreen() {
                 right: layoutAnchor.right,
                 backgroundColor: theme.colors.card,
                 borderColor: theme.colors.border,
-                transformOrigin: 'top right',
               },
-              menuStyle,
             ]}
           >
             {LAYOUTS.map((option) => {
@@ -884,11 +663,10 @@ export default function HomeScreen() {
                   key={option.id}
                   onPress={() => {
                     patchSettings({ discoverLayout: option.id });
-                    closeLayoutMenu();
+                    setLayoutMenu(false);
                   }}
                   feedback="ripple"
                   radius={RADIUS.control}
-                  pressScale={PRESS_SCALE.control}
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
                   style={{
@@ -923,7 +701,7 @@ export default function HomeScreen() {
                 </AppPressable>
               );
             })}
-          </ReAnimated.View>
+          </View>
         </View>
       </Modal>
     </View>
@@ -938,8 +716,8 @@ const styles = StyleSheet.create({
     gap: 9,
   },
   allChannelsButton: {
-    width: ICON_BUTTON.standard,
-    height: ICON_BUTTON.standard,
+    width: 48,
+    height: 48,
     borderRadius: RADIUS.pill,
     ...CONTINUOUS_CORNER,
     borderWidth: StyleSheet.hairlineWidth,
@@ -950,29 +728,10 @@ const styles = StyleSheet.create({
     width: 58,
     height: 58,
     borderRadius: RADIUS.pill,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'visible',
-  },
-  channelAvatarInner: {
-    position: 'absolute',
-    top: 2.5,
-    left: 2.5,
-    right: 2.5,
-    bottom: 2.5,
-    borderRadius: RADIUS.pill,
+    borderWidth: 2.5,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
-  },
-  channelRing: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderRadius: RADIUS.pill,
-    borderWidth: 2.5,
   },
   continueCard: {
     flexDirection: 'row',

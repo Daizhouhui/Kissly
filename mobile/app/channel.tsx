@@ -362,7 +362,6 @@ export default function ChannelScreen() {
             }}
             disabled={!latestItems[0]}
             tone="onColor"
-            pressScale={PRESS_SCALE.control}
             style={{
               height: 48,
               minWidth: 176,
@@ -381,7 +380,6 @@ export default function ChannelScreen() {
           </AppPressable>
           <AppPressable
             onPress={toggleSubscription}
-            pressScale={PRESS_SCALE.pill}
             style={{
               width: 48,
               height: 48,
@@ -487,7 +485,6 @@ export default function ChannelScreen() {
     <AppPressable
       onPress={() => void openPlaylist(playlist)}
       feedback="opacity"
-      pressScale={PRESS_SCALE.card}
       accessibilityRole="button"
       accessibilityLabel={`打开播放列表 ${playlist.title}`}
       style={[styles.playlistRow, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}
@@ -621,7 +618,6 @@ export default function ChannelScreen() {
               </View>
               <AppPressable
                 onPress={() => setSelectedPlaylist(null)}
-                pressScale={PRESS_SCALE.pill}
                 style={[styles.closeButton, { backgroundColor: theme.colors.surfaceAlt }]}
               >
                 <Ionicons name="close" size={21} color={theme.colors.text} />

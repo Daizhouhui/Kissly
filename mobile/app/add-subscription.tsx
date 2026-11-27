@@ -21,7 +21,7 @@ import { useAppStore } from '../src/core/store';
 import { Subscription } from '../src/core/types';
 import { resolveChannelInput } from '../src/core/youtube/channel';
 import { ChannelSearchResult, searchChannels } from '../src/core/youtube/search';
-import { CONTINUOUS_CORNER, ICON_BUTTON, RADIUS } from '../src/tokens';
+import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
 import { toast } from '../src/ui/app-toast';
 import { AppPressable } from '../src/ui/app-pressable';
 import { GhostButton } from '../src/ui/components';
@@ -337,7 +337,7 @@ export default function SearchChannelsScreen() {
           showsVerticalScrollIndicator={false}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <Pressable onPress={() => router.back()} hitSlop={10} pressScale={PRESS_SCALE.pill} style={styles.backButton}>
+            <Pressable onPress={() => router.back()} hitSlop={10} style={styles.backButton}>
               <Ionicons name="arrow-back" size={23} color={theme.colors.text} />
             </Pressable>
             <View
@@ -436,7 +436,6 @@ export default function SearchChannelsScreen() {
                     key={`${item}-${index}`}
                     onPress={() => selectHistoryItem(item)}
                     radius={0}
-                    pressTint
                     style={{
                       flexDirection: 'row',
                       alignItems: 'center',
@@ -485,7 +484,6 @@ export default function SearchChannelsScreen() {
                   key={item.id}
                   onPress={() => chooseCategory(item.id)}
                   feedback="opacity"
-                  pressScale={PRESS_SCALE.pill}
                   style={{
                     height: 38,
                     paddingHorizontal: 18,
@@ -559,7 +557,6 @@ export default function SearchChannelsScreen() {
                 <Pressable
                   key={channel.channelId}
                   radius={0}
-                  pressTint
                   onPress={() =>
                     router.push({
                       pathname: '/channel',
@@ -610,10 +607,9 @@ export default function SearchChannelsScreen() {
                     }}
                     disabled={subscribed}
                     hitSlop={8}
-                    pressScale={PRESS_SCALE.pill}
                     style={{
-                      width: ICON_BUTTON.compact,
-                      height: ICON_BUTTON.compact,
+                      width: 34,
+                      height: 34,
                       borderRadius: RADIUS.pill,
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -675,7 +671,6 @@ export default function SearchChannelsScreen() {
                 <Pressable
                   onPress={resolve}
                   disabled={resolving}
-                  pressScale={PRESS_SCALE.control}
                   style={{
                     flex: 1,
                     height: 44,
@@ -701,7 +696,6 @@ export default function SearchChannelsScreen() {
               {preview ? (
                 <Pressable
                   onPress={addPreview}
-                  pressScale={PRESS_SCALE.card}
                   style={{
                     marginTop: 12,
                     flexDirection: 'row',

@@ -153,7 +153,6 @@ export default function PodcastScreen() {
               } as any);
             }}
             radius={RADIUS.card}
-            pressScale={PRESS_SCALE.card}
             style={[
               styles.card,
               {

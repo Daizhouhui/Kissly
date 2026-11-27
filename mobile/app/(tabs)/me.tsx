@@ -54,7 +54,6 @@ function MeRow({
       onPress={onPress}
       disabled={!onPress || disabled}
       radius={0}
-      pressTint
       style={[
         styles.row,
         roomy && styles.rowRoomy,
@@ -310,7 +309,6 @@ export default function MeScreen() {
           <Pressable
             onPress={runSync}
             disabled={syncing}
-            pressScale={PRESS_SCALE.control}
             style={styles.syncButton}
           >
             {syncing || syncState === 'syncing' ? (

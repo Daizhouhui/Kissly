@@ -4,7 +4,7 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAppStore } from '../../src/core/store';
 import type { SpeechAccent } from '../../src/core/types';
-import { CONTINUOUS_CORNER, CONTROL_HEIGHT, RADIUS } from '../../src/tokens';
+import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
 import { toast } from '../../src/ui/app-toast';
 import { AppPressable } from '../../src/ui/app-pressable';
 import { NavHeader } from '../../src/ui/components';
@@ -80,7 +80,7 @@ export default function VoiceSettingsScreen() {
     <View style={{ flex: 1, backgroundColor: theme.colors.bg }}>
       <NavHeader title="发音与朗读" subtitle="系统朗读与视频音轨的英语口音" />
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 36 }}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40 }}
         showsVerticalScrollIndicator={false}
       >
         <View
@@ -269,7 +269,7 @@ const styles = StyleSheet.create({
   stepper: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: CONTROL_HEIGHT.sm,
+    height: 34,
     borderRadius: RADIUS.pill,
     paddingHorizontal: 2,
   },
