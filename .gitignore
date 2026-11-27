@@ -47,3 +47,9 @@ package-lock.json
 /docs/plugins/examples/service-ui-followups/
 /docs/plugins/examples/provider-validation-report.json
 /docs/plugins/examples/service-form-feature-audit.json
+
+# local logs & databases (should never be committed)
+*.log
+*.db
+*.sqlite
+*.sqlite3

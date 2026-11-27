@@ -40,3 +40,10 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# local debug artifacts (Metro logs, screenshots, uiautomator dumps, WebView db)
+metro*.log
+scripts/seg-*
+scripts/ui*.xml
+scripts/*.png
+scripts/*.db
