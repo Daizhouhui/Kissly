@@ -28,7 +28,6 @@ import {
 import { useFeed } from '../../src/hooks/useFeed';
 import { CONTINUOUS_CORNER, innerRadius, RADIUS } from '../../src/tokens';
 import { AppPressable } from '../../src/ui/app-pressable';
-import { PRESS_SCALE } from '../../src/ui/motion';
 import { useAppTheme } from '../../src/ui/theme';
 import { VideoCard } from '../../src/ui/VideoCard';
 
@@ -206,7 +205,6 @@ export default function HomeScreen() {
           hitSlop={8}
           feedback="ripple"
           radius={RADIUS.pill}
-          pressScale={PRESS_SCALE.pill}
           accessibilityLabel="管理全部频道"
           style={[
             styles.allChannelsButton,
@@ -224,7 +222,6 @@ export default function HomeScreen() {
         onPress={openSearch}
         feedback="ripple"
         radius={RADIUS.pill}
-        pressScale={PRESS_SCALE.card}
         accessibilityLabel="搜索 YouTube"
         style={{
           flexDirection: 'row',
@@ -252,7 +249,6 @@ export default function HomeScreen() {
         <AppPressable
           onPress={() => setChannelFilter('')}
           feedback="opacity"
-          pressScale={PRESS_SCALE.avatar}
           accessibilityLabel="全部频道"
           style={{ alignItems: 'center', width: 58 }}
         >
@@ -289,7 +285,6 @@ export default function HomeScreen() {
               key={sub.channelId}
               onPress={() => setChannelFilter(active ? '' : sub.channelId)}
               feedback="opacity"
-              pressScale={PRESS_SCALE.avatar}
               accessibilityLabel={sub.title}
               style={{ alignItems: 'center', width: 58 }}
             >
@@ -329,7 +324,7 @@ export default function HomeScreen() {
           );
         })}
         <Link href="/add-subscription" asChild>
-          <AppPressable feedback="opacity" pressScale={PRESS_SCALE.avatar} accessibilityLabel="添加频道" style={{ alignItems: 'center', width: 58 }}>
+          <AppPressable feedback="opacity" accessibilityLabel="添加频道" style={{ alignItems: 'center', width: 58 }}>
             <View
               style={[
                 styles.channelAvatar,
@@ -370,7 +365,6 @@ export default function HomeScreen() {
           }
           feedback="ripple"
           radius={RADIUS.card}
-          pressScale={PRESS_SCALE.card}
           accessibilityLabel={`继续观看 ${continueItem.title}`}
           style={[
             styles.continueCard,
@@ -434,7 +428,6 @@ export default function HomeScreen() {
                 onPress={() => setFilter(item.id)}
                 feedback="opacity"
                 radius={RADIUS.pill}
-                pressScale={PRESS_SCALE.pill}
                 accessibilityRole="button"
                 accessibilityState={{ selected: active }}
                 style={{
@@ -468,7 +461,6 @@ export default function HomeScreen() {
             hitSlop={6}
             feedback="ripple"
             radius={RADIUS.pill}
-            pressScale={PRESS_SCALE.pill}
             accessibilityLabel="切换视频布局"
             style={{
               width: 36,
@@ -571,7 +563,6 @@ export default function HomeScreen() {
                 feedback="ripple"
                 tone="onColor"
                 radius={RADIUS.control}
-                pressScale={PRESS_SCALE.control}
                 accessibilityRole="button"
                 style={{
                   height: 44,
@@ -675,7 +666,6 @@ export default function HomeScreen() {
                   }}
                   feedback="ripple"
                   radius={RADIUS.control}
-                  pressScale={PRESS_SCALE.control}
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
                   style={{

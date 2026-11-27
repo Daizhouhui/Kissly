@@ -20,7 +20,6 @@ import { relativeTime } from '../../src/core/utils';
 import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
 import { toast } from '../../src/ui/app-toast';
 import { AppPressable } from '../../src/ui/app-pressable';
-import { PRESS_SCALE } from '../../src/ui/motion';
 import { useAppTheme } from '../../src/ui/theme';
 
 const Pressable = AppPressable;
@@ -54,7 +53,6 @@ function MeRow({
       onPress={onPress}
       disabled={!onPress || disabled}
       radius={0}
-      pressTint
       style={[
         styles.row,
         roomy && styles.rowRoomy,
@@ -310,7 +308,6 @@ export default function MeScreen() {
           <Pressable
             onPress={runSync}
             disabled={syncing}
-            pressScale={PRESS_SCALE.control}
             style={styles.syncButton}
           >
             {syncing || syncState === 'syncing' ? (

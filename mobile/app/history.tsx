@@ -126,7 +126,6 @@ export default function HistoryScreen() {
                 accessibilityState={manage ? { selected } : undefined}
                 feedback={manage ? 'opacity' : 'ripple'}
                 radius={0}
-                pressTint
                 onPress={() => {
                   if (manage) {
                     toggleSelection(item.videoId);

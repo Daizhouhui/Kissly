@@ -1,33 +1,24 @@
 import * as Haptics from 'expo-haptics';
-import { ReactNode, useEffect, useRef, useState } from 'react';
+import { ReactNode, Ref, useEffect, useRef, useState } from 'react';
 import {
+  Animated,
+  Easing,
   GestureResponderEvent,
   LayoutChangeEvent,
   Platform,
   Pressable,
   PressableProps,
+  StyleProp,
   StyleSheet,
+  View,
   ViewStyle,
 } from 'react-native';
-import Animated, {
-  cancelAnimation,
-  interpolate,
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withTiming,
-} from 'react-native-reanimated';
-
 import { CONTINUOUS_CORNER, RADIUS, RIPPLE, RadiusToken, radiusValue } from '../tokens';
-import { DURATION, EASE_OUT, pressTintColor } from './motion';
 import { useAppTheme } from './theme';
 
 type Feedback = 'ripple' | 'opacity' | 'none';
 type RippleTone = 'surface' | 'onColor';
 type HapticStrength = 'tiny' | 'light' | 'medium' | 'heavy' | false;
-
-const RIPPLE_PEAK_OPACITY = 0.18;
-const RIPPLE_START_SCALE = 0.2;
 
 export type AppPressableProps = Omit<PressableProps, 'style' | 'children'> & {
   children?: ReactNode;
@@ -40,10 +31,6 @@ export type AppPressableProps = Omit<PressableProps, 'style' | 'children'> & {
   radius?: number | RadiusToken;
   /** Legacy fixed diameter; normal use should let the ripple size itself. */
   rippleSize?: number;
-  /** Scale applied while held. Keep at 1 for full-width rows. */
-  pressScale?: number;
-  /** Faint wash under the finger. The right feedback for full-width rows. */
-  pressTint?: boolean;
   haptic?: HapticStrength;
   pressableRef?: any;
   collapsable?: boolean;
@@ -103,12 +90,9 @@ function hasCorner(style: PressableProps['style']) {
 /**
  * The single press surface for Kissly.
  *
- * Two feedback layers run on the UI thread: a light scale for cards and
- * buttons, and a faint wash for full-width rows that must not shrink at the
- * screen edges. The ripple stays as the third layer.
- *
- * Cards with shadows should keep the shadow on an outer wrapper and place
- * AppPressable inside it; otherwise iOS clips the shadow.
+ * Ripple geometry is clipped by the same rounded surface that receives the
+ * press. Cards with shadows should keep the shadow on an outer wrapper and
+ * place AppPressable inside it; otherwise iOS clips the shadow.
  */
 export function AppPressable({
   children,
@@ -118,8 +102,6 @@ export function AppPressable({
   rippleColor,
   radius,
   rippleSize,
-  pressScale = 1,
-  pressTint = false,
   haptic = false,
   pressableRef,
   collapsable,
@@ -130,27 +112,17 @@ export function AppPressable({
   ...rest
 }: AppPressableProps) {
   const theme = useAppTheme();
-  const reduced = useReducedMotion();
-  const scale = useSharedValue(1);
-  const rippleProgress = useSharedValue(0);
-  const tint = useSharedValue(0);
+  const progress = useRef(new Animated.Value(0)).current;
   const [layout, setLayout] = useState({ width: 0, height: 0 });
   const [ripple, setRipple] = useState<{ x: number; y: number; size: number } | null>(
     null
   );
-  const rippleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
-      if (rippleTimer.current) {
-        clearTimeout(rippleTimer.current);
-        rippleTimer.current = null;
-      }
-      cancelAnimation(scale);
-      cancelAnimation(rippleProgress);
-      cancelAnimation(tint);
+      progress.stopAnimation();
     };
-  }, [scale, rippleProgress, tint]);
+  }, [progress]);
 
   const resolvedColor =
     rippleColor ??
@@ -160,69 +132,33 @@ export function AppPressable({
         ? RIPPLE.surfaceDark
         : RIPPLE.surfaceLight);
 
-  // Full-width rows never scale (it would gap the screen edges), so they get
-  // the wash by default. Anything that scales already reads as a press.
-  const tintEnabled = pressTint || (feedback === 'ripple' && pressScale === 1);
-
   const handlePressIn = (event: GestureResponderEvent) => {
-    if (!disabled) {
-      if (pressScale !== 1) {
-        scale.set(
-          withTiming(reduced ? 1 : pressScale, {
-            duration: DURATION.pressIn,
-            easing: EASE_OUT,
-          })
-        );
-      }
-      if (tintEnabled) {
-        tint.set(withTiming(1, { duration: DURATION.tint, easing: EASE_OUT }));
-      }
-      if (feedback === 'ripple') {
-        if (haptic) triggerHaptic(haptic);
-        const width = layout.width || 0;
-        const height = layout.height || 0;
-        const x = event.nativeEvent.locationX ?? 0;
-        const y = event.nativeEvent.locationY ?? 0;
-        const maxDistance = Math.max(
-          Math.hypot(x, y),
-          Math.hypot(Math.max(0, width - x), y),
-          Math.hypot(x, Math.max(0, height - y)),
-          Math.hypot(Math.max(0, width - x), Math.max(0, height - y))
-        );
-        const size = rippleSize ?? Math.max(24, maxDistance * 2);
-        if (rippleTimer.current) {
-          clearTimeout(rippleTimer.current);
-          rippleTimer.current = null;
-        }
-        if (reduced) {
-          // Reduced motion keeps the state change but drops the sweep.
-          setRipple(null);
-        } else {
-          setRipple({ x, y, size });
-          rippleProgress.set(0);
-          rippleProgress.set(
-            withTiming(1, { duration: RIPPLE.duration, easing: EASE_OUT })
-          );
-          rippleTimer.current = setTimeout(() => {
-            setRipple(null);
-            rippleTimer.current = null;
-          }, RIPPLE.duration);
-        }
-      }
+    if (feedback === 'ripple' && !disabled) {
+      if (haptic) triggerHaptic(haptic);
+      const width = layout.width || 0;
+      const height = layout.height || 0;
+      const x = event.nativeEvent.locationX ?? 0;
+      const y = event.nativeEvent.locationY ?? 0;
+      const maxDistance = Math.max(
+        Math.hypot(x, y),
+        Math.hypot(Math.max(0, width - x), y),
+        Math.hypot(x, Math.max(0, height - y)),
+        Math.hypot(Math.max(0, width - x), Math.max(0, height - y))
+      );
+      const size = rippleSize ?? Math.max(24, maxDistance * 2);
+      setRipple({ x, y, size });
+      progress.stopAnimation();
+      progress.setValue(0);
+      Animated.timing(progress, {
+        toValue: 1,
+        duration: RIPPLE.duration,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: Platform.OS !== 'web',
+      }).start(({ finished }) => {
+        if (finished) setRipple(null);
+      });
     }
     onPressIn?.(event);
-  };
-
-  const handlePressOut = (event: GestureResponderEvent) => {
-    if (pressScale !== 1) {
-      scale.set(
-        withTiming(1, { duration: DURATION.pressOut, easing: EASE_OUT })
-      );
-    }
-    if (tintEnabled) {
-      tint.set(withTiming(0, { duration: DURATION.tint, easing: EASE_OUT }));
-    }
-    onPressOut?.(event);
   };
 
   const handleLayout = (event: LayoutChangeEvent) => {
@@ -239,32 +175,14 @@ export function AppPressable({
     resolvedRadius(style, radius) ??
     (feedback === 'ripple' ? RADIUS.control : undefined);
 
-  const scaleStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.get() }],
-  }));
-
-  const tintStyle = useAnimatedStyle(() => ({
-    opacity: tint.get(),
-  }));
-
-  const rippleStyle = useAnimatedStyle(() => {
-    const progress = rippleProgress.get();
-    return {
-      opacity: interpolate(progress, [0, 1], [RIPPLE_PEAK_OPACITY, 0]),
-      transform: [
-        { scale: interpolate(progress, [0, 1], [RIPPLE_START_SCALE, 1]) },
-      ],
-    };
-  });
-
-  const surface = (
+  return (
     <Pressable
       {...rest}
       ref={pressableRef}
       collapsable={collapsable}
       disabled={disabled}
       onPressIn={handlePressIn}
-      onPressOut={handlePressOut}
+      onPressOut={onPressOut}
       onLayout={handleLayout}
       style={(state) => {
         const base = typeof style === 'function' ? style(state) : style;
@@ -284,16 +202,6 @@ export function AppPressable({
       }}
     >
       {children}
-      {tintEnabled ? (
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            StyleSheet.absoluteFill,
-            { backgroundColor: pressTintColor(theme.dark) },
-            tintStyle,
-          ]}
-        />
-      ) : null}
       {ripple ? (
         <Animated.View
           pointerEvents="none"
@@ -306,17 +214,24 @@ export function AppPressable({
               left: ripple.x - ripple.size / 2,
               top: ripple.y - ripple.size / 2,
               backgroundColor: resolvedColor,
+              opacity: progress.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.18, 0],
+              }),
+              transform: [
+                {
+                  scale: progress.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.2, 1],
+                  }),
+                },
+              ],
             },
-            rippleStyle,
           ]}
         />
       ) : null}
     </Pressable>
   );
-
-  if (pressScale === 1) return surface;
-
-  return <Animated.View style={scaleStyle}>{surface}</Animated.View>;
 }
 
 export const PRESSABLE_RADIUS = RADIUS;

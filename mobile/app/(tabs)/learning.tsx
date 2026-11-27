@@ -10,7 +10,6 @@ import { relativeTime } from '../../src/core/utils';
 import { resumeTarget } from '../../src/core/watchProgress';
 import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
 import { AppPressable } from '../../src/ui/app-pressable';
-import { PRESS_SCALE } from '../../src/ui/motion';
 import { useAppTheme } from '../../src/ui/theme';
 
 const Pressable = AppPressable;
@@ -48,7 +47,6 @@ export default function LearningScreen() {
           </View>
           <Pressable
             onPress={() => router.push('/favorites' as any)}
-            pressScale={PRESS_SCALE.pill}
             style={{
               width: 42,
               height: 42,
@@ -78,7 +76,6 @@ export default function LearningScreen() {
             onPress={() => router.push('/favorites' as any)}
             accessibilityLabel="查看全部收藏视频"
             radius={0}
-            pressTint
             style={styles.statsHalf}
           >
             <View style={styles.statsCopy}>
@@ -173,7 +170,6 @@ export default function LearningScreen() {
             </Text>
             <Pressable
               tone="onColor"
-              pressScale={PRESS_SCALE.control}
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
@@ -211,7 +207,6 @@ export default function LearningScreen() {
                 } as any)
               }
               radius={RADIUS.card}
-              pressScale={PRESS_SCALE.card}
               style={[
                 styles.card,
                 {
@@ -242,7 +237,7 @@ export default function LearningScreen() {
                   收藏于 {relativeTime(item.savedAt)}
                 </Text>
               </View>
-              <Pressable hitSlop={10} pressScale={PRESS_SCALE.pill} onPress={() => removeFavorite(item.videoId)} style={styles.removeButton}>
+              <Pressable hitSlop={10} onPress={() => removeFavorite(item.videoId)} style={styles.removeButton}>
                 <Ionicons name="heart" size={19} color={theme.colors.primary} />
               </Pressable>
             </Pressable>
@@ -264,7 +259,6 @@ export default function LearningScreen() {
               <Pressable
                 key={`history-${item.videoId}`}
                 radius={0}
-                pressTint
                 onPress={() =>
                   router.push({
                     pathname: '/player',

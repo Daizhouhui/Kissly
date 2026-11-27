@@ -1,18 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs, router } from 'expo-router';
 import { useEffect, useRef } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  withTiming,
-} from 'react-native-reanimated';
+import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAppStore } from '../../src/core/store';
 import { RADIUS } from '../../src/tokens';
-import { DURATION, EASE_OUT, PRESS_SCALE } from '../../src/ui/motion';
+import { AppPressable } from '../../src/ui/app-pressable';
 import { useAppTheme } from '../../src/ui/theme';
 
 const TAB_ICONS: Record<string, { active: any; inactive: any; label: string }> = {
@@ -22,80 +16,17 @@ const TAB_ICONS: Record<string, { active: any; inactive: any; label: string }> =
   me: { active: 'person', inactive: 'person-outline', label: '我的' },
 };
 
-/**
- * Two icon layers crossfade instead of swapping glyphs. The active glyph also
- * pops once when it becomes selected — one short spring, no travelling
- * indicator, because tab switches happen dozens of times a day.
- */
 function TabIcon({ name, focused }: { name: string; focused: boolean }) {
   const theme = useAppTheme();
   const config = TAB_ICONS[name] ?? TAB_ICONS.index;
-  const appear = useSharedValue(focused ? 1 : 0);
-  const pop = useSharedValue(1);
-
-  useEffect(() => {
-    appear.set(withTiming(focused ? 1 : 0, { duration: 140, easing: EASE_OUT }));
-    if (focused) {
-      pop.set(PRESS_SCALE.tab);
-      pop.set(withSpring(1, { duration: 300, dampingRatio: 0.7 }));
-    }
-  }, [focused, appear, pop]);
-
-  const activeStyle = useAnimatedStyle(() => ({
-    opacity: appear.get(),
-    transform: [{ scale: pop.get() }],
-  }));
-  const idleStyle = useAnimatedStyle(() => ({
-    opacity: 1 - appear.get(),
-  }));
-
   return (
     <View style={styles.iconWrap}>
-      <Animated.View style={[styles.iconLayer, idleStyle]}>
-        <Ionicons name={config.inactive} size={20} color={theme.colors.textTertiary} />
-      </Animated.View>
-      <Animated.View style={[styles.iconLayer, activeStyle]}>
-        <Ionicons name={config.active} size={20} color={theme.colors.primary} />
-      </Animated.View>
+      <Ionicons
+        name={focused ? config.active : config.inactive}
+        size={20}
+        color={focused ? theme.colors.primary : theme.colors.textTertiary}
+      />
     </View>
-  );
-}
-
-function TabButton(props: any) {
-  const { children, style, ...rest } = props;
-  const scale = useSharedValue(1);
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.get() }],
-  }));
-
-  return (
-    <Animated.View style={[style, styles.tabButton, animatedStyle]}>
-      <Pressable
-        {...rest}
-        accessibilityRole="tab"
-        style={styles.tabHit}
-        onPressIn={(event: any) => {
-          scale.set(
-            withTiming(PRESS_SCALE.tab, {
-              duration: DURATION.pressIn,
-              easing: EASE_OUT,
-            })
-          );
-          rest.onPressIn?.(event);
-        }}
-        onPressOut={(event: any) => {
-          scale.set(
-            withTiming(1, {
-              duration: DURATION.pressOut,
-              easing: EASE_OUT,
-            })
-          );
-          rest.onPressOut?.(event);
-        }}
-      >
-        {children}
-      </Pressable>
-    </Animated.View>
   );
 }
 
@@ -151,7 +82,20 @@ export default function TabLayout() {
         tabBarIconStyle: {
           marginTop: 2,
         },
-        tabBarButton: (props) => <TabButton {...props} />,
+        tabBarButton: (props) => {
+          const { children, style, ...rest } = props;
+          return (
+            <AppPressable
+              {...rest}
+              feedback="ripple"
+              radius={RADIUS.control}
+              accessibilityRole="tab"
+              style={[style, styles.tabButton]}
+            >
+              {children}
+            </AppPressable>
+          );
+        },
       }}
     >
       <Tabs.Screen
@@ -192,23 +136,9 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.control,
     justifyContent: 'center',
   },
-  tabHit: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   iconWrap: {
     width: 34,
     height: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconLayer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },

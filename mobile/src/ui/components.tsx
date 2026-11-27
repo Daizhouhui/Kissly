@@ -18,7 +18,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CONTINUOUS_CORNER, RADIUS } from '../tokens';
 import { AppPressable } from './app-pressable';
-import { PRESS_SCALE } from './motion';
 import { useAppTheme } from './theme';
 
 export function Screen({
@@ -107,7 +106,6 @@ export function NavHeader({
         hitSlop={8}
         feedback="ripple"
         radius={RADIUS.pill}
-        pressScale={PRESS_SCALE.pill}
         accessibilityLabel="返回"
         style={styles.navBack}
       >
@@ -150,7 +148,6 @@ export function IconButton({
       hitSlop={8}
       feedback="ripple"
       radius={RADIUS.pill}
-      pressScale={PRESS_SCALE.pill}
       style={[
         styles.iconButton,
         {
@@ -217,7 +214,6 @@ export function Card({
         onPress={onPress}
         feedback="ripple"
         radius={RADIUS.card}
-        pressScale={PRESS_SCALE.card}
         accessibilityRole="button"
       >
         {surface}
@@ -292,7 +288,6 @@ export function Row({
       onPress={onPress}
       feedback="ripple"
       radius={0}
-      pressTint
       accessibilityRole="button"
     >
       {inner}
@@ -323,7 +318,6 @@ export function PrimaryButton({
       feedback="ripple"
       tone="onColor"
       radius={RADIUS.control}
-      pressScale={PRESS_SCALE.control}
       accessibilityRole="button"
       style={[
         styles.primaryButton,
@@ -366,7 +360,6 @@ export function GhostButton({
       onPress={onPress}
       feedback="ripple"
       radius={RADIUS.control}
-      pressScale={PRESS_SCALE.control}
       accessibilityRole="button"
       style={[
         styles.ghostButton,
@@ -394,7 +387,6 @@ export function Chip({
       onPress={onPress}
       feedback="ripple"
       radius={RADIUS.control}
-      pressScale={PRESS_SCALE.pill}
       accessibilityRole="button"
       style={[
         styles.chip,
@@ -646,7 +638,6 @@ export function ManageBar({
         feedback="ripple"
         tone="onColor"
         radius={RADIUS.control}
-        pressScale={PRESS_SCALE.control}
         accessibilityRole="button"
         accessibilityLabel={`删除已选 ${selectedCount} 项`}
         style={[

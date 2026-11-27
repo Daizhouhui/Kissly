@@ -11,7 +11,6 @@ import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
 import { appAlert as Alert } from '../src/ui/app-alert';
 import { AppPressable } from '../src/ui/app-pressable';
 import { EmptyState, ManageBar, NavHeader, SelectionCircle } from '../src/ui/components';
-import { PRESS_SCALE } from '../src/ui/motion';
 import { useAppTheme } from '../src/ui/theme';
 
 const Pressable = AppPressable;
@@ -185,7 +184,6 @@ export default function FavoritesScreen() {
                 accessibilityState={manage ? { selected } : undefined}
                 feedback={manage ? 'opacity' : 'ripple'}
                 radius={RADIUS.card}
-                pressScale={manage ? 1 : PRESS_SCALE.card}
                 onPress={() => {
                   if (manage) {
                     toggleSelection(item.videoId);
@@ -280,7 +278,6 @@ export default function FavoritesScreen() {
                 accessibilityState={manage ? { selected } : undefined}
                 feedback={manage ? 'opacity' : 'ripple'}
                 radius={RADIUS.card}
-                pressScale={manage ? 1 : PRESS_SCALE.card}
                 onPress={() => {
                   if (manage) {
                     toggleSelection(item.id);
