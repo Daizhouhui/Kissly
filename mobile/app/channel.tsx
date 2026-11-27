@@ -27,7 +27,6 @@ import { useChannelFeed } from '../src/hooks/useChannelFeed';
 import { CONTINUOUS_CORNER, RADIUS } from '../src/tokens';
 import { AppPressable } from '../src/ui/app-pressable';
 import { NavHeader } from '../src/ui/components';
-import { PRESS_SCALE } from '../src/ui/motion';
 import { useAppTheme } from '../src/ui/theme';
 import { VideoCard } from '../src/ui/VideoCard';
 

@@ -20,7 +20,6 @@ import { relativeTime } from '../../src/core/utils';
 import { CONTINUOUS_CORNER, RADIUS } from '../../src/tokens';
 import { toast } from '../../src/ui/app-toast';
 import { AppPressable } from '../../src/ui/app-pressable';
-import { PRESS_SCALE } from '../../src/ui/motion';
 import { useAppTheme } from '../../src/ui/theme';
 
 const Pressable = AppPressable;

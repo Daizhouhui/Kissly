@@ -7,7 +7,6 @@ import { formatTime, relativeTime } from '../core/utils';
 import { useAppStore } from '../core/store';
 import { CONTINUOUS_CORNER, RADIUS } from '../tokens';
 import { AppPressable } from './app-pressable';
-import { PRESS_SCALE } from './motion';
 import { useAppTheme } from './theme';
 
 export type VideoCardVariant = 'list' | 'grid' | 'large';

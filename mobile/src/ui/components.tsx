@@ -18,7 +18,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CONTINUOUS_CORNER, RADIUS } from '../tokens';
 import { AppPressable } from './app-pressable';
-import { PRESS_SCALE } from './motion';
 import { useAppTheme } from './theme';
 
 export function Screen({

@@ -28,7 +28,6 @@ import {
 import { useFeed } from '../../src/hooks/useFeed';
 import { CONTINUOUS_CORNER, innerRadius, RADIUS } from '../../src/tokens';
 import { AppPressable } from '../../src/ui/app-pressable';
-import { PRESS_SCALE } from '../../src/ui/motion';
 import { useAppTheme } from '../../src/ui/theme';
 import { VideoCard } from '../../src/ui/VideoCard';
 
